@@ -1,0 +1,14 @@
+# Virtual env
+venv/
+.env
+__pycache__/
+*.pyc
+
+# Data and local files
+data.json
+*.sqlite3
+*.db
+
+# IDE
+.vscode/
+.idea/

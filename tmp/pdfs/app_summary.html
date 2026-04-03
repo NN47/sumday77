@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>My Fitness Bot Summary</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 12mm;
+    }
+
+    :root {
+      --ink: #17324d;
+      --muted: #4a6177;
+      --line: #cfd8e3;
+      --panel: #f4f7fb;
+      --accent: #1d6fd6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+      background: white;
+      font-size: 11px;
+      line-height: 1.28;
+    }
+
+    .page {
+      width: 100%;
+      min-height: 100%;
+      border: 1px solid var(--line);
+      padding: 12px 14px;
+      background:
+        linear-gradient(180deg, #f8fbff 0%, #ffffff 24%);
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 20px;
+      line-height: 1.1;
+      color: var(--ink);
+    }
+
+    .subhead {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.08fr 0.92fr;
+      gap: 10px;
+    }
+
+    .section {
+      margin-bottom: 9px;
+      break-inside: avoid;
+    }
+
+    .section-title {
+      margin: 0 0 4px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+    }
+
+    p {
+      margin: 0;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 15px;
+    }
+
+    li {
+      margin: 0 0 4px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+    }
+
+    .mini {
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .steps li {
+      margin-bottom: 5px;
+    }
+
+    .arch p {
+      margin-bottom: 5px;
+    }
+
+    .footer {
+      margin-top: 7px;
+      padding-top: 6px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 9.5px;
+    }
+
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 9.5px;
+      background: rgba(29, 111, 214, 0.08);
+      padding: 1px 3px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>My Fitness Bot</h1>
+    <p class="subhead">One-page repo summary generated from source evidence only</p>
+
+    <div class="grid">
+      <div>
+        <div class="section panel">
+          <div class="section-title">What It Is</div>
+          <p>
+            A Telegram fitness-tracking bot built with aiogram and SQLAlchemy. It helps users log
+            meals, workouts, water, weight, supplements, procedures, and wellbeing, then adds
+            reminders and AI-assisted analysis.
+          </p>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Who It’s For</div>
+          <p>
+            Primary persona: a Telegram-first user managing daily fitness and nutrition habits.
+            Repo evidence suggests a Russian-speaking audience because the bot menus and prompts are
+            written in Russian.
+          </p>
+        </div>
+
+        <div class="section">
+          <div class="section-title">What It Does</div>
+          <ul>
+            <li>Logs workouts with exercise/category flows, counts, dates, and workout calendar views.</li>
+            <li>Tracks meals and KBJU with text input, food-photo analysis, and label/barcode-assisted nutrition lookup.</li>
+            <li>Stores water intake with quick-add buttons and per-day calendar/history views.</li>
+            <li>Records weight and body measurements over time.</li>
+            <li>Manages supplement schedules, intake history, and reminder notifications.</li>
+            <li>Captures wellbeing check-ins and procedures, each with calendar-based review.</li>
+            <li>Generates day/week/month activity analysis using Gemini plus stored habit data.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div>
+        <div class="section arch panel">
+          <div class="section-title">How It Works</div>
+          <p><strong>Entry/runtime:</strong> <code>main.py</code> starts the aiogram bot, in-memory FSM storage, handler registration, DB init, and a keep-alive HTTP server.</p>
+          <p><strong>Interaction layer:</strong> feature-specific routers live in <code>handlers/</code> for start, meals, workouts, weight, water, supplements, settings, wellbeing, calendar, procedures, and AI activity analysis.</p>
+          <p><strong>Persistence:</strong> SQLAlchemy models in <code>database/models.py</code> cover users, workouts, meals, KBJU settings, supplements, procedures, water, wellbeing, measurements, and saved activity analyses; <code>database/session.py</code> initializes the DB and sessions.</p>
+          <p><strong>Services:</strong> <code>services/gemini_service.py</code> handles Gemini text/vision calls, <code>services/nutrition_service.py</code> calls CalorieNinjas and Open Food Facts, and <code>services/notification_scheduler.py</code> sends meal/supplement reminders.</p>
+          <p><strong>Data flow:</strong> Telegram message -&gt; aiogram handler/FSM -&gt; repository or service call -&gt; SQLAlchemy DB/API response -&gt; formatted bot reply or scheduled reminder.</p>
+        </div>
+
+        <div class="section">
+          <div class="section-title">How To Run</div>
+          <ol class="steps">
+            <li>Install dependencies: <code>pip install -r requirements.txt</code>.</li>
+            <li>Create env vars or a <code>.env</code> file with <code>API_TOKEN</code>; optional integrations are <code>GEMINI_API_KEY</code>, <code>GEMINI_API_KEY2</code>, <code>GEMINI_API_KEY3</code>, <code>NUTRITION_API_KEY</code>, and <code>DATABASE_URL</code>.</li>
+            <li>Without <code>DATABASE_URL</code>, the app defaults to <code>sqlite:///fitness_bot.db</code>.</li>
+            <li>Start the bot with <code>python main.py</code>. Docker evidence also exists via <code>Dockerfile</code> using Python 3.11 and the same entrypoint.</li>
+          </ol>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Not Found In Repo</div>
+          <ul>
+            <li>Formal product name beyond the bot/repo naming.</li>
+            <li>Production deployment instructions beyond the minimal Dockerfile.</li>
+            <li>Explicit target customer segment outside what can be inferred from the UI and features.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      Evidence sources used: <code>main.py</code>, <code>config.py</code>, <code>requirements.txt</code>,
+      <code>Dockerfile</code>, <code>database/models.py</code>, <code>database/session.py</code>,
+      <code>services/*.py</code>, <code>handlers/*.py</code>, and <code>utils/keyboards.py</code>.
+    </div>
+  </div>
+</body>
+</html>
