@@ -2,15 +2,35 @@
 from database.models import KbjuSettings
 
 
-def format_kbju_goal_text(calories: float, protein: float, fat: float, carbs: float, goal_label: str) -> str:
+def format_kbju_goal_text(
+    calories: float,
+    protein: float,
+    fat: float,
+    carbs: float,
+    goal_label: str,
+    maintenance_calories: float | None = None,
+) -> str:
     """Форматирует текст с целью КБЖУ."""
+    if maintenance_calories is None:
+        return (
+            "🎯 Я настроил твою дневную норму КБЖУ!\n\n"
+            f"🔥 Калории: <b>{calories:.0f} ккал</b>\n"
+            f"💪 Белки: <b>{protein:.0f} г</b>\n"
+            f"🧈 Жиры: <b>{fat:.0f} г</b>\n"
+            f"🍞 Углеводы: <b>{carbs:.0f} г</b>\n\n"
+            f"Цель: <b>{goal_label}</b>\n\n"
+            "Теперь в разделе КБЖУ я буду сравнивать твой рацион с этой целью.\n"
+            "В любой момент можно изменить параметры через кнопку «🎯 Цель / Норма КБЖУ»."
+        )
+
     return (
-        "🎯 Я настроил твою дневную норму КБЖУ!\n\n"
-        f"🔥 Калории: <b>{calories:.0f} ккал</b>\n"
+        "🎯 Я рассчитал твою норму\n\n"
+        f"Поддержание веса: <b>{maintenance_calories:.0f} ккал</b>\n"
+        f"Твоя цель: <b>{goal_label}</b>\n"
+        f"Целевая калорийность: <b>{calories:.0f} ккал</b>\n\n"
         f"💪 Белки: <b>{protein:.0f} г</b>\n"
         f"🧈 Жиры: <b>{fat:.0f} г</b>\n"
         f"🍞 Углеводы: <b>{carbs:.0f} г</b>\n\n"
-        f"Цель: <b>{goal_label}</b>\n\n"
         "Теперь в разделе КБЖУ я буду сравнивать твой рацион с этой целью.\n"
         "В любой момент можно изменить параметры через кнопку «🎯 Цель / Норма КБЖУ»."
     )
