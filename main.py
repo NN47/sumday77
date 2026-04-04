@@ -14,6 +14,7 @@ from aiogram.client.bot import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import API_TOKEN, KEEPALIVE_PORT
+from middlewares import OnboardingMiddleware
 from utils.logging_config import setup_logging
 
 # Настраиваем логирование
@@ -75,6 +76,9 @@ async def main():
     bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
+    onboarding_middleware = OnboardingMiddleware()
+    dp.message.outer_middleware(onboarding_middleware)
+    dp.callback_query.outer_middleware(onboarding_middleware)
     
     # Регистрируем обработчики
     logger.info("Регистрация обработчиков...")
