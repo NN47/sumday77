@@ -1992,8 +1992,7 @@ async def start_kbju_test_from_button(callback: CallbackQuery, state: FSMContext
     
     push_menu_stack(callback.message.bot, kbju_gender_menu)
     await callback.message.answer(
-        "Окей, пройдём небольшой тест 💪\n\n"
-        "Для начала — укажи пол:",
+        "Для начала выбери пол:",
         reply_markup=kbju_gender_menu,
     )
 
