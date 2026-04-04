@@ -12,7 +12,7 @@ from utils.keyboards import (
     kbju_intro_menu,
     push_menu_stack,
 )
-from services.kbju_calculator import calculate_kbju_from_test
+from services.nutrition_calculator import calculate_nutrition_profile
 from database.repositories import MealRepository
 from utils.formatters import format_kbju_goal_text, format_current_kbju_goal
 
@@ -216,23 +216,30 @@ async def handle_kbju_test_goal(message: Message, state: FSMContext):
     required_onboarding = bool(data.get("required_onboarding"))
     
     # Рассчитываем КБЖУ
-    calories, protein, fat, carbs, goal_label = calculate_kbju_from_test(data)
-    
+    profile = calculate_nutrition_profile(data)
+
     # Сохраняем настройки
     MealRepository.save_kbju_settings(
         user_id=user_id,
-        calories=calories,
-        protein=protein,
-        fat=fat,
-        carbs=carbs,
+        calories=profile.target_calories,
+        protein=profile.proteins,
+        fat=profile.fats,
+        carbs=profile.carbs,
         goal=goal,
         activity=data.get("activity"),
     )
-    
+
     await state.clear()
-    
+
     # Форматируем и отправляем результат
-    text = format_kbju_goal_text(calories, protein, fat, carbs, goal_label)
+    text = format_kbju_goal_text(
+        calories=profile.target_calories,
+        protein=profile.proteins,
+        fat=profile.fats,
+        carbs=profile.carbs,
+        goal_label=profile.goal_label,
+        maintenance_calories=profile.tdee,
+    )
     
     await message.answer(text, parse_mode="HTML")
     if required_onboarding:
