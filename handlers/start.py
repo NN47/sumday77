@@ -5,6 +5,7 @@ from aiogram import Router
 from aiogram.types import Message
 from aiogram.types.link_preview_options import LinkPreviewOptions
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from utils.keyboards import main_menu, push_menu_stack, quick_actions_inline
 from utils.progress_formatters import (
     format_progress_block,
@@ -14,6 +15,7 @@ from utils.progress_formatters import (
 )
 from database.session import get_db_session
 from database.models import User
+from handlers.kbju_test import has_completed_kbju_test, restart_required_kbju_test
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,7 @@ async def _build_recommendations_link(message: Message) -> str:
 
 
 @router.message(Command("start"))
-async def start(message: Message):
+async def start(message: Message, state: FSMContext):
     """Обработчик команды /start."""
     user_id = str(message.from_user.id)
 
@@ -50,6 +52,20 @@ async def start(message: Message):
             session.commit()
             logger.info(f"New user {user_id} registered")
             is_new_user = True
+
+    if not has_completed_kbju_test(user_id):
+        if is_new_user:
+            await message.answer(
+                "Привет! Перед началом работы нужно пройти короткий тест КБЖУ.\n"
+                "Он рассчитает твою норму и после этого откроет все разделы бота."
+            )
+        else:
+            await message.answer(
+                "У тебя пока нет сохранённой цели КБЖУ.\n"
+                "Чтобы пользоваться ботом дальше, сначала пройди короткий стартовый тест."
+            )
+        await restart_required_kbju_test(message, state)
+        return
     
     # Формируем приветствие с прогрессом
     progress_text = format_progress_block(user_id)

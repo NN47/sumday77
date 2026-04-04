@@ -21,6 +21,25 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def has_completed_kbju_test(user_id: str) -> bool:
+    """Returns True if the user already has KBJU settings."""
+    return MealRepository.get_kbju_settings(user_id) is not None
+
+
+async def restart_required_kbju_test(message: Message, state: FSMContext):
+    """Starts the mandatory KBJU onboarding test from the first step."""
+    await state.clear()
+    await state.update_data(required_onboarding=True)
+    await state.set_state(KbjuTestStates.entering_gender)
+
+    push_menu_stack(message.bot, kbju_gender_menu)
+    await message.answer(
+        "Для начала работы с ботом нужно пройти короткий стартовый тест КБЖУ.\n\n"
+        "Для начала укажи пол:",
+        reply_markup=kbju_gender_menu,
+    )
+
+
 @router.message(lambda m: m.text == "🎯 Цель / Норма КБЖУ")
 async def show_kbju_goal(message: Message, state: FSMContext):
     """Показывает текущую цель КБЖУ и варианты её настройки."""
@@ -51,6 +70,7 @@ async def start_kbju_test(message: Message, state: FSMContext):
     logger.info(f"User {user_id} started KBJU test")
     
     await state.clear()
+    await state.update_data(required_onboarding=False)
     await state.set_state(KbjuTestStates.entering_gender)
     
     push_menu_stack(message.bot, kbju_gender_menu)
@@ -193,6 +213,7 @@ async def handle_kbju_test_goal(message: Message, state: FSMContext):
     # Получаем все данные из FSM
     data = await state.get_data()
     data["goal"] = goal
+    required_onboarding = bool(data.get("required_onboarding"))
     
     # Рассчитываем КБЖУ
     calories, protein, fat, carbs, goal_label = calculate_kbju_from_test(data)
@@ -213,9 +234,18 @@ async def handle_kbju_test_goal(message: Message, state: FSMContext):
     # Форматируем и отправляем результат
     text = format_kbju_goal_text(calories, protein, fat, carbs, goal_label)
     
-    push_menu_stack(message.bot, kbju_menu)
     await message.answer(text, parse_mode="HTML")
-    await message.answer("Теперь можешь пользоваться разделом КБЖУ 👇", reply_markup=kbju_menu)
+    if required_onboarding:
+        from utils.keyboards import main_menu
+
+        push_menu_stack(message.bot, main_menu)
+        await message.answer(
+            "Тест завершён. Теперь можешь пользоваться ботом через главное меню 👇",
+            reply_markup=main_menu,
+        )
+    else:
+        push_menu_stack(message.bot, kbju_menu)
+        await message.answer("Теперь можешь пользоваться разделом КБЖУ 👇", reply_markup=kbju_menu)
 
 
 @router.message(KbjuTestStates.entering_manual_calories)
