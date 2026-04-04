@@ -32,14 +32,15 @@ async def show_kbju_goal(message: Message, state: FSMContext):
 
     if settings:
         text = format_current_kbju_goal(settings)
-        text += "\n\nВыбери, как хочешь обновить цель 👇"
+        text += "\n\nЕсли хочешь обновить норму, выбери удобный вариант 👇"
         push_menu_stack(message.bot, kbju_intro_menu)
         await message.answer(text, parse_mode="HTML", reply_markup=kbju_intro_menu)
         return
 
     await message.answer(
-        "Цель по КБЖУ пока не настроена.\n"
-        "Выбери удобный вариант: быстрый тест или ручной ввод 👇",
+        "Привет! Давай настроим твою норму КБЖУ.\n"
+        "После этого я смогу точнее показывать прогресс по питанию.\n\n"
+        "Выбери удобный вариант 👇",
         reply_markup=kbju_intro_menu,
     )
 
@@ -55,8 +56,7 @@ async def start_kbju_test(message: Message, state: FSMContext):
     
     push_menu_stack(message.bot, kbju_gender_menu)
     await message.answer(
-        "Окей, пройдём небольшой тест 💪\n\n"
-        "Для начала — укажи пол:",
+        "Для начала выбери пол:",
         reply_markup=kbju_gender_menu,
     )
 
@@ -72,7 +72,7 @@ async def start_manual_kbju_goal(message: Message, state: FSMContext):
 
     push_menu_stack(message.bot, kbju_intro_menu)
     await message.answer(
-        "Окей, настроим твою норму вручную ✍️\n\n"
+        "Давай настроим норму вручную.\n\n"
         "Введи цель по калориям в день (ккал), например: 2200"
     )
 
