@@ -55,16 +55,18 @@ async def start(message: Message, state: FSMContext):
 
     if not has_completed_kbju_test(user_id):
         if is_new_user:
-            await message.answer(
-                "Привет! Перед началом работы нужно пройти короткий тест КБЖУ.\n"
-                "Он рассчитает твою норму и после этого откроет все разделы бота."
+            intro_text = (
+                "Привет! Давай начнём с короткого теста КБЖУ.\n"
+                "Я рассчитаю твою дневную норму и сразу открою все разделы бота.\n\n"
+                "Для начала укажи пол:"
             )
         else:
-            await message.answer(
-                "У тебя пока нет сохранённой цели КБЖУ.\n"
-                "Чтобы пользоваться ботом дальше, сначала пройди короткий стартовый тест."
+            intro_text = (
+                "У тебя пока не сохранена цель КБЖУ.\n"
+                "Чтобы продолжить работу, сначала пройди короткий тест.\n\n"
+                "Для начала укажи пол:"
             )
-        await restart_required_kbju_test(message, state)
+        await restart_required_kbju_test(message, state, intro_text=intro_text)
         return
     
     # Формируем приветствие с прогрессом

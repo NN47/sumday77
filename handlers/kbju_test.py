@@ -26,16 +26,23 @@ def has_completed_kbju_test(user_id: str) -> bool:
     return MealRepository.get_kbju_settings(user_id) is not None
 
 
-async def restart_required_kbju_test(message: Message, state: FSMContext):
+async def restart_required_kbju_test(
+    message: Message,
+    state: FSMContext,
+    intro_text: str | None = None,
+):
     """Starts the mandatory KBJU onboarding test from the first step."""
     await state.clear()
     await state.update_data(required_onboarding=True)
     await state.set_state(KbjuTestStates.entering_gender)
 
     push_menu_stack(message.bot, kbju_gender_menu)
+    text = intro_text or (
+        "Чтобы пользоваться ботом, сначала пройди короткий стартовый тест КБЖУ.\n\n"
+        "Для начала укажи пол:"
+    )
     await message.answer(
-        "Для начала работы с ботом нужно пройти короткий стартовый тест КБЖУ.\n\n"
-        "Для начала укажи пол:",
+        text,
         reply_markup=kbju_gender_menu,
     )
 
