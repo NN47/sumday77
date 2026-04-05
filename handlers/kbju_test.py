@@ -10,6 +10,8 @@ from utils.keyboards import (
     kbju_height_range_inline,
     kbju_activity_menu,
     kbju_goal_menu,
+    kbju_loss_speed_menu,
+    kbju_gain_speed_menu,
     kbju_menu,
     kbju_intro_menu,
     push_menu_stack,
@@ -25,7 +27,7 @@ from utils.formatters import (
 logger = logging.getLogger(__name__)
 
 router = Router()
-TOTAL_STEPS = 6
+DEFAULT_TOTAL_STEPS = 7
 
 STEP_BY_STATE = {
     KbjuTestStates.entering_gender.state: 1,
@@ -33,7 +35,8 @@ STEP_BY_STATE = {
     KbjuTestStates.entering_height.state: 3,
     KbjuTestStates.entering_weight.state: 4,
     KbjuTestStates.entering_goal.state: 5,
-    KbjuTestStates.entering_activity.state: 6,
+    KbjuTestStates.entering_goal_speed.state: 6,
+    KbjuTestStates.entering_activity.state: 7,
 }
 
 AGE_MAP = {
@@ -85,9 +88,16 @@ HEIGHT_RANGE_LABELS = {
 }
 
 
-def format_step_text(step: int, text: str) -> str:
+def get_total_steps(goal: str | None = None) -> int:
+    """Возвращает общее количество шагов анкеты в зависимости от цели."""
+    if goal == "maintain":
+        return 6
+    return DEFAULT_TOTAL_STEPS
+
+
+def format_step_text(step: int, text: str, total_steps: int = DEFAULT_TOTAL_STEPS) -> str:
     """Добавляет прогресс шага перед текстом вопроса."""
-    return f"Шаг {step}/{TOTAL_STEPS}\n\n{text}"
+    return f"Шаг {step}/{total_steps}\n\n{text}"
 
 
 def has_completed_kbju_test(user_id: str) -> bool:
@@ -280,7 +290,7 @@ async def handle_kbju_test_weight(message: Message, state: FSMContext):
 
     push_menu_stack(message.bot, kbju_goal_menu)
     await message.answer(
-        format_step_text(STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какая у тебя сейчас цель?"),
+        format_step_text(STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какая цель?"),
         reply_markup=kbju_goal_menu,
     )
 
@@ -290,24 +300,89 @@ async def handle_kbju_test_goal(message: Message, state: FSMContext):
     """Обрабатывает выбор цели в тесте КБЖУ."""
     txt = message.text.strip()
 
-    if txt == "📉 Похудение":
+    if txt == "Похудеть":
         goal = "loss"
-    elif txt == "⚖️ Поддержание":
+    elif txt == "Поддерживать":
         goal = "maintain"
-    elif txt == "💪 Набор массы":
+    elif txt == "Набрать":
         goal = "gain"
     else:
         await message.answer("Выбери вариант с кнопки, пожалуйста 🙂")
         return
 
+    if goal == "maintain":
+        await state.update_data(
+            goal=goal,
+            goal_speed_label="Без изменения",
+            goal_percent=0,
+        )
+        await state.set_state(KbjuTestStates.entering_activity)
+
+        push_menu_stack(message.bot, kbju_activity_menu)
+        await message.answer(
+            format_step_text(
+                step=6,
+                total_steps=get_total_steps(goal),
+                text="Опиши свой обычный уровень активности:",
+            ),
+            reply_markup=kbju_activity_menu,
+        )
+        return
+
+    speed_menu = kbju_loss_speed_menu if goal == "loss" else kbju_gain_speed_menu
     await state.update_data(goal=goal)
+    await state.set_state(KbjuTestStates.entering_goal_speed)
+
+    push_menu_stack(message.bot, speed_menu)
+    await message.answer(
+        format_step_text(
+            step=STEP_BY_STATE[KbjuTestStates.entering_goal_speed.state],
+            total_steps=get_total_steps(goal),
+            text="Какой темп тебе комфортнее?",
+        ),
+        reply_markup=speed_menu,
+    )
+
+
+@router.message(KbjuTestStates.entering_goal_speed)
+async def handle_kbju_test_goal_speed(message: Message, state: FSMContext):
+    """Обрабатывает выбор темпа для целей «Похудеть» и «Набрать»."""
+    txt = message.text.strip()
+    data = await state.get_data()
+    goal = data.get("goal")
+
+    loss_speeds = {
+        "Мягко — 10%": ("Мягко", 10),
+        "Стандарт — 15%": ("Стандарт", 15),
+        "Быстро — 20%": ("Быстро", 20),
+    }
+    gain_speeds = {
+        "Мягко — 10%": ("Мягко", 10),
+        "Стандарт — 15%": ("Стандарт", 15),
+        "Быстрее — 20%": ("Быстрее", 20),
+    }
+
+    if goal == "loss":
+        selected = loss_speeds.get(txt)
+    elif goal == "gain":
+        selected = gain_speeds.get(txt)
+    else:
+        selected = None
+
+    if selected is None:
+        await message.answer("Выбери вариант темпа с кнопки, пожалуйста 🙂")
+        return
+
+    goal_speed_label, goal_percent = selected
+    await state.update_data(goal_speed_label=goal_speed_label, goal_percent=goal_percent)
     await state.set_state(KbjuTestStates.entering_activity)
 
     push_menu_stack(message.bot, kbju_activity_menu)
     await message.answer(
         format_step_text(
-            STEP_BY_STATE[KbjuTestStates.entering_activity.state],
-            "Опиши свой обычный уровень активности:",
+            step=STEP_BY_STATE[KbjuTestStates.entering_activity.state],
+            total_steps=get_total_steps(str(goal)),
+            text="Опиши свой обычный уровень активности:",
         ),
         reply_markup=kbju_activity_menu,
     )
