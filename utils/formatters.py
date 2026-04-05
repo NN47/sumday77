@@ -2,6 +2,49 @@
 from database.models import KbjuSettings
 
 
+def format_strategy_text(
+    calories: float,
+    protein: float,
+    fat: float,
+    carbs: float,
+    goal: str,
+) -> str:
+    """Форматирует короткую интерпретацию стратегии КБЖУ."""
+    strategy_by_goal = {
+        "loss": (
+            "мягкий дефицит",
+            "Это позволит терять вес постепенно и комфортно.",
+        ),
+        "maintain": (
+            "поддержание веса",
+            "Это поможет удерживать текущий вес без дефицита и профицита.",
+        ),
+        "gain": (
+            "умеренный профицит",
+            "Это поможет набирать вес и сохранять энергию для тренировок.",
+        ),
+    }
+    goal_type, goal_text = strategy_by_goal.get(
+        goal,
+        (
+            "индивидуальная цель",
+            "Это поможет придерживаться выбранной стратегии питания.",
+        ),
+    )
+
+    return (
+        "Твоя стратегия:\n\n"
+        f"<b>{calories:.0f} ккал</b> — {goal_type}\n"
+        f"{goal_text}\n\n"
+        f"Белки: <b>{protein:.0f} г</b>\n"
+        "Это поможет сохранять мышцы.\n\n"
+        f"Жиры: <b>{fat:.0f} г</b>\n"
+        "Это важно для гормонального баланса.\n\n"
+        f"Углеводы: <b>{carbs:.0f} г</b>\n"
+        "Это основной источник энергии."
+    )
+
+
 def format_kbju_goal_text(
     calories: float,
     protein: float,
