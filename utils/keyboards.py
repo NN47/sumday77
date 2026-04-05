@@ -252,6 +252,26 @@ kbju_gender_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+kbju_age_range_inline = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(text="до 18", callback_data="kbju_age:under_18"),
+            InlineKeyboardButton(text="18–24", callback_data="kbju_age:18_24"),
+        ],
+        [
+            InlineKeyboardButton(text="25–34", callback_data="kbju_age:25_34"),
+            InlineKeyboardButton(text="35–44", callback_data="kbju_age:35_44"),
+        ],
+        [
+            InlineKeyboardButton(text="45–54", callback_data="kbju_age:45_54"),
+            InlineKeyboardButton(text="55–64", callback_data="kbju_age:55_64"),
+        ],
+        [
+            InlineKeyboardButton(text="65+", callback_data="kbju_age:65_plus"),
+        ],
+    ],
+)
+
 kbju_activity_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🪑 Мало движения")],
