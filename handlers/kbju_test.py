@@ -10,6 +10,8 @@ from utils.keyboards import (
     kbju_height_range_inline,
     kbju_activity_menu,
     kbju_goal_menu,
+    kbju_goal_speed_loss_menu,
+    kbju_goal_speed_gain_menu,
     kbju_menu,
     kbju_intro_menu,
     push_menu_stack,
@@ -25,15 +27,22 @@ from utils.formatters import (
 logger = logging.getLogger(__name__)
 
 router = Router()
-TOTAL_STEPS = 6
+BASE_TOTAL_STEPS = 6
+TOTAL_STEPS_WITH_GOAL_SPEED = 7
 
-STEP_BY_STATE = {
+BASE_STEP_BY_STATE = {
     KbjuTestStates.entering_gender.state: 1,
     KbjuTestStates.entering_age.state: 2,
     KbjuTestStates.entering_height.state: 3,
     KbjuTestStates.entering_weight.state: 4,
     KbjuTestStates.entering_goal.state: 5,
-    KbjuTestStates.entering_activity.state: 6,
+}
+
+GOAL_SPEED_LABEL_TO_PERCENT = {
+    "🌿 Мягко — 10%": 10,
+    "⚖️ Стандарт — 15%": 15,
+    "🔥 Быстро — 20%": 20,
+    "🚀 Быстрее — 20%": 20,
 }
 
 AGE_MAP = {
@@ -87,7 +96,12 @@ HEIGHT_RANGE_LABELS = {
 
 def format_step_text(step: int, text: str) -> str:
     """Добавляет прогресс шага перед текстом вопроса."""
-    return f"Шаг {step}/{TOTAL_STEPS}\n\n{text}"
+    return f"Шаг {step}/{BASE_TOTAL_STEPS}\n\n{text}"
+
+
+def format_dynamic_step_text(step: int, total_steps: int, text: str) -> str:
+    """Добавляет прогресс шага перед текстом вопроса с динамическим общим числом шагов."""
+    return f"Шаг {step}/{total_steps}\n\n{text}"
 
 
 def has_completed_kbju_test(user_id: str) -> bool:
@@ -104,7 +118,7 @@ async def restart_required_kbju_test(message: Message, state: FSMContext):
     push_menu_stack(message.bot, kbju_gender_menu)
     await message.answer(
         "Для начала работы с ботом нужно пройти короткий стартовый тест КБЖУ.\n\n"
-        + format_step_text(STEP_BY_STATE[KbjuTestStates.entering_gender.state], "Для начала укажи пол:"),
+        + format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_gender.state], "Для начала укажи пол:"),
         reply_markup=kbju_gender_menu,
     )
 
@@ -145,7 +159,7 @@ async def start_kbju_test(message: Message, state: FSMContext):
     
     push_menu_stack(message.bot, kbju_gender_menu)
     await message.answer(
-        format_step_text(STEP_BY_STATE[KbjuTestStates.entering_gender.state], "Для начала выбери пол:"),
+        format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_gender.state], "Для начала выбери пол:"),
         reply_markup=kbju_gender_menu,
     )
 
@@ -183,7 +197,7 @@ async def handle_kbju_test_gender(message: Message, state: FSMContext):
     await state.update_data(gender=gender)
     await state.set_state(KbjuTestStates.entering_age)
     await message.answer(
-        format_step_text(STEP_BY_STATE[KbjuTestStates.entering_age.state], "Выбери возрастную группу:"),
+        format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_age.state], "Выбери возрастную группу:"),
         reply_markup=kbju_age_range_inline,
     )
 
@@ -220,7 +234,7 @@ async def handle_kbju_test_age_callback(callback: CallbackQuery, state: FSMConte
     await state.set_state(KbjuTestStates.entering_height)
     await callback.answer()
     await callback.message.answer(
-        format_step_text(STEP_BY_STATE[KbjuTestStates.entering_height.state], "Выбери диапазон роста:"),
+        format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_height.state], "Выбери диапазон роста:"),
         reply_markup=kbju_height_range_inline,
     )
 
@@ -258,7 +272,7 @@ async def handle_kbju_test_height_callback(callback: CallbackQuery, state: FSMCo
     await callback.answer()
     await callback.message.answer(
         format_step_text(
-            STEP_BY_STATE[KbjuTestStates.entering_weight.state],
+            BASE_STEP_BY_STATE[KbjuTestStates.entering_weight.state],
             "Сколько ты весишь сейчас? В кг (например: 86.5)",
         )
     )
@@ -280,7 +294,7 @@ async def handle_kbju_test_weight(message: Message, state: FSMContext):
 
     push_menu_stack(message.bot, kbju_goal_menu)
     await message.answer(
-        format_step_text(STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какая у тебя сейчас цель?"),
+        format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какая у тебя сейчас цель?"),
         reply_markup=kbju_goal_menu,
     )
 
@@ -301,13 +315,55 @@ async def handle_kbju_test_goal(message: Message, state: FSMContext):
         return
 
     await state.update_data(goal=goal)
+
+    if goal in {"loss", "gain"}:
+        await state.set_state(KbjuTestStates.entering_goal_speed)
+        speed_menu = kbju_goal_speed_loss_menu if goal == "loss" else kbju_goal_speed_gain_menu
+
+        push_menu_stack(message.bot, speed_menu)
+        await message.answer(
+            format_dynamic_step_text(
+                step=6,
+                total_steps=TOTAL_STEPS_WITH_GOAL_SPEED,
+                text="Какой темп тебе комфортнее?",
+            ),
+            reply_markup=speed_menu,
+        )
+        return
+
+    await state.update_data(goal_speed_label="Поддержание", goal_percent=0)
     await state.set_state(KbjuTestStates.entering_activity)
 
     push_menu_stack(message.bot, kbju_activity_menu)
     await message.answer(
-        format_step_text(
-            STEP_BY_STATE[KbjuTestStates.entering_activity.state],
-            "Опиши свой обычный уровень активности:",
+        format_dynamic_step_text(
+            step=6,
+            total_steps=BASE_TOTAL_STEPS,
+            text="Опиши свой обычный уровень активности:",
+        ),
+        reply_markup=kbju_activity_menu,
+    )
+
+
+@router.message(KbjuTestStates.entering_goal_speed)
+async def handle_kbju_test_goal_speed(message: Message, state: FSMContext):
+    """Обрабатывает выбор темпа изменения веса в тесте КБЖУ."""
+    speed_label = message.text.strip()
+    goal_percent = GOAL_SPEED_LABEL_TO_PERCENT.get(speed_label)
+
+    if goal_percent is None:
+        await message.answer("Выбери вариант с кнопки, пожалуйста 🙂")
+        return
+
+    await state.update_data(goal_speed_label=speed_label, goal_percent=goal_percent)
+    await state.set_state(KbjuTestStates.entering_activity)
+
+    push_menu_stack(message.bot, kbju_activity_menu)
+    await message.answer(
+        format_dynamic_step_text(
+            step=7,
+            total_steps=TOTAL_STEPS_WITH_GOAL_SPEED,
+            text="Опиши свой обычный уровень активности:",
         ),
         reply_markup=kbju_activity_menu,
     )
