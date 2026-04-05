@@ -14,6 +14,7 @@ from utils.keyboards import (
     kbju_goal_speed_gain_menu,
     kbju_menu,
     kbju_intro_menu,
+    onboarding_open_menu,
     push_menu_stack,
 )
 from services.nutrition_calculator import calculate_nutrition_profile
@@ -21,6 +22,7 @@ from database.repositories import MealRepository
 from utils.formatters import (
     format_kbju_goal_text,
     format_current_kbju_goal,
+    format_onboarding_finish_text,
     format_strategy_text,
 )
 
@@ -439,12 +441,10 @@ async def handle_kbju_test_activity(message: Message, state: FSMContext):
     
     await message.answer(text, parse_mode="HTML")
     if required_onboarding:
-        from utils.keyboards import main_menu
-
-        push_menu_stack(message.bot, main_menu)
+        push_menu_stack(message.bot, onboarding_open_menu)
         await message.answer(
-            "Тест завершён. Теперь можешь пользоваться ботом через главное меню 👇",
-            reply_markup=main_menu,
+            format_onboarding_finish_text(),
+            reply_markup=onboarding_open_menu,
         )
     else:
         push_menu_stack(message.bot, kbju_menu)
