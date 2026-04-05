@@ -1,11 +1,12 @@
 """Обработчики для теста КБЖУ."""
 import logging
 from aiogram import Router
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from states.user_states import KbjuTestStates
 from utils.keyboards import (
     kbju_gender_menu,
+    kbju_age_range_inline,
     kbju_activity_menu,
     kbju_goal_menu,
     kbju_menu,
@@ -19,6 +20,26 @@ from utils.formatters import format_kbju_goal_text, format_current_kbju_goal
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+AGE_MAP = {
+    "under_18": 16,
+    "18_24": 21,
+    "25_34": 30,
+    "35_44": 40,
+    "45_54": 50,
+    "55_64": 60,
+    "65_plus": 68,
+}
+
+AGE_RANGE_LABELS = {
+    "under_18": "до 18",
+    "18_24": "18-24",
+    "25_34": "25-34",
+    "35_44": "35-44",
+    "45_54": "45-54",
+    "55_64": "55-64",
+    "65_plus": "65+",
+}
 
 
 def has_completed_kbju_test(user_id: str) -> bool:
@@ -113,23 +134,44 @@ async def handle_kbju_test_gender(message: Message, state: FSMContext):
 
     await state.update_data(gender=gender)
     await state.set_state(KbjuTestStates.entering_age)
-    await message.answer("Сколько тебе лет? (например: 28)")
+    await message.answer(
+        "Выбери возрастную группу:",
+        reply_markup=kbju_age_range_inline,
+    )
 
 
 @router.message(KbjuTestStates.entering_age)
-async def handle_kbju_test_age(message: Message, state: FSMContext):
-    """Обрабатывает ввод возраста в тесте КБЖУ."""
-    try:
-        age = float(message.text.replace(",", "."))
-        if age <= 0 or age > 150:
-            raise ValueError
-    except ValueError:
-        await message.answer("Нужно ввести число от 1 до 150, попробуй ещё раз 🙂")
+async def handle_kbju_test_age_text(message: Message):
+    """Подсказывает, что возраст выбирается только через inline-кнопки."""
+    await message.answer("Выбери возрастную группу кнопкой ниже 👇", reply_markup=kbju_age_range_inline)
+
+
+def get_age_data(age_key: str) -> tuple[str, int] | None:
+    """Возвращает отображаемый диапазон и возраст для расчёта."""
+    age = AGE_MAP.get(age_key)
+    age_range = AGE_RANGE_LABELS.get(age_key)
+    if age is None or age_range is None:
+        return None
+    return age_range, age
+
+
+@router.callback_query(
+    KbjuTestStates.entering_age,
+    lambda c: c.data is not None and c.data.startswith("kbju_age:")
+)
+async def handle_kbju_test_age_callback(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор возрастного диапазона в тесте КБЖУ."""
+    age_key = callback.data.split(":", maxsplit=1)[1]
+    age_data = get_age_data(age_key)
+    if age_data is None:
+        await callback.answer("Не удалось определить возрастную группу", show_alert=True)
         return
 
-    await state.update_data(age=age)
+    age_range, age = age_data
+    await state.update_data(age_range=age_range, age=age)
     await state.set_state(KbjuTestStates.entering_height)
-    await message.answer("Какой у тебя рост в сантиметрах? (например: 171)")
+    await callback.answer()
+    await callback.message.answer("Какой у тебя рост в сантиметрах? (например: 171)")
 
 
 @router.message(KbjuTestStates.entering_height)
