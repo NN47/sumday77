@@ -29,19 +29,23 @@ ACTIVITY_MULTIPLIERS: dict[str, float] = {
 }
 DEFAULT_ACTIVITY = "medium"
 
-GOAL_ADJUSTMENTS: dict[str, float] = {
-    "loss": -0.15,
-    "loss_fast": -0.20,
-    "maintain": 0.0,
-    "gain": 0.10,
+GOAL_MULTIPLIERS: dict[str, float] = {
+    "loss": 0.85,
+    "maintain": 1.0,
+    "gain": 1.15,
 }
 DEFAULT_GOAL = "maintain"
 
 GOAL_LABELS: dict[str, str] = {
     "loss": "Похудение",
-    "loss_fast": "Быстрое похудение",
     "maintain": "Поддержание веса",
     "gain": "Набор массы",
+}
+
+GOAL_EXPLANATIONS: dict[str, str] = {
+    "loss": "Для похудения: −15%",
+    "maintain": "Для поддержания: без изменений",
+    "gain": "Для набора: +15%",
 }
 
 
@@ -58,7 +62,7 @@ class NutritionProfile:
     activity_multiplier: float
     goal: str
     goal_label: str
-    adjustment_percent: int
+    goal_explanation: str
 
 
 def calculate_bmr(gender: str, age: float, height: float, weight: float) -> float:
@@ -78,14 +82,10 @@ def calculate_tdee(bmr: float, activity_multiplier: float) -> float:
     return bmr * activity_multiplier
 
 
-def get_goal_adjustment(goal: str) -> float:
-    """Возвращает поправку к поддержанию для цели."""
-    return GOAL_ADJUSTMENTS.get(goal, GOAL_ADJUSTMENTS[DEFAULT_GOAL])
-
-
-def calculate_target_calories(tdee: float, goal_adjustment: float) -> float:
-    """Считает целевую калорийность по цели."""
-    return tdee * (1 + goal_adjustment)
+def apply_goal(tdee: float, goal: str) -> float:
+    """Применяет цель к TDEE и возвращает целевую калорийность."""
+    goal_multiplier = GOAL_MULTIPLIERS.get(goal, GOAL_MULTIPLIERS[DEFAULT_GOAL])
+    return tdee * goal_multiplier
 
 
 def calculate_macros(weight: float, target_calories: float, goal: str) -> tuple[int, int, int]:
@@ -116,12 +116,12 @@ def calculate_nutrition_profile(data: Mapping[str, object]) -> NutritionProfile:
     activity_multiplier = get_activity_multiplier(activity)
     tdee_value = calculate_tdee(bmr=bmr_value, activity_multiplier=activity_multiplier)
 
-    goal_adjustment = get_goal_adjustment(goal)
-    target_calories_value = calculate_target_calories(tdee=tdee_value, goal_adjustment=goal_adjustment)
+    target_calories_value = apply_goal(tdee=tdee_value, goal=goal)
 
     proteins, fats, carbs = calculate_macros(weight=weight, target_calories=target_calories_value, goal=goal)
 
     goal_label = GOAL_LABELS.get(goal, GOAL_LABELS[DEFAULT_GOAL])
+    goal_explanation = GOAL_EXPLANATIONS.get(goal, GOAL_EXPLANATIONS[DEFAULT_GOAL])
 
     return NutritionProfile(
         bmr=round(bmr_value),
@@ -133,5 +133,5 @@ def calculate_nutrition_profile(data: Mapping[str, object]) -> NutritionProfile:
         activity_multiplier=activity_multiplier,
         goal=goal,
         goal_label=goal_label,
-        adjustment_percent=round(goal_adjustment * 100),
+        goal_explanation=goal_explanation,
     )

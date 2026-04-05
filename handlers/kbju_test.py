@@ -330,7 +330,9 @@ async def handle_kbju_test_goal(message: Message, state: FSMContext):
         fat=profile.fats,
         carbs=profile.carbs,
         goal_label=profile.goal_label,
+        bmr_calories=profile.bmr,
         maintenance_calories=profile.tdee,
+        goal_explanation=profile.goal_explanation,
     )
     
     await message.answer(text, parse_mode="HTML")
