@@ -8,7 +8,9 @@ def format_kbju_goal_text(
     fat: float,
     carbs: float,
     goal_label: str,
+    bmr_calories: float | None = None,
     maintenance_calories: float | None = None,
+    goal_explanation: str | None = None,
 ) -> str:
     """Форматирует текст с целью КБЖУ."""
     if maintenance_calories is None:
@@ -23,11 +25,15 @@ def format_kbju_goal_text(
             "В любой момент можно изменить параметры через кнопку «🎯 Цель / Норма КБЖУ»."
         )
 
+    bmr_line = f"Твой базовый обмен: <b>{bmr_calories:.0f} ккал</b>\n" if bmr_calories is not None else ""
+    goal_line = f"{goal_explanation}\n" if goal_explanation else f"Твоя цель: <b>{goal_label}</b>\n"
+
     return (
-        "🎯 Я рассчитал твою норму\n\n"
-        f"Поддержание веса: <b>{maintenance_calories:.0f} ккал</b>\n"
-        f"Твоя цель: <b>{goal_label}</b>\n"
-        f"Целевая калорийность: <b>{calories:.0f} ккал</b>\n\n"
+        "🎯 Я рассчитал:\n\n"
+        f"{bmr_line}"
+        f"С учетом активности: <b>{maintenance_calories:.0f} ккал</b>\n"
+        f"{goal_line}\n"
+        f"Твоя цель: <b>{calories:.0f} ккал</b>\n\n"
         f"💪 Белки: <b>{protein:.0f} г</b>\n"
         f"🧈 Жиры: <b>{fat:.0f} г</b>\n"
         f"🍞 Углеводы: <b>{carbs:.0f} г</b>\n\n"
@@ -78,4 +84,3 @@ def format_count_with_unit(count: int | float, variant: str | None) -> str:
         return f"{count} м"
     else:
         return str(count)
-

@@ -11,9 +11,27 @@ assert spec and spec.loader
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 calculate_nutrition_profile = module.calculate_nutrition_profile
+calculate_bmr = module.calculate_bmr
+calculate_tdee = module.calculate_tdee
+apply_goal = module.apply_goal
 
 
 class NutritionCalculatorTests(unittest.TestCase):
+    def test_bmr_formula_for_male(self):
+        bmr = calculate_bmr(gender="male", age=30, height=180, weight=80)
+        self.assertAlmostEqual(bmr, 1780.0)
+
+    def test_bmr_formula_for_female(self):
+        bmr = calculate_bmr(gender="female", age=30, height=180, weight=80)
+        self.assertAlmostEqual(bmr, 1614.0)
+
+    def test_goal_applies_after_tdee(self):
+        bmr = calculate_bmr(gender="male", age=28, height=171, weight=78)
+        tdee = calculate_tdee(bmr=bmr, activity_multiplier=1.55)
+        target = apply_goal(tdee=tdee, goal="loss")
+
+        self.assertAlmostEqual(target, tdee * 0.85)
+
     def test_profile_for_male_loss_has_valid_order(self):
         profile = calculate_nutrition_profile(
             {
@@ -76,7 +94,7 @@ class NutritionCalculatorTests(unittest.TestCase):
                 "height": 158,
                 "weight": 50,
                 "activity": "minimal",
-                "goal": "loss_fast",
+                "goal": "loss",
             }
         )
 
