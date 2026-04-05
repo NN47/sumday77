@@ -7,6 +7,7 @@ from states.user_states import KbjuTestStates
 from utils.keyboards import (
     kbju_gender_menu,
     kbju_age_range_inline,
+    kbju_height_range_inline,
     kbju_activity_menu,
     kbju_goal_menu,
     kbju_menu,
@@ -39,6 +40,34 @@ AGE_RANGE_LABELS = {
     "45_54": "45-54",
     "55_64": "55-64",
     "65_plus": "65+",
+}
+
+HEIGHT_MAP = {
+    "under_150": 148,
+    "151_155": 153,
+    "156_160": 158,
+    "161_165": 163,
+    "166_170": 168,
+    "171_175": 173,
+    "176_180": 178,
+    "181_185": 183,
+    "186_190": 188,
+    "191_195": 193,
+    "196_plus": 198,
+}
+
+HEIGHT_RANGE_LABELS = {
+    "under_150": "до 150",
+    "151_155": "151-155",
+    "156_160": "156-160",
+    "161_165": "161-165",
+    "166_170": "166-170",
+    "171_175": "171-175",
+    "176_180": "176-180",
+    "181_185": "181-185",
+    "186_190": "186-190",
+    "191_195": "191-195",
+    "196_plus": "196+",
 }
 
 
@@ -171,23 +200,44 @@ async def handle_kbju_test_age_callback(callback: CallbackQuery, state: FSMConte
     await state.update_data(age_range=age_range, age=age)
     await state.set_state(KbjuTestStates.entering_height)
     await callback.answer()
-    await callback.message.answer("Какой у тебя рост в сантиметрах? (например: 171)")
+    await callback.message.answer(
+        "Выбери диапазон роста:",
+        reply_markup=kbju_height_range_inline,
+    )
 
 
 @router.message(KbjuTestStates.entering_height)
-async def handle_kbju_test_height(message: Message, state: FSMContext):
-    """Обрабатывает ввод роста в тесте КБЖУ."""
-    try:
-        height = float(message.text.replace(",", "."))
-        if height <= 0 or height > 300:
-            raise ValueError
-    except ValueError:
-        await message.answer("Нужно ввести число от 1 до 300, попробуй ещё раз 🙂")
+async def handle_kbju_test_height_text(message: Message):
+    """Подсказывает, что рост выбирается только через inline-кнопки."""
+    await message.answer("Выбери диапазон роста кнопкой ниже 👇", reply_markup=kbju_height_range_inline)
+
+
+def get_height_data(height_key: str) -> tuple[str, int] | None:
+    """Возвращает отображаемый диапазон и рост для расчёта."""
+    height = HEIGHT_MAP.get(height_key)
+    height_range = HEIGHT_RANGE_LABELS.get(height_key)
+    if height is None or height_range is None:
+        return None
+    return height_range, height
+
+
+@router.callback_query(
+    KbjuTestStates.entering_height,
+    lambda c: c.data is not None and c.data.startswith("kbju_height:")
+)
+async def handle_kbju_test_height_callback(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор диапазона роста в тесте КБЖУ."""
+    height_key = callback.data.split(":", maxsplit=1)[1]
+    height_data = get_height_data(height_key)
+    if height_data is None:
+        await callback.answer("Не удалось определить диапазон роста", show_alert=True)
         return
 
-    await state.update_data(height=height)
+    height_range, height = height_data
+    await state.update_data(height_range=height_range, height=height)
     await state.set_state(KbjuTestStates.entering_weight)
-    await message.answer("Сколько ты весишь сейчас? В кг (например: 86.5)")
+    await callback.answer()
+    await callback.message.answer("Сколько ты весишь сейчас? В кг (например: 86.5)")
 
 
 @router.message(KbjuTestStates.entering_weight)
