@@ -21,6 +21,16 @@ from utils.formatters import format_kbju_goal_text, format_current_kbju_goal
 logger = logging.getLogger(__name__)
 
 router = Router()
+TOTAL_STEPS = 6
+
+STEP_BY_STATE = {
+    KbjuTestStates.entering_gender.state: 1,
+    KbjuTestStates.entering_age.state: 2,
+    KbjuTestStates.entering_height.state: 3,
+    KbjuTestStates.entering_weight.state: 4,
+    KbjuTestStates.entering_goal.state: 5,
+    KbjuTestStates.entering_activity.state: 6,
+}
 
 AGE_MAP = {
     "under_18": 16,
@@ -71,6 +81,11 @@ HEIGHT_RANGE_LABELS = {
 }
 
 
+def format_step_text(step: int, text: str) -> str:
+    """Добавляет прогресс шага перед текстом вопроса."""
+    return f"Шаг {step}/{TOTAL_STEPS}\n\n{text}"
+
+
 def has_completed_kbju_test(user_id: str) -> bool:
     """Returns True if the user already has KBJU settings."""
     return MealRepository.get_kbju_settings(user_id) is not None
@@ -85,7 +100,7 @@ async def restart_required_kbju_test(message: Message, state: FSMContext):
     push_menu_stack(message.bot, kbju_gender_menu)
     await message.answer(
         "Для начала работы с ботом нужно пройти короткий стартовый тест КБЖУ.\n\n"
-        "Для начала укажи пол:",
+        + format_step_text(STEP_BY_STATE[KbjuTestStates.entering_gender.state], "Для начала укажи пол:"),
         reply_markup=kbju_gender_menu,
     )
 
@@ -126,7 +141,7 @@ async def start_kbju_test(message: Message, state: FSMContext):
     
     push_menu_stack(message.bot, kbju_gender_menu)
     await message.answer(
-        "Для начала выбери пол:",
+        format_step_text(STEP_BY_STATE[KbjuTestStates.entering_gender.state], "Для начала выбери пол:"),
         reply_markup=kbju_gender_menu,
     )
 
@@ -164,7 +179,7 @@ async def handle_kbju_test_gender(message: Message, state: FSMContext):
     await state.update_data(gender=gender)
     await state.set_state(KbjuTestStates.entering_age)
     await message.answer(
-        "Выбери возрастную группу:",
+        format_step_text(STEP_BY_STATE[KbjuTestStates.entering_age.state], "Выбери возрастную группу:"),
         reply_markup=kbju_age_range_inline,
     )
 
@@ -201,7 +216,7 @@ async def handle_kbju_test_age_callback(callback: CallbackQuery, state: FSMConte
     await state.set_state(KbjuTestStates.entering_height)
     await callback.answer()
     await callback.message.answer(
-        "Выбери диапазон роста:",
+        format_step_text(STEP_BY_STATE[KbjuTestStates.entering_height.state], "Выбери диапазон роста:"),
         reply_markup=kbju_height_range_inline,
     )
 
@@ -237,7 +252,12 @@ async def handle_kbju_test_height_callback(callback: CallbackQuery, state: FSMCo
     await state.update_data(height_range=height_range, height=height)
     await state.set_state(KbjuTestStates.entering_weight)
     await callback.answer()
-    await callback.message.answer("Сколько ты весишь сейчас? В кг (например: 86.5)")
+    await callback.message.answer(
+        format_step_text(
+            STEP_BY_STATE[KbjuTestStates.entering_weight.state],
+            "Сколько ты весишь сейчас? В кг (например: 86.5)",
+        )
+    )
 
 
 @router.message(KbjuTestStates.entering_weight)
@@ -252,44 +272,18 @@ async def handle_kbju_test_weight(message: Message, state: FSMContext):
         return
 
     await state.update_data(weight=weight)
-    await state.set_state(KbjuTestStates.entering_activity)
-    
-    push_menu_stack(message.bot, kbju_activity_menu)
-    await message.answer(
-        "Опиши свой обычный уровень активности:",
-        reply_markup=kbju_activity_menu,
-    )
-
-
-@router.message(KbjuTestStates.entering_activity)
-async def handle_kbju_test_activity(message: Message, state: FSMContext):
-    """Обрабатывает выбор активности в тесте КБЖУ."""
-    txt = message.text.strip()
-
-    if txt == "🪑 Мало движения":
-        activity = "low"
-    elif txt == "🚶 Умеренная активность":
-        activity = "medium"
-    elif txt == "🏋️ Тренировки 3–5 раз/нед":
-        activity = "high"
-    else:
-        await message.answer("Выбери вариант с кнопки, пожалуйста 🙂")
-        return
-
-    await state.update_data(activity=activity)
     await state.set_state(KbjuTestStates.entering_goal)
-    
+
     push_menu_stack(message.bot, kbju_goal_menu)
     await message.answer(
-        "Какая у тебя сейчас цель?",
+        format_step_text(STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какая у тебя сейчас цель?"),
         reply_markup=kbju_goal_menu,
     )
 
 
 @router.message(KbjuTestStates.entering_goal)
 async def handle_kbju_test_goal(message: Message, state: FSMContext):
-    """Обрабатывает выбор цели в тесте КБЖУ и сохраняет настройки."""
-    user_id = str(message.from_user.id)
+    """Обрабатывает выбор цели в тесте КБЖУ."""
     txt = message.text.strip()
 
     if txt == "📉 Похудение":
@@ -302,9 +296,43 @@ async def handle_kbju_test_goal(message: Message, state: FSMContext):
         await message.answer("Выбери вариант с кнопки, пожалуйста 🙂")
         return
 
+    await state.update_data(goal=goal)
+    await state.set_state(KbjuTestStates.entering_activity)
+
+    push_menu_stack(message.bot, kbju_activity_menu)
+    await message.answer(
+        format_step_text(
+            STEP_BY_STATE[KbjuTestStates.entering_activity.state],
+            "Опиши свой обычный уровень активности:",
+        ),
+        reply_markup=kbju_activity_menu,
+    )
+
+
+@router.message(KbjuTestStates.entering_activity)
+async def handle_kbju_test_activity(message: Message, state: FSMContext):
+    """Обрабатывает выбор активности в тесте КБЖУ и сохраняет настройки."""
+    user_id = str(message.from_user.id)
+    txt = message.text.strip()
+
+    if txt == "🪑 Мало движения":
+        activity = "low"
+    elif txt == "🚶 Умеренная активность":
+        activity = "medium"
+    elif txt == "🏋️ Тренировки 3–5 раз/нед":
+        activity = "high"
+    else:
+        await message.answer("Выбери вариант с кнопки, пожалуйста 🙂")
+        return
+
     # Получаем все данные из FSM
     data = await state.get_data()
-    data["goal"] = goal
+    data["activity"] = activity
+    goal = data.get("goal")
+    if goal not in {"loss", "maintain", "gain"}:
+        await state.clear()
+        await message.answer("Не удалось определить цель. Давай начнём тест заново 🙂")
+        return
     required_onboarding = bool(data.get("required_onboarding"))
     
     # Рассчитываем КБЖУ
@@ -318,7 +346,7 @@ async def handle_kbju_test_goal(message: Message, state: FSMContext):
         fat=profile.fats,
         carbs=profile.carbs,
         goal=goal,
-        activity=data.get("activity"),
+        activity=activity,
     )
 
     await state.clear()
