@@ -43,6 +43,10 @@ GOAL_SPEED_LABEL_TO_PERCENT = {
     "⚖️ Стандарт — 15%": 15,
     "🔥 Быстро — 20%": 20,
     "🚀 Быстрее — 20%": 20,
+    "Мягко — 10%": 10,
+    "Стандарт — 15%": 15,
+    "Быстро — 20%": 20,
+    "Быстрее — 20%": 20,
 }
 
 AGE_MAP = {
@@ -294,7 +298,7 @@ async def handle_kbju_test_weight(message: Message, state: FSMContext):
 
     push_menu_stack(message.bot, kbju_goal_menu)
     await message.answer(
-        format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какая у тебя сейчас цель?"),
+        format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какая цель?"),
         reply_markup=kbju_goal_menu,
     )
 
@@ -304,11 +308,11 @@ async def handle_kbju_test_goal(message: Message, state: FSMContext):
     """Обрабатывает выбор цели в тесте КБЖУ."""
     txt = message.text.strip()
 
-    if txt == "📉 Похудение":
+    if txt in {"📉 Похудение", "Похудеть"}:
         goal = "loss"
-    elif txt == "⚖️ Поддержание":
+    elif txt in {"⚖️ Поддержание", "Поддерживать"}:
         goal = "maintain"
-    elif txt == "💪 Набор массы":
+    elif txt in {"💪 Набор массы", "Набрать"}:
         goal = "gain"
     else:
         await message.answer("Выбери вариант с кнопки, пожалуйста 🙂")

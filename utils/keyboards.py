@@ -312,9 +312,9 @@ kbju_activity_menu = ReplyKeyboardMarkup(
 
 kbju_goal_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="📉 Похудение")],
-        [KeyboardButton(text="⚖️ Поддержание")],
-        [KeyboardButton(text="💪 Набор массы")],
+        [KeyboardButton(text="Похудеть")],
+        [KeyboardButton(text="Поддерживать")],
+        [KeyboardButton(text="Набрать")],
         [main_menu_button],
     ],
     resize_keyboard=True,
