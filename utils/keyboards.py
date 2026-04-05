@@ -320,6 +320,26 @@ kbju_goal_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+kbju_goal_speed_loss_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🌿 Мягко — 10%")],
+        [KeyboardButton(text="⚖️ Стандарт — 15%")],
+        [KeyboardButton(text="🔥 Быстро — 20%")],
+        [main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
+kbju_goal_speed_gain_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🌿 Мягко — 10%")],
+        [KeyboardButton(text="⚖️ Стандарт — 15%")],
+        [KeyboardButton(text="🚀 Быстрее — 20%")],
+        [main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
 kbju_add_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📝 Ввести приём пищи текстом (AI-анализ)")],

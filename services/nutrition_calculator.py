@@ -35,19 +35,13 @@ GOAL_MULTIPLIERS: dict[str, float] = {
     "gain": 1.15,
 }
 DEFAULT_GOAL = "maintain"
+DEFAULT_GOAL_PERCENT = 15
 
 GOAL_LABELS: dict[str, str] = {
     "loss": "Похудение",
     "maintain": "Поддержание веса",
     "gain": "Набор массы",
 }
-
-GOAL_EXPLANATIONS: dict[str, str] = {
-    "loss": "Для похудения: −15%",
-    "maintain": "Для поддержания: без изменений",
-    "gain": "Для набора: +15%",
-}
-
 
 @dataclass(frozen=True)
 class NutritionProfile:
@@ -63,6 +57,7 @@ class NutritionProfile:
     goal: str
     goal_label: str
     goal_explanation: str
+    goal_percent: int
 
 
 def calculate_bmr(gender: str, age: float, height: float, weight: float) -> float:
@@ -82,10 +77,29 @@ def calculate_tdee(bmr: float, activity_multiplier: float) -> float:
     return bmr * activity_multiplier
 
 
-def apply_goal(tdee: float, goal: str) -> float:
+def apply_goal(tdee: float, goal: str, goal_percent: int | None = None) -> float:
     """Применяет цель к TDEE и возвращает целевую калорийность."""
+    if goal == "maintain":
+        return tdee
+
+    if goal_percent is not None:
+        ratio = max(goal_percent, 0) / 100
+        if goal == "loss":
+            return tdee * (1 - ratio)
+        if goal == "gain":
+            return tdee * (1 + ratio)
+
     goal_multiplier = GOAL_MULTIPLIERS.get(goal, GOAL_MULTIPLIERS[DEFAULT_GOAL])
     return tdee * goal_multiplier
+
+
+def build_goal_explanation(goal: str, goal_percent: int) -> str:
+    """Возвращает пояснение, как цель повлияла на калорийность."""
+    if goal == "loss":
+        return f"Для похудения: −{goal_percent}%"
+    if goal == "gain":
+        return f"Для набора: +{goal_percent}%"
+    return "Для поддержания: без изменений"
 
 
 def calculate_macros(weight: float, target_calories: float, goal: str) -> tuple[int, int, int]:
@@ -111,17 +125,19 @@ def calculate_nutrition_profile(data: Mapping[str, object]) -> NutritionProfile:
     weight = float(data.get("weight") or DEFAULT_WEIGHT)
     activity = str(data.get("activity") or DEFAULT_ACTIVITY)
     goal = str(data.get("goal") or DEFAULT_GOAL)
+    raw_goal_percent = data.get("goal_percent")
+    goal_percent = int(raw_goal_percent) if raw_goal_percent is not None else DEFAULT_GOAL_PERCENT
 
     bmr_value = calculate_bmr(gender=gender, age=age, height=height, weight=weight)
     activity_multiplier = get_activity_multiplier(activity)
     tdee_value = calculate_tdee(bmr=bmr_value, activity_multiplier=activity_multiplier)
 
-    target_calories_value = apply_goal(tdee=tdee_value, goal=goal)
+    target_calories_value = apply_goal(tdee=tdee_value, goal=goal, goal_percent=goal_percent)
 
     proteins, fats, carbs = calculate_macros(weight=weight, target_calories=target_calories_value, goal=goal)
 
     goal_label = GOAL_LABELS.get(goal, GOAL_LABELS[DEFAULT_GOAL])
-    goal_explanation = GOAL_EXPLANATIONS.get(goal, GOAL_EXPLANATIONS[DEFAULT_GOAL])
+    goal_explanation = build_goal_explanation(goal=goal, goal_percent=goal_percent)
 
     return NutritionProfile(
         bmr=round(bmr_value),
@@ -134,4 +150,5 @@ def calculate_nutrition_profile(data: Mapping[str, object]) -> NutritionProfile:
         goal=goal,
         goal_label=goal_label,
         goal_explanation=goal_explanation,
+        goal_percent=goal_percent if goal in {"loss", "gain"} else 0,
     )
