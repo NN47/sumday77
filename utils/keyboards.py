@@ -272,6 +272,34 @@ kbju_age_range_inline = InlineKeyboardMarkup(
     ],
 )
 
+kbju_height_range_inline = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(text="до 150", callback_data="kbju_height:under_150"),
+            InlineKeyboardButton(text="151–155", callback_data="kbju_height:151_155"),
+        ],
+        [
+            InlineKeyboardButton(text="156–160", callback_data="kbju_height:156_160"),
+            InlineKeyboardButton(text="161–165", callback_data="kbju_height:161_165"),
+        ],
+        [
+            InlineKeyboardButton(text="166–170", callback_data="kbju_height:166_170"),
+            InlineKeyboardButton(text="171–175", callback_data="kbju_height:171_175"),
+        ],
+        [
+            InlineKeyboardButton(text="176–180", callback_data="kbju_height:176_180"),
+            InlineKeyboardButton(text="181–185", callback_data="kbju_height:181_185"),
+        ],
+        [
+            InlineKeyboardButton(text="186–190", callback_data="kbju_height:186_190"),
+            InlineKeyboardButton(text="191–195", callback_data="kbju_height:191_195"),
+        ],
+        [
+            InlineKeyboardButton(text="196+", callback_data="kbju_height:196_plus"),
+        ],
+    ],
+)
+
 kbju_activity_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🪑 Мало движения")],
