@@ -16,7 +16,11 @@ from utils.keyboards import (
 )
 from services.nutrition_calculator import calculate_nutrition_profile
 from database.repositories import MealRepository
-from utils.formatters import format_kbju_goal_text, format_current_kbju_goal
+from utils.formatters import (
+    format_kbju_goal_text,
+    format_current_kbju_goal,
+    format_strategy_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -361,6 +365,16 @@ async def handle_kbju_test_activity(message: Message, state: FSMContext):
         bmr_calories=profile.bmr,
         maintenance_calories=profile.tdee,
         goal_explanation=profile.goal_explanation,
+    )
+    text += (
+        "\n\n"
+        + format_strategy_text(
+            calories=profile.target_calories,
+            protein=profile.proteins,
+            fat=profile.fats,
+            carbs=profile.carbs,
+            goal=goal,
+        )
     )
     
     await message.answer(text, parse_mode="HTML")
