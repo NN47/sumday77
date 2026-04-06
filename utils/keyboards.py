@@ -323,6 +323,44 @@ kbju_height_range_inline = InlineKeyboardMarkup(
     ],
 )
 
+kbju_weight_range_inline = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(text="до 50 кг", callback_data="kbju_weight_range:40_50"),
+            InlineKeyboardButton(text="51–60 кг", callback_data="kbju_weight_range:51_60"),
+        ],
+        [
+            InlineKeyboardButton(text="61–70 кг", callback_data="kbju_weight_range:61_70"),
+            InlineKeyboardButton(text="71–80 кг", callback_data="kbju_weight_range:71_80"),
+        ],
+        [
+            InlineKeyboardButton(text="81–90 кг", callback_data="kbju_weight_range:81_90"),
+            InlineKeyboardButton(text="91–100 кг", callback_data="kbju_weight_range:91_100"),
+        ],
+        [
+            InlineKeyboardButton(text="101–120 кг", callback_data="kbju_weight_range:101_120"),
+            InlineKeyboardButton(text="121–150 кг", callback_data="kbju_weight_range:121_150"),
+        ],
+        [
+            InlineKeyboardButton(text="151–200 кг", callback_data="kbju_weight_range:151_200"),
+            InlineKeyboardButton(text="201–300 кг", callback_data="kbju_weight_range:201_300"),
+        ],
+        [
+            InlineKeyboardButton(text="301–500 кг", callback_data="kbju_weight_range:301_500"),
+        ],
+    ],
+)
+
+
+def build_kbju_weight_values_inline(range_min: int, range_max: int) -> InlineKeyboardMarkup:
+    """Строит inline-клавиатуру с точным весом внутри выбранного диапазона."""
+    buttons = [
+        InlineKeyboardButton(text=f"{weight} кг", callback_data=f"kbju_weight_value:{weight}")
+        for weight in range(range_min, range_max + 1)
+    ]
+    rows = [buttons[i:i + 3] for i in range(0, len(buttons), 3)]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 kbju_activity_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🪑 Мало движения")],
