@@ -12,7 +12,7 @@ from database.repositories import (
     WeightRepository,
     WaterRepository,
 )
-from database.repositories.wellbeing_repository import WellbeingRepository
+from database.repositories.note_repository import NoteRepository
 from database.repositories.activity_analysis_repository import ActivityAnalysisRepository
 
 logger = logging.getLogger(__name__)
@@ -141,75 +141,21 @@ def build_kbju_calendar_keyboard(user_id: str, year: int, month: int) -> InlineK
     )
 
 
-def get_month_wellbeing_days(user_id: str, year: int, month: int) -> set[int]:
-    """Получает дни месяца, в которые были записи самочувствия."""
-    start_date = date(year, month, 1)
-    if month == 12:
-        end_date = date(year + 1, 1, 1)
-    else:
-        end_date = date(year, month + 1, 1)
-
-    entries = WellbeingRepository.get_entries_for_period(user_id, start_date, end_date)
-    return {entry.date.day for entry in entries if entry.date.month == month}
+def get_month_notes_days(user_id: str, year: int, month: int) -> set[int]:
+    """Получает дни месяца, в которые есть дневные заметки."""
+    return NoteRepository.get_month_note_days(user_id, year, month)
 
 
-def build_wellbeing_calendar_keyboard(user_id: str, year: int, month: int) -> InlineKeyboardMarkup:
-    """Строит календарь самочувствия."""
+def build_notes_calendar_keyboard(user_id: str, year: int, month: int) -> InlineKeyboardMarkup:
+    """Строит календарь заметок."""
     return build_calendar_keyboard(
         user_id=user_id,
         year=year,
         month=month,
-        callback_prefix="well_cal",
-        marker="🙂",
-        get_days_func=get_month_wellbeing_days,
+        callback_prefix="note_cal",
+        marker="📝",
+        get_days_func=get_month_notes_days,
     )
-
-
-def build_wellbeing_day_actions_keyboard(entries: list, target_date: date) -> InlineKeyboardMarkup:
-    """Строит клавиатуру действий для дня в календаре самочувствия."""
-    from aiogram.types import InlineKeyboardButton
-
-    rows: list[list[InlineKeyboardButton]] = []
-
-    for entry in entries:
-        if entry.entry_type == "comment":
-            comment_text = entry.comment or "Без комментария"
-            label = f"Комментарий: {comment_text[:50]}".rstrip()
-        else:
-            difficulty_text = f", {entry.difficulty}" if entry.difficulty else ""
-            label = f"{entry.mood} / {entry.influence}{difficulty_text}"
-
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"✏️ {label}",
-                    callback_data=f"well_cal_edit:{target_date.isoformat()}:{entry.id}",
-                ),
-                InlineKeyboardButton(
-                    text=f"🗑 {label}",
-                    callback_data=f"well_cal_del:{target_date.isoformat()}:{entry.id}",
-                ),
-            ]
-        )
-
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="➕ Добавить ещё" if entries else "➕ Добавить запись",
-                callback_data=f"well_cal_add:{target_date.isoformat()}",
-            ),
-        ]
-    )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="⬅️ Назад к календарю",
-                callback_data=f"well_cal_back:{target_date.year}-{target_date.month:02d}",
-            )
-        ]
-    )
-
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_month_supplement_days(user_id: str, year: int, month: int) -> set[int]:

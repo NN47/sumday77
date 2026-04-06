@@ -9,8 +9,10 @@ from sqlalchemy import (
     DateTime,
     Text,
     Boolean,
+    UniqueConstraint,
 )
 from datetime import date, datetime
+import json
 
 Base = declarative_base()
 
@@ -151,6 +153,42 @@ class WellbeingEntry(Base):
     comment = Column(Text, nullable=True)
     date = Column(Date, default=date.today)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class NoteEntry(Base):
+    """Модель дневной заметки состояния."""
+    __tablename__ = "notes"
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_notes_user_date"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)
+    day_rating = Column(Integer, nullable=False)
+    factors_json = Column(Text, default="[]", nullable=False)
+    text = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+    @property
+    def factors(self) -> list[str]:
+        """Десериализованные факторы дня."""
+        return self.deserialize_factors(self.factors_json)
+
+    @staticmethod
+    def serialize_factors(factors: list[str]) -> str:
+        """Сериализует факторы в JSON-строку."""
+        return json.dumps(list(dict.fromkeys(factors or [])), ensure_ascii=False)
+
+    @staticmethod
+    def deserialize_factors(payload: str | None) -> list[str]:
+        """Десериализует JSON-строку факторов."""
+        if not payload:
+            return []
+        try:
+            data = json.loads(payload)
+            return [str(item) for item in data if isinstance(item, (str, int, float))]
+        except Exception:
+            return []
 
 
 class ActivityAnalysisEntry(Base):

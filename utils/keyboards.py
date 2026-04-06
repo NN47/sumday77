@@ -46,10 +46,7 @@ wellbeing_menu = ReplyKeyboardMarkup(
 )
 
 wellbeing_and_procedures_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text=WELLBEING_BUTTON_TEXT), KeyboardButton(text="💆 Процедуры")],
-        [main_menu_button],
-    ],
+    keyboard=[[KeyboardButton(text="⬅️ Назад"), main_menu_button]],
     resize_keyboard=True,
 )
 

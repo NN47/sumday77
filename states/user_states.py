@@ -95,13 +95,7 @@ class SupportStates(StatesGroup):
 
 
 class WellbeingStates(StatesGroup):
-    """Состояния для отметки самочувствия."""
-    choosing_mode = State()
-    quick_mood = State()
-    quick_influence = State()
-    quick_difficulty = State()
-    comment = State()
-    editing_quick_mood = State()
-    editing_quick_influence = State()
-    editing_quick_difficulty = State()
-    editing_comment = State()
+    """Состояния для дневных заметок."""
+    note_rating = State()
+    note_factors = State()
+    note_text = State()

@@ -95,8 +95,6 @@ async def main():
     register_wellbeing_handlers(dp)
     from handlers.calendar import register_calendar_handlers
     register_calendar_handlers(dp)
-    from handlers.procedures import register_procedure_handlers
-    register_procedure_handlers(dp)
     
     # Запускаем планировщик уведомлений
     logger.info("Запуск планировщика уведомлений...")
