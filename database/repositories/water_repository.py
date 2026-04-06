@@ -105,3 +105,22 @@ class WaterRepository:
                 logger.info(f"Deleted water entry {entry_id} for user {user_id}")
                 return True
             return False
+
+    @staticmethod
+    def clear_day_entries(user_id: str, target_date: date) -> int:
+        """Удаляет все записи воды пользователя за день."""
+        with get_db_session() as session:
+            deleted_count = (
+                session.query(WaterEntry)
+                .filter(WaterEntry.user_id == user_id)
+                .filter(WaterEntry.date == target_date)
+                .delete(synchronize_session=False)
+            )
+            session.commit()
+            logger.info(
+                "Cleared %s water entries for user %s on %s",
+                deleted_count,
+                user_id,
+                target_date.isoformat(),
+            )
+            return int(deleted_count)

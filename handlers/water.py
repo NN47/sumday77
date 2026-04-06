@@ -173,6 +173,22 @@ async def quick_add_water_amount_cb(callback: CallbackQuery, state: FSMContext):
     await message.answer(text, reply_markup=water_menu)
 
 
+@router.callback_query(lambda c: c.data == "quick_water_clear_today")
+async def clear_today_water_cb(callback: CallbackQuery, state: FSMContext):
+    """Очищает все записи воды за текущий день."""
+    await callback.answer()
+    message = callback.message
+    user_id = str(callback.from_user.id)
+    entry_date = date.today()
+
+    await state.clear()
+    deleted_count = WaterRepository.clear_day_entries(user_id, entry_date)
+    if deleted_count:
+        await message.answer("🧹 Все записи воды за сегодня очищены.", reply_markup=water_menu)
+    else:
+        await message.answer("За сегодня пока нет записей воды для очистки.", reply_markup=water_menu)
+
+
 @router.message(lambda m: m.text == "➕ Добавить воду")
 async def add_water(message: Message, state: FSMContext):
     """Обработчик добавления воды."""
@@ -312,6 +328,15 @@ async def process_water_amount(message: Message, state: FSMContext):
         if text == "⬅️ Назад":
             # Возвращаемся в меню воды
             await water(message)
+        return
+
+    if text == "🧹 Очистить":
+        await state.clear()
+        deleted_count = WaterRepository.clear_day_entries(user_id, date.today())
+        if deleted_count:
+            await message.answer("🧹 Все записи воды за сегодня очищены.", reply_markup=water_menu)
+        else:
+            await message.answer("За сегодня пока нет записей воды для очистки.", reply_markup=water_menu)
         return
     
     try:
