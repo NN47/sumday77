@@ -31,6 +31,7 @@ weight_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="➕ Добавить вес")],
         [KeyboardButton(text="📏 Замеры тела"), KeyboardButton(text="📊 График веса")],
+        [KeyboardButton(text="📆 Календарь")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,
