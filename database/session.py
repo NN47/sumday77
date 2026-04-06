@@ -50,6 +50,16 @@ def init_db():
         except Exception as e:
             logger.warning(f"Ошибка при проверке workouts.calories: {e}")
 
+        # users.target_weight
+        try:
+            user_columns = {col["name"] for col in inspector.get_columns("users")}
+            if "target_weight" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN target_weight FLOAT"))
+                conn.commit()
+                logger.info("Добавлен столбец users.target_weight")
+        except Exception as e:
+            logger.warning(f"Ошибка при проверке users.target_weight: {e}")
+
 
 @contextmanager
 def get_db_session():
@@ -70,4 +80,3 @@ def get_db_session():
         raise
     finally:
         session.close()
-
