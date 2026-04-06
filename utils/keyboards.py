@@ -302,27 +302,27 @@ kbju_age_range_inline = InlineKeyboardMarkup(
 kbju_height_range_inline = InlineKeyboardMarkup(
     inline_keyboard=[
         [
-            InlineKeyboardButton(text="до 150", callback_data="kbju_height:under_150"),
-            InlineKeyboardButton(text="151–155", callback_data="kbju_height:151_155"),
+            InlineKeyboardButton(text="до 149", callback_data="kbju_height:under_149"),
+            InlineKeyboardButton(text="150–154", callback_data="kbju_height:150_154"),
         ],
         [
-            InlineKeyboardButton(text="156–160", callback_data="kbju_height:156_160"),
-            InlineKeyboardButton(text="161–165", callback_data="kbju_height:161_165"),
+            InlineKeyboardButton(text="155–159", callback_data="kbju_height:155_159"),
+            InlineKeyboardButton(text="160–164", callback_data="kbju_height:160_164"),
         ],
         [
-            InlineKeyboardButton(text="166–170", callback_data="kbju_height:166_170"),
-            InlineKeyboardButton(text="171–175", callback_data="kbju_height:171_175"),
+            InlineKeyboardButton(text="165–169", callback_data="kbju_height:165_169"),
+            InlineKeyboardButton(text="170–174", callback_data="kbju_height:170_174"),
         ],
         [
-            InlineKeyboardButton(text="176–180", callback_data="kbju_height:176_180"),
-            InlineKeyboardButton(text="181–185", callback_data="kbju_height:181_185"),
+            InlineKeyboardButton(text="175–179", callback_data="kbju_height:175_179"),
+            InlineKeyboardButton(text="180–184", callback_data="kbju_height:180_184"),
         ],
         [
-            InlineKeyboardButton(text="186–190", callback_data="kbju_height:186_190"),
-            InlineKeyboardButton(text="191–195", callback_data="kbju_height:191_195"),
+            InlineKeyboardButton(text="185–189", callback_data="kbju_height:185_189"),
+            InlineKeyboardButton(text="190–194", callback_data="kbju_height:190_194"),
         ],
         [
-            InlineKeyboardButton(text="196+", callback_data="kbju_height:196_plus"),
+            InlineKeyboardButton(text="195+", callback_data="kbju_height:195_plus"),
         ],
     ],
 )
