@@ -522,8 +522,8 @@ water_amount_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="250"), KeyboardButton(text="300"), KeyboardButton(text="330"), KeyboardButton(text="500")],
         [KeyboardButton(text="550"), KeyboardButton(text="600"), KeyboardButton(text="650"), KeyboardButton(text="700")],
         [KeyboardButton(text="750"), KeyboardButton(text="800"), KeyboardButton(text="850"), KeyboardButton(text="900")],
-        [KeyboardButton(text="1000"), KeyboardButton(text="-250")],
-        [KeyboardButton(text="🧹 Очистить"), KeyboardButton(text="⬅️ Назад")],
+        [KeyboardButton(text="1000"), KeyboardButton(text="-300"), KeyboardButton(text="🧹 Очистить")],
+        [KeyboardButton(text="⬅️ Назад")],
     ],
     resize_keyboard=True,
 )
@@ -550,9 +550,7 @@ water_quick_add_inline = InlineKeyboardMarkup(
         ],
         [
             InlineKeyboardButton(text="1000", callback_data="quick_water_add_1000"),
-            InlineKeyboardButton(text="-250", callback_data="quick_water_add_-250"),
-        ],
-        [
+            InlineKeyboardButton(text="-300", callback_data="quick_water_add_-300"),
             InlineKeyboardButton(text="🧹 Очистить", callback_data="quick_water_clear_today"),
         ],
     ]
