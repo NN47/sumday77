@@ -7,6 +7,7 @@ from typing import Optional
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.repositories import MealRepository
 from database.models import Meal
+from utils.emoji_map import EMOJI_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -85,18 +86,22 @@ def format_today_meals(
                 )
         
         # Итого по этому приёму
-        lines.append(f"🔥 Калории: {meal.calories:.0f} ккал")
-        lines.append(f"💪 Белки: {meal.protein:.1f} г")
-        lines.append(f"🥑 Жиры: {meal.fat:.1f} г")
-        lines.append(f"🍩 Углеводы: {meal.carbs:.1f} г")
+        lines.append(f"{EMOJI_MAP['calories']} Калории: {meal.calories:.0f} ккал")
+        lines.append(f"{EMOJI_MAP['protein']} Белки: {meal.protein:.1f} г")
+        lines.append(f"{EMOJI_MAP['fat']} Жиры: {meal.fat:.1f} г")
+        lines.append(f"{EMOJI_MAP['carbs']} Углеводы: {meal.carbs:.1f} г")
         lines.append("— — — — —")
     
     # Итоги за день — тоже жирным
     lines.append("\n<b>Итого за день:</b>")
-    lines.append(f"🔥 Калории: {daily_totals.get('calories', 0):.0f} ккал")
-    lines.append(f"💪 Белки: {daily_totals.get('protein_g', daily_totals.get('protein', 0)):.1f} г")
-    lines.append(f"🥑 Жиры: {daily_totals.get('fat_total_g', daily_totals.get('fat', 0)):.1f} г")
-    lines.append(f"🍩 Углеводы: {daily_totals.get('carbohydrates_total_g', daily_totals.get('carbs', 0)):.1f} г")
+    lines.append(f"{EMOJI_MAP['calories']} Калории: {daily_totals.get('calories', 0):.0f} ккал")
+    lines.append(
+        f"{EMOJI_MAP['protein']} Белки: {daily_totals.get('protein_g', daily_totals.get('protein', 0)):.1f} г"
+    )
+    lines.append(f"{EMOJI_MAP['fat']} Жиры: {daily_totals.get('fat_total_g', daily_totals.get('fat', 0)):.1f} г")
+    lines.append(
+        f"{EMOJI_MAP['carbs']} Углеводы: {daily_totals.get('carbohydrates_total_g', daily_totals.get('carbs', 0)):.1f} г"
+    )
     
     return "\n".join(lines)
 

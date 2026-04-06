@@ -1,5 +1,6 @@
 """Функции форматирования текста."""
 from database.models import KbjuSettings
+from utils.emoji_map import EMOJI_MAP
 
 
 def format_strategy_text(
@@ -59,10 +60,10 @@ def format_kbju_goal_text(
     if maintenance_calories is None:
         return (
             "🎯 Я настроил твою дневную норму КБЖУ!\n\n"
-            f"🔥 Калории: <b>{calories:.0f} ккал</b>\n"
-            f"💪 Белки: <b>{protein:.0f} г</b>\n"
-            f"🧈 Жиры: <b>{fat:.0f} г</b>\n"
-            f"🍞 Углеводы: <b>{carbs:.0f} г</b>\n\n"
+            f"{EMOJI_MAP['calories']} Калории: <b>{calories:.0f} ккал</b>\n"
+            f"{EMOJI_MAP['protein']} Белки: <b>{protein:.0f} г</b>\n"
+            f"{EMOJI_MAP['fat']} Жиры: <b>{fat:.0f} г</b>\n"
+            f"{EMOJI_MAP['carbs']} Углеводы: <b>{carbs:.0f} г</b>\n\n"
             f"Цель: <b>{goal_label}</b>\n\n"
             "Теперь в разделе КБЖУ я буду сравнивать твой рацион с этой целью.\n"
             "В любой момент можно изменить параметры через кнопку «🎯 Цель / Норма КБЖУ»."
@@ -77,9 +78,9 @@ def format_kbju_goal_text(
         f"С учетом активности: <b>{maintenance_calories:.0f} ккал</b>\n"
         f"{goal_line}\n"
         f"Твоя цель: <b>{calories:.0f} ккал</b>\n\n"
-        f"💪 Белки: <b>{protein:.0f} г</b>\n"
-        f"🧈 Жиры: <b>{fat:.0f} г</b>\n"
-        f"🍞 Углеводы: <b>{carbs:.0f} г</b>\n\n"
+        f"{EMOJI_MAP['protein']} Белки: <b>{protein:.0f} г</b>\n"
+        f"{EMOJI_MAP['fat']} Жиры: <b>{fat:.0f} г</b>\n"
+        f"{EMOJI_MAP['carbs']} Углеводы: <b>{carbs:.0f} г</b>\n\n"
         "Теперь в разделе КБЖУ я буду сравнивать твой рацион с этой целью.\n"
         "В любой момент можно изменить параметры через кнопку «🎯 Цель / Норма КБЖУ»."
     )
@@ -120,10 +121,10 @@ def format_current_kbju_goal(settings: KbjuSettings) -> str:
     goal_label = get_kbju_goal_label(settings.goal)
     return (
         "🎯 Твоя текущая цель по КБЖУ:\n\n"
-        f"🔥 Калории: <b>{settings.calories:.0f} ккал</b>\n"
-        f"💪 Белки: <b>{settings.protein:.0f} г</b>\n"
-        f"🧈 Жиры: <b>{settings.fat:.0f} г</b>\n"
-        f"🍞 Углеводы: <b>{settings.carbs:.0f} г</b>\n\n"
+        f"{EMOJI_MAP['calories']} Калории: <b>{settings.calories:.0f} ккал</b>\n"
+        f"{EMOJI_MAP['protein']} Белки: <b>{settings.protein:.0f} г</b>\n"
+        f"{EMOJI_MAP['fat']} Жиры: <b>{settings.fat:.0f} г</b>\n"
+        f"{EMOJI_MAP['carbs']} Углеводы: <b>{settings.carbs:.0f} г</b>\n\n"
         f"Цель: <b>{goal_label}</b>"
     )
 

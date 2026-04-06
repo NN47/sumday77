@@ -9,6 +9,7 @@ from aiogram import Router
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import activity_analysis_menu, push_menu_stack
+from utils.emoji_map import EMOJI_MAP
 from utils.calendar_utils import (
     build_activity_analysis_calendar_keyboard,
     build_activity_analysis_day_actions_keyboard,
@@ -220,10 +221,10 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
         carbs_percent = (total_carbs / goal_carbs * 100) if goal_carbs > 0 else 0
         
         meals_summary = (
-            f"Калории: {total_calories:.0f} / {goal_calories:.0f} ккал ({calories_percent:.0f}%), "
-            f"Белки: {total_protein:.1f} / {goal_protein:.1f} г ({protein_percent:.0f}%), "
-            f"Жиры: {total_fat:.1f} / {goal_fat:.1f} г ({fat_percent:.0f}%), "
-            f"Углеводы: {total_carbs:.1f} / {goal_carbs:.1f} г ({carbs_percent:.0f}%)."
+            f"{EMOJI_MAP['calories']} Калории: {total_calories:.0f} / {goal_calories:.0f} ккал ({calories_percent:.0f}%), "
+            f"{EMOJI_MAP['protein']} Белки: {total_protein:.1f} / {goal_protein:.1f} г ({protein_percent:.0f}%), "
+            f"{EMOJI_MAP['fat']} Жиры: {total_fat:.1f} / {goal_fat:.1f} г ({fat_percent:.0f}%), "
+            f"{EMOJI_MAP['carbs']} Углеводы: {total_carbs:.1f} / {goal_carbs:.1f} г ({carbs_percent:.0f}%)."
         )
         
         kbju_goal_summary = (
@@ -232,10 +233,10 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
         )
     else:
         meals_summary = (
-            f"Калории: {total_calories:.0f} ккал, "
-            f"Белки: {total_protein:.1f} г, "
-            f"Жиры: {total_fat:.1f} г, "
-            f"Углеводы: {total_carbs:.1f} г."
+            f"{EMOJI_MAP['calories']} Калории: {total_calories:.0f} ккал, "
+            f"{EMOJI_MAP['protein']} Белки: {total_protein:.1f} г, "
+            f"{EMOJI_MAP['fat']} Жиры: {total_fat:.1f} г, "
+            f"{EMOJI_MAP['carbs']} Углеводы: {total_carbs:.1f} г."
         )
         kbju_goal_summary = "Цель по КБЖУ ещё не настроена."
     
