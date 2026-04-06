@@ -363,9 +363,10 @@ def build_kbju_weight_values_inline(range_min: int, range_max: int) -> InlineKey
 
 kbju_activity_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🪑 Мало движения")],
-        [KeyboardButton(text="🚶 Умеренная активность")],
-        [KeyboardButton(text="🏋️ Тренировки 3–5 раз/нед")],
+        [KeyboardButton(text="🪑 Сидячий\nОфис или учеба")],
+        [KeyboardButton(text="🚶 Немного активный\nМного ходьбы")],
+        [KeyboardButton(text="🏃 Активный\nРегулярные тренировки")],
+        [KeyboardButton(text="🏋️ Очень активный\nФизическая работа или спорт")],
         [main_menu_button],
     ],
     resize_keyboard=True,
@@ -373,9 +374,10 @@ kbju_activity_menu = ReplyKeyboardMarkup(
 
 kbju_activity_inline = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="🪑 Мало движения", callback_data="kbju_activity:low")],
-        [InlineKeyboardButton(text="🚶 Умеренная активность", callback_data="kbju_activity:medium")],
-        [InlineKeyboardButton(text="🏋️ Тренировки 3–5 раз/нед", callback_data="kbju_activity:high")],
+        [InlineKeyboardButton(text="🪑 Сидячий\nОфис или учеба", callback_data="kbju_activity:sedentary")],
+        [InlineKeyboardButton(text="🚶 Немного активный\nМного ходьбы", callback_data="kbju_activity:light")],
+        [InlineKeyboardButton(text="🏃 Активный\nРегулярные тренировки", callback_data="kbju_activity:moderate")],
+        [InlineKeyboardButton(text="🏋️ Очень активный\nФизическая работа или спорт", callback_data="kbju_activity:active")],
     ],
 )
 

@@ -19,15 +19,18 @@ DEFAULT_HEIGHT = 170.0
 DEFAULT_WEIGHT = 70.0
 
 ACTIVITY_MULTIPLIERS: dict[str, float] = {
-    "minimal": 1.2,
-    "low": 1.375,
+    "sedentary": 1.2,
     "light": 1.375,
-    "moderate": 1.55,
-    "medium": 1.55,
-    "high": 1.725,
-    "very_high": 1.9,
+    "moderate": 1.45,
+    "active": 1.6,
+    # Legacy aliases for previously saved onboarding values
+    "minimal": 1.2,
+    "low": 1.2,
+    "medium": 1.45,
+    "high": 1.6,
+    "very_high": 1.6,
 }
-DEFAULT_ACTIVITY = "medium"
+DEFAULT_ACTIVITY = "moderate"
 
 GOAL_MULTIPLIERS: dict[str, float] = {
     "loss": 0.85,

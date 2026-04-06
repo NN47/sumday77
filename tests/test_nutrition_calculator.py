@@ -14,6 +14,7 @@ calculate_nutrition_profile = module.calculate_nutrition_profile
 calculate_bmr = module.calculate_bmr
 calculate_tdee = module.calculate_tdee
 apply_goal = module.apply_goal
+get_activity_multiplier = module.get_activity_multiplier
 
 
 class NutritionCalculatorTests(unittest.TestCase):
@@ -62,6 +63,13 @@ class NutritionCalculatorTests(unittest.TestCase):
         self.assertLess(profile.target_calories, profile.tdee)
         self.assertGreater(profile.tdee, profile.bmr)
         self.assertEqual(profile.goal_explanation, "Для похудения: −10%")
+
+
+    def test_activity_multipliers_match_onboarding_levels(self):
+        self.assertEqual(get_activity_multiplier("sedentary"), 1.2)
+        self.assertEqual(get_activity_multiplier("light"), 1.375)
+        self.assertEqual(get_activity_multiplier("moderate"), 1.45)
+        self.assertEqual(get_activity_multiplier("active"), 1.6)
 
     def test_tdee_grows_with_activity(self):
         base_data = {

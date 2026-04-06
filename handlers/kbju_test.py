@@ -422,11 +422,8 @@ async def handle_kbju_test_goal_callback(callback: CallbackQuery, state: FSMCont
             step=6,
             total_steps=BASE_TOTAL_STEPS,
             text=(
-                "Опиши свой обычный уровень активности:\n\n"
-                "🪑 <b>Мало движения</b> — сидячая работа, мало ходьбы, тренировки редкие или отсутствуют.\n"
-                "🚶 <b>Умеренная активность</b> — обычно 7–10 тыс. шагов в день или лёгкие тренировки 1–3 раза в неделю.\n"
-                "🏋️ <b>Тренировки 3–5 раз/нед</b> — регулярные тренировки и в целом активный ритм дня.\n\n"
-                "Выбери вариант, который больше похож на твою обычную неделю."
+                "Как проходит твой обычный день?\n\n"
+                "Это нужно для расчета калорий."
             ),
         ),
         reply_markup=kbju_activity_inline,
@@ -477,11 +474,8 @@ async def handle_kbju_test_goal_speed_callback(callback: CallbackQuery, state: F
             step=7,
             total_steps=TOTAL_STEPS_WITH_GOAL_SPEED,
             text=(
-                "Опиши свой обычный уровень активности:\n\n"
-                "🪑 <b>Мало движения</b> — сидячая работа, мало ходьбы, тренировки редкие или отсутствуют.\n"
-                "🚶 <b>Умеренная активность</b> — обычно 7–10 тыс. шагов в день или лёгкие тренировки 1–3 раза в неделю.\n"
-                "🏋️ <b>Тренировки 3–5 раз/нед</b> — регулярные тренировки и в целом активный ритм дня.\n\n"
-                "Выбери вариант, который больше похож на твою обычную неделю."
+                "Как проходит твой обычный день?\n\n"
+                "Это нужно для расчета калорий."
             ),
         ),
         reply_markup=kbju_activity_inline,
@@ -502,7 +496,7 @@ async def handle_kbju_test_activity_callback(callback: CallbackQuery, state: FSM
     """Обрабатывает выбор активности в тесте КБЖУ и сохраняет настройки."""
     user_id = str(callback.from_user.id)
     activity = callback.data.split(":", maxsplit=1)[1]
-    if activity not in {"low", "medium", "high"}:
+    if activity not in {"sedentary", "light", "moderate", "active"}:
         await callback.answer("Не удалось определить активность", show_alert=True)
         return
 
