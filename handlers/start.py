@@ -54,15 +54,6 @@ async def start(message: Message, state: FSMContext):
             is_new_user = True
 
     if not has_completed_kbju_test(user_id):
-        if is_new_user:
-            await message.answer(
-                "Привет! Для начала работы с ботом пройди короткий стартовый тест КБЖУ — он рассчитает твою норму и откроет все разделы."
-            )
-        else:
-            await message.answer(
-                "У тебя пока нет сохранённой цели КБЖУ.\n"
-                "Чтобы пользоваться ботом дальше, сначала пройди короткий стартовый тест."
-            )
         await restart_required_kbju_test(message, state)
         return
     
