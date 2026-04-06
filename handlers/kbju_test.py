@@ -2,7 +2,7 @@
 import logging
 from datetime import date
 from aiogram import Router
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from states.user_states import KbjuTestStates
 from utils.keyboards import (
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 BASE_TOTAL_STEPS = 6
-TOTAL_STEPS_WITH_GOAL_SPEED = 7
+TOTAL_STEPS_WITH_TARGET_WEIGHT = 8
 
 BASE_STEP_BY_STATE = {
     KbjuTestStates.entering_gender.state: 1,
@@ -131,6 +131,27 @@ WEIGHT_RANGE_MAP = {
     "201_300": (201, 300, "201-300 кг"),
     "301_500": (301, 500, "301-500 кг"),
 }
+
+
+def build_weight_range_inline(prefix: str) -> InlineKeyboardMarkup:
+    """Строит inline-клавиатуру диапазонов веса с указанным callback-префиксом."""
+    rows = [
+        [("до 50 кг", "40_50"), ("51–60 кг", "51_60")],
+        [("61–70 кг", "61_70"), ("71–80 кг", "71_80")],
+        [("81–90 кг", "81_90"), ("91–100 кг", "91_100")],
+        [("101–120 кг", "101_120"), ("121–150 кг", "121_150")],
+        [("151–200 кг", "151_200"), ("201–300 кг", "201_300")],
+        [("301–500 кг", "301_500")],
+    ]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=text, callback_data=f"{prefix}:{value}") for text, value in row]
+            for row in rows
+        ]
+    )
+
+
+kbju_target_weight_range_inline = build_weight_range_inline("kbju_target_weight_range")
 
 def save_weight_from_test(user_id: str, data: dict) -> None:
     """Сохраняет вес из теста КБЖУ для других разделов (например, нормы воды)."""
@@ -395,20 +416,18 @@ async def handle_kbju_test_goal_callback(callback: CallbackQuery, state: FSMCont
     await callback.answer()
 
     if goal in {"loss", "gain"}:
-        await state.set_state(KbjuTestStates.entering_goal_speed)
-        speed_menu = kbju_goal_speed_loss_inline if goal == "loss" else kbju_goal_speed_gain_inline
+        await state.set_state(KbjuTestStates.entering_target_weight)
 
-        push_menu_stack(callback.message.bot, kbju_goal_speed_loss_menu if goal == "loss" else kbju_goal_speed_gain_menu)
+        push_menu_stack(callback.message.bot, kbju_goal_menu)
         await callback.message.answer(
             format_dynamic_step_text(
                 step=6,
-                total_steps=TOTAL_STEPS_WITH_GOAL_SPEED,
+                total_steps=TOTAL_STEPS_WITH_TARGET_WEIGHT,
                 text=(
-                    "Какой темп тебе комфортнее?\n\n"
-                    "Темп можно изменить позже в разделе 🎯 Цель / Норма КБЖУ"
+                    "Укажи целевой вес (в кг), к которому хочешь прийти:"
                 ),
             ),
-            reply_markup=speed_menu,
+            reply_markup=kbju_target_weight_range_inline,
         )
         return
 
@@ -426,6 +445,77 @@ async def handle_kbju_test_goal_callback(callback: CallbackQuery, state: FSMCont
             ),
         ),
         reply_markup=kbju_activity_inline,
+    )
+
+
+@router.message(KbjuTestStates.entering_target_weight)
+async def handle_kbju_test_target_weight(message: Message):
+    """Подсказывает, что целевой вес выбирается через inline-кнопки."""
+    await message.answer("Выбери диапазон целевого веса кнопкой ниже 👇", reply_markup=kbju_target_weight_range_inline)
+
+
+@router.callback_query(
+    KbjuTestStates.entering_target_weight,
+    lambda c: c.data is not None and c.data.startswith("kbju_target_weight_range:")
+)
+async def handle_kbju_test_target_weight_range_callback(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор диапазона целевого веса."""
+    weight_range_key = callback.data.split(":", maxsplit=1)[1]
+    weight_range_data = WEIGHT_RANGE_MAP.get(weight_range_key)
+    if weight_range_data is None:
+        await callback.answer("Не удалось определить диапазон веса", show_alert=True)
+        return
+
+    range_min, range_max, range_label = weight_range_data
+    await state.update_data(target_weight_range=range_label)
+    await callback.answer()
+    await callback.message.answer(
+        "Супер! Теперь выбери точный целевой вес:",
+        reply_markup=build_kbju_weight_values_inline(range_min, range_max, callback_prefix="kbju_target_weight_value"),
+    )
+
+
+@router.callback_query(
+    KbjuTestStates.entering_target_weight,
+    lambda c: c.data is not None and c.data.startswith("kbju_target_weight_value:")
+)
+async def handle_kbju_test_target_weight_value_callback(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор точного целевого веса."""
+    raw_weight = callback.data.split(":", maxsplit=1)[1]
+    try:
+        target_weight = float(raw_weight)
+        if target_weight <= 0 or target_weight > 500:
+            raise ValueError
+    except ValueError:
+        await callback.answer("Не удалось определить целевой вес", show_alert=True)
+        return
+
+    data = await state.get_data()
+    goal = data.get("goal")
+    current_weight = data.get("weight")
+    if goal == "loss" and current_weight is not None and target_weight >= float(current_weight):
+        await callback.answer("Для похудения цель должна быть меньше текущего веса", show_alert=True)
+        return
+    if goal == "gain" and current_weight is not None and target_weight <= float(current_weight):
+        await callback.answer("Для набора цель должна быть больше текущего веса", show_alert=True)
+        return
+
+    await state.update_data(target_weight=target_weight)
+    await state.set_state(KbjuTestStates.entering_goal_speed)
+    await callback.answer()
+
+    speed_menu = kbju_goal_speed_loss_inline if goal == "loss" else kbju_goal_speed_gain_inline
+    push_menu_stack(callback.message.bot, kbju_goal_speed_loss_menu if goal == "loss" else kbju_goal_speed_gain_menu)
+    await callback.message.answer(
+        format_dynamic_step_text(
+            step=7,
+            total_steps=TOTAL_STEPS_WITH_TARGET_WEIGHT,
+            text=(
+                "Какой темп тебе комфортнее?\n\n"
+                "Темп можно изменить позже в разделе 🎯 Цель / Норма КБЖУ"
+            ),
+        ),
+        reply_markup=speed_menu,
     )
 
 @router.message(KbjuTestStates.entering_goal_speed)
@@ -468,8 +558,8 @@ async def handle_kbju_test_goal_speed_callback(callback: CallbackQuery, state: F
     push_menu_stack(callback.message.bot, kbju_activity_menu)
     await callback.message.answer(
         format_dynamic_step_text(
-            step=7,
-            total_steps=TOTAL_STEPS_WITH_GOAL_SPEED,
+            step=8,
+            total_steps=TOTAL_STEPS_WITH_TARGET_WEIGHT,
             text=(
                 "Как проходит твой обычный день?\n\n"
                 "Это нужно для расчета калорий."
@@ -521,6 +611,7 @@ async def handle_kbju_test_activity_callback(callback: CallbackQuery, state: FSM
         activity=activity,
     )
     save_weight_from_test(user_id=user_id, data=data)
+    WeightRepository.set_target_weight(user_id=user_id, target_weight=data.get("target_weight"))
 
     await state.clear()
 

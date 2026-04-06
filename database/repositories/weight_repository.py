@@ -4,7 +4,7 @@ import calendar
 from datetime import date, timedelta
 from typing import Optional, Set
 from database.session import get_db_session
-from database.models import Weight, Measurement
+from database.models import Weight, Measurement, User
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +103,31 @@ class WeightRepository:
                 except (ValueError, TypeError):
                     return None
             return None
+
+    @staticmethod
+    def set_target_weight(user_id: str, target_weight: Optional[float]) -> None:
+        """Сохраняет целевой вес пользователя (кг)."""
+        with get_db_session() as session:
+            user = session.query(User).filter(User.user_id == user_id).first()
+            if not user:
+                user = User(user_id=user_id)
+                session.add(user)
+                session.flush()
+            user.target_weight = target_weight
+            session.commit()
+            logger.info(f"Updated target weight for user {user_id}: {target_weight}")
+
+    @staticmethod
+    def get_target_weight(user_id: str) -> Optional[float]:
+        """Возвращает целевой вес пользователя (кг)."""
+        with get_db_session() as session:
+            user = session.query(User).filter(User.user_id == user_id).first()
+            if not user or user.target_weight is None:
+                return None
+            try:
+                return float(user.target_weight)
+            except (TypeError, ValueError):
+                return None
     
     @staticmethod
     def update_weight(weight_id: int, user_id: str, value: str) -> bool:

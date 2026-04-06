@@ -153,20 +153,23 @@ async def my_weight(message: Message):
     change_7 = _format_change(current_weight, _to_float_weight(reference_7.value) if reference_7 else None)
     change_30 = _format_change(current_weight, _to_float_weight(reference_30.value) if reference_30 else None)
 
-    target_weight = None
+    target_weight = WeightRepository.get_target_weight(user_id)
     to_goal_text = "Цель веса не задана"
     progress_text = "Прогресс: недоступен"
     if target_weight is not None:
-        remaining = current_weight - target_weight
-        if remaining <= 0:
+        delta_to_target = target_weight - current_weight
+        if abs(delta_to_target) < 0.05:
             to_goal_text = "Цель достигнута 🎉"
             progress_text = f"Прогресс:\n{_build_progress_bar(100)}"
         else:
             start_weight = _to_float_weight(weights[-1].value)
-            if start_weight and start_weight > target_weight:
-                progress = (start_weight - current_weight) / (start_weight - target_weight) * 100
+            if start_weight is not None and abs(target_weight - start_weight) > 0:
+                progress = (current_weight - start_weight) / (target_weight - start_weight) * 100
                 progress_text = f"Прогресс:\n{_build_progress_bar(progress)}"
-            to_goal_text = f"Осталось: {remaining:.1f} кг"
+            if delta_to_target > 0:
+                to_goal_text = f"Осталось набрать: {delta_to_target:.1f} кг"
+            else:
+                to_goal_text = f"Осталось: {abs(delta_to_target):.1f} кг"
 
     trend_text = _detect_trend(weights[:3])
 

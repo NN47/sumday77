@@ -64,6 +64,7 @@ class KbjuTestStates(StatesGroup):
     entering_height = State()
     entering_weight = State()
     entering_goal = State()
+    entering_target_weight = State()
     entering_goal_speed = State()
     entering_activity = State()
     entering_manual_calories = State()

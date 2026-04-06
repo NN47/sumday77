@@ -20,6 +20,7 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
     user_id = Column(String, unique=True, nullable=False)
+    target_weight = Column(Float, nullable=True)
 
 
 class Workout(Base):
