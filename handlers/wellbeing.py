@@ -139,14 +139,15 @@ def build_text_step_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-async def start_note_flow(message: Message, state: FSMContext, target_date: date):
+async def start_note_flow(message: Message, state: FSMContext, target_date: date, user_id: str | None = None):
     """Запускает сценарий добавления/редактирования заметки."""
-    user_id = str(message.from_user.id)
+    user_id = user_id or str(message.from_user.id)
     note = NoteRepository.get_note_for_date(user_id, target_date)
 
     await state.clear()
     await state.set_state(WellbeingStates.note_rating)
     await state.update_data(
+        note_user_id=user_id,
         note_date=target_date.isoformat(),
         day_rating=note.day_rating if note else None,
         factors=note.factors if note else [],
@@ -162,14 +163,14 @@ async def start_note_flow(message: Message, state: FSMContext, target_date: date
 @router.callback_query(lambda c: c.data == "edit_note")
 async def edit_or_add_note(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    await start_note_flow(callback.message, state, date.today())
+    await start_note_flow(callback.message, state, date.today(), user_id=str(callback.from_user.id))
 
 
 @router.callback_query(lambda c: c.data.startswith("note_cal_edit:"))
 async def edit_note_from_calendar(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     target_date = date.fromisoformat(callback.data.split(":")[1])
-    await start_note_flow(callback.message, state, target_date)
+    await start_note_flow(callback.message, state, target_date, user_id=str(callback.from_user.id))
 
 
 @router.callback_query(lambda c: c.data.startswith("note_rate_"))
@@ -224,9 +225,9 @@ async def capture_note_text(message: Message, state: FSMContext):
     await message.answer("Текст обновлён. Нажми 💾 Сохранить или ⏭ Пропустить.", reply_markup=build_text_step_keyboard())
 
 
-async def persist_note(message: Message, state: FSMContext):
+async def persist_note(message: Message, state: FSMContext, user_id: str | None = None):
     data = await state.get_data()
-    user_id = str(message.from_user.id)
+    user_id = user_id or data.get("note_user_id") or str(message.from_user.id)
     note_date = date.fromisoformat(data.get("note_date", date.today().isoformat()))
     day_rating = int(data.get("day_rating") or 3)
     factors = data.get("factors", [])
@@ -259,7 +260,7 @@ async def finalize_note(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     if callback.data == "skip_note":
         await state.update_data(note_text="")
-    await persist_note(callback.message, state)
+    await persist_note(callback.message, state, user_id=str(callback.from_user.id))
 
 
 @router.callback_query(lambda c: c.data == "back_to_rating")
