@@ -41,6 +41,7 @@ measurements_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="➕ Добавить замеры")],
         [KeyboardButton(text="📅 История замеров")],
+        [KeyboardButton(text="📆 Календарь замеров")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,
