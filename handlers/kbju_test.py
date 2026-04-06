@@ -154,7 +154,7 @@ async def restart_required_kbju_test(message: Message, state: FSMContext):
 
     push_menu_stack(message.bot, kbju_gender_menu)
     await message.answer(
-        "Для начала работы с ботом нужно пройти короткий стартовый тест КБЖУ.\n\n"
+        "Привет! Для начала работы с ботом пройди короткий стартовый тест КБЖУ — он рассчитает твою норму и откроет все разделы.\n\n"
         + format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_gender.state], "Для начала укажи пол:"),
         reply_markup=kbju_gender_inline,
     )
