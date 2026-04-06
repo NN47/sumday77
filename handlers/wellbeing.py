@@ -1,4 +1,4 @@
-"""Обработчики для самочувствия."""
+"""Обработчики для заметок и самочувствия."""
 import logging
 import random
 from datetime import date
@@ -75,10 +75,10 @@ async def show_wellbeing_menu(message: Message, state: FSMContext, text: str):
 
 @router.message(lambda m: m.text == WELLBEING_BUTTON_TEXT)
 async def start_wellbeing(message: Message, state: FSMContext):
-    """Стартует меню самочувствия."""
+    """Стартует меню заметок."""
     await state.clear()
     text = (
-        "<b>Самочувствие</b>\n"
+        "<b>Заметки</b>\n"
         "Как хочешь отметить состояние сегодня?\n\n"
         "<i>Оба варианта учитываются в анализе.</i>"
     )

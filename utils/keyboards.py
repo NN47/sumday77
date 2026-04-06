@@ -7,21 +7,22 @@ LEGACY_MAIN_MENU_BUTTON_TEXT = "🏠 Главное меню"
 ONBOARDING_OPEN_MENU_BUTTON_TEXT = "Открыть меню"
 MAIN_MENU_BUTTON_ALIASES = {MAIN_MENU_BUTTON_TEXT, LEGACY_MAIN_MENU_BUTTON_TEXT, ONBOARDING_OPEN_MENU_BUTTON_TEXT}
 main_menu_button = KeyboardButton(text=MAIN_MENU_BUTTON_TEXT)
-WELLBEING_BUTTON_TEXT = "🙂 Самочувствие"
-WELLBEING_AND_PROCEDURES_BUTTON_TEXT = "🙂 Самочувствие/\n💆 Процедуры"
-WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT = "⚖️ Вес/\n📏 Замеры"
-TRAINING_BUTTON_TEXT = "🏋️ Журнал активности"
+WELLBEING_BUTTON_TEXT = "📝 Заметки"
+WELLBEING_AND_PROCEDURES_BUTTON_TEXT = "📝 Заметки/\n💆 Процедуры"
+WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT = "⚖️ Вес"
+TRAINING_BUTTON_TEXT = "🚴 Активность"
 LEGACY_TRAINING_BUTTON_TEXT = "🏋️ Тренировка"
 MEALS_BUTTON_TEXT = "🍱 Дневник питания"
 LEGACY_MEALS_BUTTON_TEXT = "🍱 КБЖУ"
+AI_ANALYSIS_BUTTON_TEXT = "📊 ИИ анализ"
 
 # Главное меню
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text=TRAINING_BUTTON_TEXT), KeyboardButton(text=MEALS_BUTTON_TEXT)],
-        [KeyboardButton(text="💊 Добавки"), KeyboardButton(text="💧 Контроль воды")],
+        [KeyboardButton(text=MEALS_BUTTON_TEXT)],
+        [KeyboardButton(text=TRAINING_BUTTON_TEXT), KeyboardButton(text="💧 Контроль воды")],
         [KeyboardButton(text=WELLBEING_AND_PROCEDURES_BUTTON_TEXT), KeyboardButton(text=WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT)],
-        [KeyboardButton(text="📊 ИИ анализ деятельности")],
+        [KeyboardButton(text="💊 Добавки"), KeyboardButton(text=AI_ANALYSIS_BUTTON_TEXT)],
         [KeyboardButton(text="⚙️ Настройки"), main_menu_button],
     ],
     resize_keyboard=True

@@ -61,7 +61,7 @@ async def show_training_menu(message: Message, state: FSMContext):
     
     push_menu_stack(message.bot, training_menu)
     await message.answer(
-        f"🏋️ Тренировки\n\n{workouts_text}\n\nВыбери действие:",
+        f"🚴 Активность\n\n{workouts_text}\n\nВыбери действие:",
         reply_markup=training_menu,
         parse_mode="HTML",
     )
