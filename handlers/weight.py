@@ -302,7 +302,7 @@ async def add_weight_start(message: Message, state: FSMContext):
         )
     else:
         # Если веса нет, создаем новую запись
-        await state.update_data(entry_date=target_date.isoformat())
+        await state.update_data(entry_date=target_date.isoformat(), weight_id=None)
         await state.set_state(WeightStates.entering_weight)
         await message.answer(f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nВведи свой вес в килограммах (например: 72.5):")
 
@@ -892,7 +892,7 @@ async def add_weight_from_calendar(callback: CallbackQuery, state: FSMContext):
         )
     else:
         # Если веса нет, создаем новую запись
-        await state.update_data(entry_date=target_date.isoformat())
+        await state.update_data(entry_date=target_date.isoformat(), weight_id=None)
         await state.set_state(WeightStates.entering_weight)
         await callback.message.answer(f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nВведи свой вес в килограммах (например: 72.5):")
 
@@ -918,7 +918,7 @@ async def add_measurements_from_calendar(callback: CallbackQuery, state: FSMCont
             "грудь=100, талия=80, руки=35"
         )
     else:
-        await state.update_data(entry_date=target_date.isoformat())
+        await state.update_data(entry_date=target_date.isoformat(), measurement_id=None)
         await state.set_state(WeightStates.entering_measurements)
         await callback.message.answer(
             f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\n"
