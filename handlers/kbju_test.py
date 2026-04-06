@@ -47,18 +47,19 @@ BASE_STEP_BY_STATE = {
     KbjuTestStates.entering_goal.state: 5,
 }
 
-GOAL_SPEED_PERCENT_TO_LABEL = {
-    "loss": {
-        10: "🌿 Мягко — 10%",
-        15: "⚖️ Стандарт — 15%",
-        20: "🔥 Быстро — 20%",
-    },
-    "gain": {
-        10: "🌿 Мягко — 10%",
-        15: "⚖️ Стандарт — 15%",
-        20: "🚀 Быстрее — 20%",
-    },
+GOAL_SPEED = {
+    "slow": {"percent": 10, "kg": 0.3},
+    "normal": {"percent": 15, "kg": 0.5},
+    "fast": {"percent": 20, "kg": 0.7},
 }
+
+GOAL_SPEED_TO_LABEL = {
+    "slow": "🌿 Медленно — ~0.3 кг в неделю",
+    "normal": "⚖️ Стандарт — ~0.5 кг в неделю",
+    "fast": "🔥 Быстро — ~0.7 кг в неделю",
+}
+
+GOAL_SPEED_PERCENT_TO_KEY = {config["percent"]: key for key, config in GOAL_SPEED.items()}
 
 AGE_MAP = {
     "under_18": 16,
@@ -403,7 +404,10 @@ async def handle_kbju_test_goal_callback(callback: CallbackQuery, state: FSMCont
             format_dynamic_step_text(
                 step=6,
                 total_steps=TOTAL_STEPS_WITH_GOAL_SPEED,
-                text="Какой темп тебе комфортнее?",
+                text=(
+                    "Какой темп тебе комфортнее?\n\n"
+                    "Темп можно изменить позже в разделе 🎯 Цель / Норма КБЖУ"
+                ),
             ),
             reply_markup=speed_menu,
         )
@@ -450,17 +454,18 @@ async def handle_kbju_test_goal_speed_callback(callback: CallbackQuery, state: F
         await callback.answer("Сначала выбери цель", show_alert=True)
         return
 
-    raw_value = callback.data.split(":", maxsplit=1)[1]
-    try:
-        goal_percent = int(raw_value)
-    except ValueError:
+    raw_speed_value = callback.data.split(":", maxsplit=1)[1]
+    speed_key = raw_speed_value
+    if raw_speed_value.isdigit():
+        speed_key = GOAL_SPEED_PERCENT_TO_KEY.get(int(raw_speed_value), "")
+
+    speed_config = GOAL_SPEED.get(speed_key)
+    if speed_config is None:
         await callback.answer("Не удалось определить темп", show_alert=True)
         return
 
-    speed_label = GOAL_SPEED_PERCENT_TO_LABEL[goal].get(goal_percent)
-    if speed_label is None:
-        await callback.answer("Не удалось определить темп", show_alert=True)
-        return
+    goal_percent = speed_config["percent"]
+    speed_label = GOAL_SPEED_TO_LABEL[speed_key]
 
     await state.update_data(goal_speed_label=speed_label, goal_percent=goal_percent)
     await state.set_state(KbjuTestStates.entering_activity)
