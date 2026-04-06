@@ -399,9 +399,9 @@ kbju_goal_inline = InlineKeyboardMarkup(
 
 kbju_goal_speed_loss_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🌿 Мягко — 10%")],
-        [KeyboardButton(text="⚖️ Стандарт — 15%")],
-        [KeyboardButton(text="🔥 Быстро — 20%")],
+        [KeyboardButton(text="🌿 Медленно — ~0.3 кг в неделю")],
+        [KeyboardButton(text="⚖️ Стандарт — ~0.5 кг в неделю")],
+        [KeyboardButton(text="🔥 Быстро — ~0.7 кг в неделю")],
         [main_menu_button],
     ],
     resize_keyboard=True,
@@ -409,17 +409,17 @@ kbju_goal_speed_loss_menu = ReplyKeyboardMarkup(
 
 kbju_goal_speed_loss_inline = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="🌿 Мягко — 10%", callback_data="kbju_goal_speed:10")],
-        [InlineKeyboardButton(text="⚖️ Стандарт — 15%", callback_data="kbju_goal_speed:15")],
-        [InlineKeyboardButton(text="🔥 Быстро — 20%", callback_data="kbju_goal_speed:20")],
+        [InlineKeyboardButton(text="🌿 Медленно — ~0.3 кг в неделю", callback_data="kbju_goal_speed:slow")],
+        [InlineKeyboardButton(text="⚖️ Стандарт — ~0.5 кг в неделю", callback_data="kbju_goal_speed:normal")],
+        [InlineKeyboardButton(text="🔥 Быстро — ~0.7 кг в неделю", callback_data="kbju_goal_speed:fast")],
     ],
 )
 
 kbju_goal_speed_gain_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🌿 Мягко — 10%")],
-        [KeyboardButton(text="⚖️ Стандарт — 15%")],
-        [KeyboardButton(text="🚀 Быстрее — 20%")],
+        [KeyboardButton(text="🌿 Медленно — ~0.3 кг в неделю")],
+        [KeyboardButton(text="⚖️ Стандарт — ~0.5 кг в неделю")],
+        [KeyboardButton(text="🔥 Быстро — ~0.7 кг в неделю")],
         [main_menu_button],
     ],
     resize_keyboard=True,
@@ -427,9 +427,9 @@ kbju_goal_speed_gain_menu = ReplyKeyboardMarkup(
 
 kbju_goal_speed_gain_inline = InlineKeyboardMarkup(
     inline_keyboard=[
-        [InlineKeyboardButton(text="🌿 Мягко — 10%", callback_data="kbju_goal_speed:10")],
-        [InlineKeyboardButton(text="⚖️ Стандарт — 15%", callback_data="kbju_goal_speed:15")],
-        [InlineKeyboardButton(text="🚀 Быстрее — 20%", callback_data="kbju_goal_speed:20")],
+        [InlineKeyboardButton(text="🌿 Медленно — ~0.3 кг в неделю", callback_data="kbju_goal_speed:slow")],
+        [InlineKeyboardButton(text="⚖️ Стандарт — ~0.5 кг в неделю", callback_data="kbju_goal_speed:normal")],
+        [InlineKeyboardButton(text="🔥 Быстро — ~0.7 кг в неделю", callback_data="kbju_goal_speed:fast")],
     ],
 )
 
