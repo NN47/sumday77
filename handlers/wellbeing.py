@@ -1,510 +1,404 @@
-"""Обработчики для заметок и самочувствия."""
+"""Обработчики раздела дневных заметок."""
 import logging
-import random
 from datetime import date
 
 from aiogram import Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from database.repositories.wellbeing_repository import WellbeingRepository
+from database.repositories.note_repository import NoteRepository
 from states.user_states import WellbeingStates
+from utils.calendar_utils import build_notes_calendar_keyboard
 from utils.keyboards import (
-    WELLBEING_BUTTON_TEXT,
     WELLBEING_AND_PROCEDURES_BUTTON_TEXT,
     LEGACY_WELLBEING_AND_PROCEDURES_BUTTON_TEXT,
-    wellbeing_and_procedures_menu,
-    wellbeing_menu,
-    wellbeing_quick_mood_menu,
-    wellbeing_quick_influence_menu,
-    wellbeing_quick_difficulty_menu,
-    wellbeing_comment_menu,
-    push_menu_stack,
+    main_menu,
 )
-from utils.calendar_utils import build_wellbeing_calendar_keyboard, build_wellbeing_day_actions_keyboard
 
 logger = logging.getLogger(__name__)
-
 router = Router()
 
-QUICK_MOOD_OPTIONS = {"😄 Отлично", "🙂 Нормально", "😐 Так себе", "😣 Плохо"}
-QUICK_INFLUENCE_OPTIONS = {
-    "Сон",
-    "Питание",
-    "Нагрузка / тренировка",
-    "Стресс",
-    "Всё было нормально",
+RATING_LABELS = {
+    5: "😄 Отлично",
+    4: "🙂 Нормально",
+    3: "😐 Средне",
+    2: "😞 Плохо",
+    1: "😫 Очень тяжёлый",
 }
-QUICK_DIFFICULTY_OPTIONS = {
-    "Мало энергии",
-    "Голод / тяга к сладкому",
-    "Настроение / мотивация",
-    "Физический дискомфорт",
-    "Всё ок",
-}
-MOOD_NEEDS_DIFFICULTY = {"😐 Так себе", "😣 Плохо"}
 
-QUICK_FINISH_RESPONSES = [
-    "Принял. Учту это в анализе.",
-    "Спасибо, это помогает видеть картину точнее.",
-    "Отметка сохранена. Двигаемся дальше.",
-]
+FACTOR_LABELS = {
+    "energy": "💪 Много энергии",
+    "tired": "😴 Усталость",
+    "headache": "🤕 Головная боль",
+    "bad_sleep": "💤 Плохой сон",
+    "stress": "😈 Стресс",
+    "overeating": "🍔 Переедание",
+    "medicine": "💊 Лекарства",
+    "workout": "🏋️ Тренировка",
+    "productive": "🔥 Продуктивный день",
+    "rest": "🍿 Отдых",
+    "good_mood": "🙏 Хорошее настроение",
+}
+
+FACTOR_CALLBACK_TO_KEY = {
+    "toggle_factor_energy": "energy",
+    "toggle_factor_tired": "tired",
+    "toggle_factor_headache": "headache",
+    "toggle_factor_sleep": "bad_sleep",
+    "toggle_factor_stress": "stress",
+    "toggle_factor_overeat": "overeating",
+    "toggle_factor_medicine": "medicine",
+    "toggle_factor_workout": "workout",
+    "toggle_factor_productive": "productive",
+    "toggle_factor_rest": "rest",
+    "toggle_factor_goodmood": "good_mood",
+}
 
 
 @router.message(
     lambda m: m.text in {WELLBEING_AND_PROCEDURES_BUTTON_TEXT, LEGACY_WELLBEING_AND_PROCEDURES_BUTTON_TEXT}
 )
-async def wellbeing_and_procedures(message: Message, state: FSMContext):
-    """Показывает объединенное меню самочувствия и процедур."""
+async def open_notes_section(message: Message, state: FSMContext):
+    """Открывает раздел заметок за текущий день."""
     await state.clear()
-    push_menu_stack(message.bot, wellbeing_and_procedures_menu)
-    await message.answer(
-        f"{WELLBEING_AND_PROCEDURES_BUTTON_TEXT}\n\nВыбери раздел:",
-        reply_markup=wellbeing_and_procedures_menu,
-    )
-
-COMMENT_FINISH_RESPONSES = [
-    "Сохранил. Я учту это в анализе и рекомендациях.",
-    "Спасибо, такие записи помогают находить закономерности.",
-]
+    await show_notes_day(message, str(message.from_user.id), date.today())
 
 
-async def show_wellbeing_menu(message: Message, state: FSMContext, text: str):
-    """Возвращает пользователя в меню самочувствия с корректным состоянием."""
-    await state.set_state(WellbeingStates.choosing_mode)
-    push_menu_stack(message.bot, wellbeing_menu)
-    await message.answer(text, reply_markup=wellbeing_menu)
+async def show_notes_day(message: Message, user_id: str, target_date: date):
+    """Показывает карточку заметки за дату."""
+    note = NoteRepository.get_note_for_date(user_id, target_date)
 
-
-@router.message(lambda m: m.text == WELLBEING_BUTTON_TEXT)
-async def start_wellbeing(message: Message, state: FSMContext):
-    """Стартует меню заметок."""
-    await state.clear()
-    text = (
-        "<b>Самочувствие</b>\n"
-        "Как хочешь отметить состояние сегодня?\n\n"
-        "<i>Оба варианта учитываются в анализе.</i>"
-    )
-    push_menu_stack(message.bot, wellbeing_menu)
-    await state.set_state(WellbeingStates.choosing_mode)
-    await message.answer(text, reply_markup=wellbeing_menu)
-
-
-@router.message(lambda m: m.text == "📆 Календарь самочувствия")
-async def show_wellbeing_calendar(message: Message, state: FSMContext):
-    """Показывает календарь самочувствия."""
-    await state.clear()
-    user_id = str(message.from_user.id)
-    await show_wellbeing_calendar_view(message, user_id)
-
-
-async def show_wellbeing_calendar_view(
-    message: Message,
-    user_id: str,
-    year: int | None = None,
-    month: int | None = None,
-):
-    """Показывает календарь самочувствия."""
-    today = date.today()
-    year = year or today.year
-    month = month or today.month
-    keyboard = build_wellbeing_calendar_keyboard(user_id, year, month)
-    await message.answer(
-        "📆 Календарь самочувствия\n\nВыбери день, чтобы посмотреть, добавить, изменить или удалить запись:",
-        reply_markup=keyboard,
-    )
-
-
-@router.callback_query(lambda c: c.data.startswith("well_cal_nav:"))
-async def navigate_wellbeing_calendar(callback: CallbackQuery):
-    """Навигация по календарю самочувствия."""
-    await callback.answer()
-    parts = callback.data.split(":")
-    year, month = map(int, parts[1].split("-"))
-    user_id = str(callback.from_user.id)
-    await show_wellbeing_calendar_view(callback.message, user_id, year, month)
-
-
-@router.callback_query(lambda c: c.data.startswith("well_cal_back:"))
-async def back_to_wellbeing_calendar(callback: CallbackQuery):
-    """Возврат к календарю самочувствия."""
-    await callback.answer()
-    parts = callback.data.split(":")
-    year, month = map(int, parts[1].split("-"))
-    user_id = str(callback.from_user.id)
-    await show_wellbeing_calendar_view(callback.message, user_id, year, month)
-
-
-@router.callback_query(lambda c: c.data.startswith("well_cal_day:"))
-async def select_wellbeing_calendar_day(callback: CallbackQuery):
-    """Выбор дня в календаре самочувствия."""
-    await callback.answer()
-    parts = callback.data.split(":")
-    target_date = date.fromisoformat(parts[1])
-    user_id = str(callback.from_user.id)
-    await show_wellbeing_day(callback.message, user_id, target_date)
-
-
-@router.callback_query(lambda c: c.data.startswith("well_cal_add:"))
-async def add_wellbeing_from_calendar(callback: CallbackQuery, state: FSMContext):
-    """Добавляет запись самочувствия из календаря."""
-    await callback.answer()
-    parts = callback.data.split(":")
-    target_date = date.fromisoformat(parts[1])
-    await state.clear()
-    await state.update_data(entry_date=target_date.isoformat(), return_to_calendar=True)
-    await state.set_state(WellbeingStates.choosing_mode)
-    push_menu_stack(callback.message.bot, wellbeing_menu)
-    await callback.message.answer(
-        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nКак хочешь отметить самочувствие?",
-        reply_markup=wellbeing_menu,
-    )
-
-
-@router.callback_query(lambda c: c.data.startswith("well_cal_edit:"))
-async def edit_wellbeing_from_calendar(callback: CallbackQuery, state: FSMContext):
-    """Редактирует запись самочувствия из календаря."""
-    await callback.answer()
-    parts = callback.data.split(":")
-    target_date = date.fromisoformat(parts[1])
-    entry_id = int(parts[2])
-    user_id = str(callback.from_user.id)
-
-    entry = WellbeingRepository.get_entry_by_id(entry_id, user_id)
-    if not entry:
-        await callback.message.answer("❌ Не нашёл запись для редактирования.")
-        return
-
-    await state.clear()
-    await state.update_data(
-        entry_date=target_date.isoformat(),
-        entry_id=entry_id,
-        return_to_calendar=True,
-    )
-
-    if entry.entry_type == "comment":
-        await state.set_state(WellbeingStates.editing_comment)
-        push_menu_stack(callback.message.bot, wellbeing_comment_menu)
-        await callback.message.answer(
-            f"✏️ Редактирование комментария\n\n"
-            f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n"
-            f"Текущий комментарий: {entry.comment or '—'}\n\n"
-            "Напиши новый комментарий:",
-            reply_markup=wellbeing_comment_menu,
+    if note:
+        factors = [FACTOR_LABELS[f] for f in note.factors if f in FACTOR_LABELS]
+        factors_short = " ".join(label.split()[0] for label in factors) or "—"
+        text = (
+            "📝 Заметки дня\n\n"
+            f"Оценка:\n{RATING_LABELS.get(note.day_rating, '—')}\n\n"
+            f"Факторы:\n{factors_short}"
         )
-        return
-
-    await state.update_data(
-        mood=entry.mood,
-        influence=entry.influence,
-        difficulty=entry.difficulty,
-    )
-    await state.set_state(WellbeingStates.editing_quick_mood)
-    push_menu_stack(callback.message.bot, wellbeing_quick_mood_menu)
-    await callback.message.answer(
-        f"✏️ Редактирование самочувствия\n\n"
-        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n"
-        f"Текущее настроение: {entry.mood}\n\n"
-        "Выбери настроение:",
-        reply_markup=wellbeing_quick_mood_menu,
-    )
-
-
-@router.callback_query(lambda c: c.data.startswith("well_cal_del:"))
-async def delete_wellbeing_from_calendar(callback: CallbackQuery):
-    """Удаляет запись самочувствия из календаря."""
-    await callback.answer()
-    parts = callback.data.split(":")
-    target_date = date.fromisoformat(parts[1])
-    entry_id = int(parts[2])
-    user_id = str(callback.from_user.id)
-
-    success = WellbeingRepository.delete_entry(entry_id, user_id)
-    if success:
-        await callback.message.answer("✅ Запись удалена")
-        await show_wellbeing_day(callback.message, user_id, target_date)
+        if note.text:
+            text += f"\n\nКомментарий:\n{note.text}"
+        keyboard = build_notes_main_keyboard(has_note=True)
     else:
-        await callback.message.answer("❌ Не удалось удалить запись")
-
-
-async def show_wellbeing_day(message: Message, user_id: str, target_date: date):
-    """Показывает записи самочувствия за день."""
-    entries = WellbeingRepository.get_entries_for_date(user_id, target_date)
-
-    if not entries:
-        await message.answer(
-            f"{target_date.strftime('%d.%m.%Y')}: нет записей самочувствия.",
-            reply_markup=build_wellbeing_day_actions_keyboard([], target_date),
+        text = (
+            "📝 Заметки дня\n\n"
+            "Здесь можно отметить самочувствие и события дня.\n\n"
+            "📝 Как прошёл день?"
         )
+        keyboard = build_notes_main_keyboard(has_note=False)
+
+    await message.answer(text, reply_markup=keyboard)
+
+
+def build_notes_main_keyboard(has_note: bool) -> InlineKeyboardMarkup:
+    """Кнопки основного экрана заметок."""
+    rows = []
+    if has_note:
+        rows.append([
+            InlineKeyboardButton(text="✏️ Изменить", callback_data="edit_note"),
+            InlineKeyboardButton(text="🗑 Удалить", callback_data="delete_note"),
+        ])
+    else:
+        rows.append([InlineKeyboardButton(text="➕ Добавить запись", callback_data="edit_note")])
+    rows.append([InlineKeyboardButton(text="📅 Календарь", callback_data="calendar_open")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="notes_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_rating_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=RATING_LABELS[5], callback_data="note_rate_5")],
+            [InlineKeyboardButton(text=RATING_LABELS[4], callback_data="note_rate_4")],
+            [InlineKeyboardButton(text=RATING_LABELS[3], callback_data="note_rate_3")],
+            [InlineKeyboardButton(text=RATING_LABELS[2], callback_data="note_rate_2")],
+            [InlineKeyboardButton(text=RATING_LABELS[1], callback_data="note_rate_1")],
+        ]
+    )
+
+
+def build_factors_keyboard(selected: list[str]) -> InlineKeyboardMarkup:
+    rows = []
+    for callback_name, factor_key in FACTOR_CALLBACK_TO_KEY.items():
+        label = FACTOR_LABELS[factor_key]
+        prefix = "✅ " if factor_key in selected else ""
+        rows.append([InlineKeyboardButton(text=f"{prefix}{label}", callback_data=callback_name)])
+    rows.append([InlineKeyboardButton(text="✅ Продолжить", callback_data="done_factors")])
+    rows.append([InlineKeyboardButton(text="⏭ Пропустить", callback_data="skip_factors")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_rating")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_text_step_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💾 Сохранить", callback_data="save_note")],
+            [InlineKeyboardButton(text="⏭ Пропустить", callback_data="skip_note")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_factors")],
+        ]
+    )
+
+
+async def start_note_flow(message: Message, state: FSMContext, target_date: date):
+    """Запускает сценарий добавления/редактирования заметки."""
+    user_id = str(message.from_user.id)
+    note = NoteRepository.get_note_for_date(user_id, target_date)
+
+    await state.clear()
+    await state.set_state(WellbeingStates.note_rating)
+    await state.update_data(
+        note_date=target_date.isoformat(),
+        day_rating=note.day_rating if note else None,
+        factors=note.factors if note else [],
+        note_text=note.text or "" if note else "",
+    )
+
+    await message.answer(
+        "📝 Как прошёл день?\n\nВыбери вариант:",
+        reply_markup=build_rating_keyboard(),
+    )
+
+
+@router.callback_query(lambda c: c.data == "edit_note")
+async def edit_or_add_note(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await start_note_flow(callback.message, state, date.today())
+
+
+@router.callback_query(lambda c: c.data.startswith("note_cal_edit:"))
+async def edit_note_from_calendar(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    target_date = date.fromisoformat(callback.data.split(":")[1])
+    await start_note_flow(callback.message, state, target_date)
+
+
+@router.callback_query(lambda c: c.data.startswith("note_rate_"))
+async def select_rating(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    rating = int(callback.data.rsplit("_", 1)[1])
+    data = await state.get_data()
+    await state.update_data(day_rating=rating, factors=data.get("factors", []))
+    await state.set_state(WellbeingStates.note_factors)
+    await callback.message.answer(
+        "Что повлияло на день? (можно несколько)",
+        reply_markup=build_factors_keyboard(data.get("factors", [])),
+    )
+
+
+@router.callback_query(lambda c: c.data in FACTOR_CALLBACK_TO_KEY)
+async def toggle_factor(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    factor = FACTOR_CALLBACK_TO_KEY[callback.data]
+    data = await state.get_data()
+    selected = list(data.get("factors", []))
+    if factor in selected:
+        selected.remove(factor)
+    else:
+        selected.append(factor)
+    await state.update_data(factors=selected)
+    await callback.message.answer(
+        "Что повлияло на день? (можно несколько)",
+        reply_markup=build_factors_keyboard(selected),
+    )
+
+
+@router.callback_query(lambda c: c.data in {"done_factors", "skip_factors"})
+async def done_factors_step(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    if callback.data == "skip_factors":
+        await state.update_data(factors=[])
+    await state.set_state(WellbeingStates.note_text)
+    await callback.message.answer(
+        "✏️ Добавь заметку (необязательно)\n\nНапример:\nСегодня было тяжело держать питание.",
+        reply_markup=build_text_step_keyboard(),
+    )
+
+
+@router.message(WellbeingStates.note_text)
+async def capture_note_text(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if len(text) > 500:
+        await message.answer("Лимит заметки — 500 символов.")
         return
+    await state.update_data(note_text=text)
+    await message.answer("Текст обновлён. Нажми 💾 Сохранить или ⏭ Пропустить.", reply_markup=build_text_step_keyboard())
 
-    text_lines = [f"📅 {target_date.strftime('%d.%m.%Y')}\n\nЗаписи самочувствия:"]
-    for idx, entry in enumerate(entries, start=1):
-        if entry.entry_type == "comment":
-            text_lines.append(f"{idx}. ✍️ {entry.comment or '—'}")
-        else:
-            difficulty_text = f", {entry.difficulty}" if entry.difficulty else ""
-            text_lines.append(
-                f"{idx}. {entry.mood} / {entry.influence}{difficulty_text}"
-            )
 
-    await message.answer(
-        "\n".join(text_lines),
-        reply_markup=build_wellbeing_day_actions_keyboard(entries, target_date),
+async def persist_note(message: Message, state: FSMContext):
+    data = await state.get_data()
+    user_id = str(message.from_user.id)
+    note_date = date.fromisoformat(data.get("note_date", date.today().isoformat()))
+    day_rating = int(data.get("day_rating") or 3)
+    factors = data.get("factors", [])
+    note_text = (data.get("note_text") or "").strip()[:500] or None
+
+    note = NoteRepository.upsert_note(
+        user_id=user_id,
+        entry_date=note_date,
+        day_rating=day_rating,
+        factors=factors,
+        text=note_text,
+    )
+    await state.clear()
+
+    factors_text = "\n".join(FACTOR_LABELS[f] for f in note.factors if f in FACTOR_LABELS) or "—"
+    msg = (
+        "📝 Заметка сохранена\n\n"
+        f"{note.date.strftime('%d.%m.%Y')}:\n\n"
+        f"{RATING_LABELS.get(note.day_rating, '—')}\n\n"
+        f"Факторы:\n{factors_text}"
+    )
+    if note.text:
+        msg += f"\n\nКомментарий:\n{note.text}"
+
+    await message.answer(msg, reply_markup=build_notes_main_keyboard(has_note=True))
+
+
+@router.callback_query(lambda c: c.data in {"save_note", "skip_note"})
+async def finalize_note(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    if callback.data == "skip_note":
+        await state.update_data(note_text="")
+    await persist_note(callback.message, state)
+
+
+@router.callback_query(lambda c: c.data == "back_to_rating")
+async def back_to_rating(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(WellbeingStates.note_rating)
+    await callback.message.answer("📝 Как прошёл день?\n\nВыбери вариант:", reply_markup=build_rating_keyboard())
+
+
+@router.callback_query(lambda c: c.data == "back_to_factors")
+async def back_to_factors(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    await state.set_state(WellbeingStates.note_factors)
+    await callback.message.answer(
+        "Что повлияло на день? (можно несколько)",
+        reply_markup=build_factors_keyboard(data.get("factors", [])),
     )
 
 
-@router.message(WellbeingStates.choosing_mode, lambda m: m.text == "🟢 Быстрый опрос (20 секунд)")
-async def start_quick_survey(message: Message, state: FSMContext):
-    """Запуск быстрого опроса."""
-    await state.set_state(WellbeingStates.quick_mood)
-    push_menu_stack(message.bot, wellbeing_quick_mood_menu)
-    await message.answer(
-        "<b>Шаг 1</b>\n\nКак ты себя чувствуешь сегодня?",
-        reply_markup=wellbeing_quick_mood_menu,
+@router.callback_query(lambda c: c.data == "delete_note")
+async def ask_delete_note(callback: CallbackQuery):
+    await callback.answer()
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да", callback_data="confirm_delete")],
+            [InlineKeyboardButton(text="❌ Нет", callback_data="cancel_delete")],
+        ]
     )
+    await callback.message.answer("Удалить заметку?", reply_markup=keyboard)
 
 
-@router.message(WellbeingStates.choosing_mode, lambda m: m.text == "✍️ Оставить комментарий")
-async def start_comment(message: Message, state: FSMContext):
-    """Запуск свободного комментария."""
-    await state.set_state(WellbeingStates.comment)
-    push_menu_stack(message.bot, wellbeing_comment_menu)
-    await message.answer(
-        "<b>Комментарий о самочувствии</b>\n"
-        "Напиши пару слов, если хочется зафиксировать день или состояние.\n"
-        "Можно коротко. Можно как есть.",
-        reply_markup=wellbeing_comment_menu,
+@router.callback_query(lambda c: c.data.startswith("note_cal_del:"))
+async def ask_delete_note_from_calendar(callback: CallbackQuery):
+    await callback.answer()
+    target_date = callback.data.split(":")[1]
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да", callback_data=f"confirm_delete:{target_date}")],
+            [InlineKeyboardButton(text="❌ Нет", callback_data=f"cancel_delete:{target_date}")],
+        ]
     )
+    await callback.message.answer("Удалить заметку?", reply_markup=keyboard)
 
 
-@router.message(WellbeingStates.quick_mood)
-async def handle_quick_mood(message: Message, state: FSMContext):
-    """Шаг 1: настроение."""
-    if message.text not in QUICK_MOOD_OPTIONS:
-        await message.answer("Пожалуйста, выбери вариант из списка.")
-        return
-
-    await state.update_data(mood=message.text)
-    await state.set_state(WellbeingStates.quick_influence)
-    push_menu_stack(message.bot, wellbeing_quick_influence_menu)
-    await message.answer(
-        "<b>Шаг 2</b>\n\nЧто больше всего повлияло на самочувствие?",
-        reply_markup=wellbeing_quick_influence_menu,
-    )
+@router.callback_query(lambda c: c.data.startswith("confirm_delete"))
+async def confirm_delete(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split(":")
+    target_date = date.fromisoformat(parts[1]) if len(parts) > 1 else date.today()
+    user_id = str(callback.from_user.id)
+    NoteRepository.delete_note_for_date(user_id, target_date)
+    await callback.message.answer("📝 Заметка удалена.")
+    if len(parts) > 1:
+        await show_note_calendar_day(callback.message, user_id, target_date)
+    else:
+        await show_notes_day(callback.message, user_id, date.today())
 
 
-@router.message(WellbeingStates.quick_influence)
-async def handle_quick_influence(message: Message, state: FSMContext):
-    """Шаг 2: влияние."""
-    if message.text not in QUICK_INFLUENCE_OPTIONS:
-        await message.answer("Пожалуйста, выбери один вариант.")
-        return
+@router.callback_query(lambda c: c.data.startswith("cancel_delete"))
+async def cancel_delete(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split(":")
+    user_id = str(callback.from_user.id)
+    if len(parts) > 1:
+        await show_note_calendar_day(callback.message, user_id, date.fromisoformat(parts[1]))
+    else:
+        await show_notes_day(callback.message, user_id, date.today())
 
-    data = await state.update_data(influence=message.text)
-    mood = data.get("mood")
 
-    if mood in MOOD_NEEDS_DIFFICULTY:
-        await state.set_state(WellbeingStates.quick_difficulty)
-        push_menu_stack(message.bot, wellbeing_quick_difficulty_menu)
-        await message.answer(
-            "<b>Шаг 3</b>\n\nГде сегодня было сложнее всего?",
-            reply_markup=wellbeing_quick_difficulty_menu,
+@router.callback_query(lambda c: c.data == "calendar_open")
+async def open_notes_calendar(callback: CallbackQuery):
+    await callback.answer()
+    today = date.today()
+    user_id = str(callback.from_user.id)
+    await show_notes_calendar(callback.message, user_id, today.year, today.month)
+
+
+async def show_notes_calendar(message: Message, user_id: str, year: int, month: int):
+    keyboard = build_notes_calendar_keyboard(user_id, year, month)
+    await message.answer("📅 Календарь заметок", reply_markup=keyboard)
+
+
+@router.callback_query(lambda c: c.data.startswith("note_cal_nav:"))
+async def navigate_notes_calendar(callback: CallbackQuery):
+    await callback.answer()
+    year, month = map(int, callback.data.split(":")[1].split("-"))
+    await show_notes_calendar(callback.message, str(callback.from_user.id), year, month)
+
+
+@router.callback_query(lambda c: c.data.startswith("note_cal_day:"))
+async def select_notes_calendar_day(callback: CallbackQuery):
+    await callback.answer()
+    target_date = date.fromisoformat(callback.data.split(":")[1])
+    user_id = str(callback.from_user.id)
+    await show_note_calendar_day(callback.message, user_id, target_date)
+
+
+@router.callback_query(lambda c: c.data.startswith("note_cal_back:"))
+async def back_to_note_calendar(callback: CallbackQuery):
+    await callback.answer()
+    year, month = map(int, callback.data.split(":")[1].split("-"))
+    await show_notes_calendar(callback.message, str(callback.from_user.id), year, month)
+
+
+async def show_note_calendar_day(message: Message, user_id: str, target_date: date):
+    note = NoteRepository.get_note_for_date(user_id, target_date)
+    if not note:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="➕ Добавить запись", callback_data=f"note_cal_edit:{target_date.isoformat()}")],
+                [InlineKeyboardButton(text="⬅️ Назад к календарю", callback_data=f"note_cal_back:{target_date.year}-{target_date.month:02d}")],
+            ]
         )
+        await message.answer(f"📝 {target_date.strftime('%d.%m')}\n\nЗаписи нет.", reply_markup=keyboard)
         return
 
-    await finalize_quick_entry(message, state, difficulty=None)
+    factors_text = "\n".join(FACTOR_LABELS[f] for f in note.factors if f in FACTOR_LABELS) or "—"
+    text = f"📝 {target_date.strftime('%d.%m')}\n\n{RATING_LABELS.get(note.day_rating, '—')}\n\nФакторы:\n{factors_text}"
+    if note.text:
+        text += f"\n\nКомментарий:\n{note.text}"
 
-
-@router.message(WellbeingStates.quick_difficulty)
-async def handle_quick_difficulty(message: Message, state: FSMContext):
-    """Шаг 3: сложность дня."""
-    if message.text not in QUICK_DIFFICULTY_OPTIONS:
-        await message.answer("Пожалуйста, выбери один вариант.")
-        return
-
-    await finalize_quick_entry(message, state, difficulty=message.text)
-
-
-@router.message(WellbeingStates.comment)
-async def handle_comment(message: Message, state: FSMContext):
-    """Сохраняет комментарий."""
-    comment = message.text.strip()
-    if not comment:
-        await message.answer("Комментарий пустой. Если хочешь, напиши пару слов.")
-        return
-
-    data = await state.get_data()
-    entry_date_raw = data.get("entry_date")
-    return_to_calendar = data.get("return_to_calendar", False)
-    entry_date = date.fromisoformat(entry_date_raw) if entry_date_raw else date.today()
-
-    WellbeingRepository.save_comment_entry(
-        user_id=str(message.from_user.id),
-        comment=comment,
-        entry_date=entry_date,
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Изменить", callback_data=f"note_cal_edit:{target_date.isoformat()}")],
+            [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"note_cal_del:{target_date.isoformat()}")],
+            [InlineKeyboardButton(text="⬅️ Назад к календарю", callback_data=f"note_cal_back:{target_date.year}-{target_date.month:02d}")],
+        ]
     )
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.callback_query(lambda c: c.data == "notes_back")
+async def notes_back(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     await state.clear()
-
-    if return_to_calendar:
-        await show_wellbeing_day(message, str(message.from_user.id), entry_date)
-        return
-
-    await show_wellbeing_menu(message, state, random.choice(COMMENT_FINISH_RESPONSES))
-
-
-@router.message(WellbeingStates.editing_comment)
-async def handle_edit_comment(message: Message, state: FSMContext):
-    """Редактирует комментарий о самочувствии."""
-    comment = message.text.strip()
-    if not comment:
-        await message.answer("Комментарий пустой. Если хочешь, напиши пару слов.")
-        return
-
-    data = await state.get_data()
-    entry_id = data.get("entry_id")
-    entry_date_raw = data.get("entry_date")
-    return_to_calendar = data.get("return_to_calendar", False)
-    entry_date = date.fromisoformat(entry_date_raw) if entry_date_raw else date.today()
-
-    if not entry_id:
-        await message.answer("❌ Не удалось найти запись для обновления.")
-        await state.clear()
-        return
-
-    updated = WellbeingRepository.update_comment_entry(
-        entry_id=entry_id,
-        user_id=str(message.from_user.id),
-        comment=comment,
-        entry_date=entry_date,
-    )
-    await state.clear()
-
-    if not updated:
-        await message.answer("❌ Не удалось обновить запись.")
-        return
-
-    if return_to_calendar:
-        await show_wellbeing_day(message, str(message.from_user.id), entry_date)
-        return
-
-    await show_wellbeing_menu(message, state, "✅ Запись обновлена.")
-
-
-async def finalize_quick_entry(message: Message, state: FSMContext, difficulty: str | None):
-    """Сохраняет быстрый опрос и отвечает."""
-    data = await state.get_data()
-    mood = data.get("mood")
-    influence = data.get("influence")
-    entry_date_raw = data.get("entry_date")
-    return_to_calendar = data.get("return_to_calendar", False)
-    entry_date = date.fromisoformat(entry_date_raw) if entry_date_raw else date.today()
-    if not mood or not influence:
-        logger.warning("Incomplete wellbeing quick survey data")
-        await message.answer("Не удалось сохранить ответ. Попробуй ещё раз.")
-        await state.clear()
-        await show_wellbeing_menu(message, state, "Возвращаю в меню самочувствия.")
-        return
-
-    WellbeingRepository.save_quick_entry(
-        user_id=str(message.from_user.id),
-        mood=mood,
-        influence=influence,
-        difficulty=difficulty,
-        entry_date=entry_date,
-    )
-    await state.clear()
-    if return_to_calendar:
-        await show_wellbeing_day(message, str(message.from_user.id), entry_date)
-        return
-
-    await show_wellbeing_menu(message, state, random.choice(QUICK_FINISH_RESPONSES))
-
-
-@router.message(WellbeingStates.editing_quick_mood)
-async def handle_edit_quick_mood(message: Message, state: FSMContext):
-    """Шаг 1 редактирования: настроение."""
-    if message.text not in QUICK_MOOD_OPTIONS:
-        await message.answer("Пожалуйста, выбери вариант из списка.")
-        return
-
-    await state.update_data(mood=message.text)
-    await state.set_state(WellbeingStates.editing_quick_influence)
-    push_menu_stack(message.bot, wellbeing_quick_influence_menu)
-    await message.answer(
-        "<b>Шаг 2</b>\n\nЧто больше всего повлияло на самочувствие?",
-        reply_markup=wellbeing_quick_influence_menu,
-    )
-
-
-@router.message(WellbeingStates.editing_quick_influence)
-async def handle_edit_quick_influence(message: Message, state: FSMContext):
-    """Шаг 2 редактирования: влияние."""
-    if message.text not in QUICK_INFLUENCE_OPTIONS:
-        await message.answer("Пожалуйста, выбери один вариант.")
-        return
-
-    data = await state.update_data(influence=message.text)
-    mood = data.get("mood")
-
-    if mood in MOOD_NEEDS_DIFFICULTY:
-        await state.set_state(WellbeingStates.editing_quick_difficulty)
-        push_menu_stack(message.bot, wellbeing_quick_difficulty_menu)
-        await message.answer(
-            "<b>Шаг 3</b>\n\nГде сегодня было сложнее всего?",
-            reply_markup=wellbeing_quick_difficulty_menu,
-        )
-        return
-
-    await finalize_quick_edit(message, state, difficulty=None)
-
-
-@router.message(WellbeingStates.editing_quick_difficulty)
-async def handle_edit_quick_difficulty(message: Message, state: FSMContext):
-    """Шаг 3 редактирования: сложность дня."""
-    if message.text not in QUICK_DIFFICULTY_OPTIONS:
-        await message.answer("Пожалуйста, выбери один вариант.")
-        return
-
-    await finalize_quick_edit(message, state, difficulty=message.text)
-
-
-async def finalize_quick_edit(message: Message, state: FSMContext, difficulty: str | None):
-    """Сохраняет обновлённый быстрый опрос."""
-    data = await state.get_data()
-    mood = data.get("mood")
-    influence = data.get("influence")
-    entry_id = data.get("entry_id")
-    entry_date_raw = data.get("entry_date")
-    return_to_calendar = data.get("return_to_calendar", False)
-    entry_date = date.fromisoformat(entry_date_raw) if entry_date_raw else date.today()
-
-    if not entry_id or not mood or not influence:
-        await message.answer("❌ Не удалось обновить запись.")
-        await state.clear()
-        return
-
-    updated = WellbeingRepository.update_quick_entry(
-        entry_id=entry_id,
-        user_id=str(message.from_user.id),
-        mood=mood,
-        influence=influence,
-        difficulty=difficulty,
-        entry_date=entry_date,
-    )
-    await state.clear()
-
-    if not updated:
-        await message.answer("❌ Не удалось обновить запись.")
-        return
-
-    if return_to_calendar:
-        await show_wellbeing_day(message, str(message.from_user.id), entry_date)
-        return
-
-    await show_wellbeing_menu(message, state, "✅ Запись обновлена.")
+    await callback.message.answer("Возврат в меню.", reply_markup=main_menu)
 
 
 def register_wellbeing_handlers(dp):
-    """Регистрирует обработчики самочувствия."""
+    """Регистрирует обработчики заметок."""
     dp.include_router(router)
