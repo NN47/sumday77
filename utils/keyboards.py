@@ -10,11 +10,15 @@ main_menu_button = KeyboardButton(text=MAIN_MENU_BUTTON_TEXT)
 WELLBEING_BUTTON_TEXT = "🙂 Самочувствие"
 WELLBEING_AND_PROCEDURES_BUTTON_TEXT = "🙂 Самочувствие/\n💆 Процедуры"
 WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT = "⚖️ Вес/\n📏 Замеры"
+TRAINING_BUTTON_TEXT = "🏋️ Журнал активности"
+LEGACY_TRAINING_BUTTON_TEXT = "🏋️ Тренировка"
+MEALS_BUTTON_TEXT = "🍱 Дневник питания"
+LEGACY_MEALS_BUTTON_TEXT = "🍱 КБЖУ"
 
 # Главное меню
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🏋️ Тренировка"), KeyboardButton(text="🍱 КБЖУ")],
+        [KeyboardButton(text=TRAINING_BUTTON_TEXT), KeyboardButton(text=MEALS_BUTTON_TEXT)],
         [KeyboardButton(text="💊 Добавки"), KeyboardButton(text="💧 Контроль воды")],
         [KeyboardButton(text=WELLBEING_AND_PROCEDURES_BUTTON_TEXT), KeyboardButton(text=WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT)],
         [KeyboardButton(text="📊 ИИ анализ деятельности")],

@@ -7,6 +7,8 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
     MAIN_MENU_BUTTON_ALIASES,
+    TRAINING_BUTTON_TEXT,
+    LEGACY_TRAINING_BUTTON_TEXT,
     training_menu,
     training_date_menu,
     other_day_menu,
@@ -46,7 +48,7 @@ def reset_user_state(message: Message, *, keep_supplements: bool = False):
     pass
 
 
-@router.message(lambda m: m.text == "🏋️ Тренировка")
+@router.message(lambda m: m.text in {TRAINING_BUTTON_TEXT, LEGACY_TRAINING_BUTTON_TEXT})
 async def show_training_menu(message: Message, state: FSMContext):
     """Показывает меню тренировок."""
     user_id = str(message.from_user.id)

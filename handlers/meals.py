@@ -11,6 +11,8 @@ from aiogram.fsm.context import FSMContext
 from states.user_states import MealEntryStates
 from utils.keyboards import (
     MAIN_MENU_BUTTON_ALIASES,
+    MEALS_BUTTON_TEXT,
+    LEGACY_MEALS_BUTTON_TEXT,
     kbju_menu,
     kbju_add_menu,
     kbju_after_meal_menu,
@@ -57,7 +59,7 @@ def translate_text(text: str, source_lang: str = "ru", target_lang: str = "en") 
         return text
 
 
-@router.message(lambda m: m.text == "🍱 КБЖУ")
+@router.message(lambda m: m.text in {MEALS_BUTTON_TEXT, LEGACY_MEALS_BUTTON_TEXT})
 async def calories(message: Message, state: FSMContext):
     """Показывает меню КБЖУ."""
     user_id = str(message.from_user.id)
