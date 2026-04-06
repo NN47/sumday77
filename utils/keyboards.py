@@ -265,12 +265,20 @@ kbju_age_range_inline = InlineKeyboardMarkup(
             InlineKeyboardButton(text="18–24", callback_data="kbju_age:18_24"),
         ],
         [
-            InlineKeyboardButton(text="25–34", callback_data="kbju_age:25_34"),
-            InlineKeyboardButton(text="35–44", callback_data="kbju_age:35_44"),
+            InlineKeyboardButton(text="25–29", callback_data="kbju_age:25_29"),
+            InlineKeyboardButton(text="30–34", callback_data="kbju_age:30_34"),
         ],
         [
-            InlineKeyboardButton(text="45–54", callback_data="kbju_age:45_54"),
-            InlineKeyboardButton(text="55–64", callback_data="kbju_age:55_64"),
+            InlineKeyboardButton(text="35–39", callback_data="kbju_age:35_39"),
+            InlineKeyboardButton(text="40–44", callback_data="kbju_age:40_44"),
+        ],
+        [
+            InlineKeyboardButton(text="45–49", callback_data="kbju_age:45_49"),
+            InlineKeyboardButton(text="50–54", callback_data="kbju_age:50_54"),
+        ],
+        [
+            InlineKeyboardButton(text="55–59", callback_data="kbju_age:55_59"),
+            InlineKeyboardButton(text="60–64", callback_data="kbju_age:60_64"),
         ],
         [
             InlineKeyboardButton(text="65+", callback_data="kbju_age:65_plus"),
