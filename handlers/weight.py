@@ -32,7 +32,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 weight_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="➕ Добавить вес")],
-        [KeyboardButton(text="📆 Календарь")],
+        [KeyboardButton(text="📏 Замеры тела"), KeyboardButton(text="📊 График веса")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,
@@ -41,7 +41,7 @@ weight_menu = ReplyKeyboardMarkup(
 measurements_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="➕ Добавить замеры")],
-        [KeyboardButton(text="📆 Календарь замеров")],
+        [KeyboardButton(text="📅 История замеров")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,
@@ -54,6 +54,60 @@ weight_and_measurements_menu = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True,
 )
+
+
+def _to_float_weight(raw_value: str | float | int | None) -> Optional[float]:
+    """Преобразует значение веса в float."""
+    if raw_value is None:
+        return None
+    try:
+        return float(str(raw_value).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def _find_reference_weight(weights: list, current_date: date, days_ago: int):
+    """Возвращает ближайшую запись, которая была не позднее current_date - days_ago."""
+    target_date = current_date - timedelta(days=days_ago)
+    for weight in weights:
+        if weight.date <= target_date:
+            return weight
+    return None
+
+
+def _format_change(current_value: float, reference_value: Optional[float]) -> str:
+    """Форматирует изменение между двумя значениями веса."""
+    if reference_value is None:
+        return "Недостаточно данных"
+    change = current_value - reference_value
+    sign = "+" if change > 0 else ""
+    return f"{sign}{change:.1f} кг"
+
+
+def _detect_trend(last_weights: list) -> str:
+    """Определяет тренд на основе 3 последних записей."""
+    if len(last_weights) < 3:
+        return "Недостаточно данных"
+
+    latest = _to_float_weight(last_weights[0].value)
+    previous = _to_float_weight(last_weights[1].value)
+    oldest = _to_float_weight(last_weights[2].value)
+    if latest is None or previous is None or oldest is None:
+        return "Недостаточно данных"
+
+    epsilon = 0.15
+    if latest < previous - epsilon and previous < oldest - epsilon:
+        return "Снижение веса 📉"
+    if latest > previous + epsilon and previous > oldest + epsilon:
+        return "Рост веса 📈"
+    return "Стабильно ⚖️"
+
+
+def _build_progress_bar(progress_percent: float, length: int = 10) -> str:
+    """Возвращает текстовый прогресс-бар."""
+    clamped = max(0.0, min(100.0, progress_percent))
+    filled = round((clamped / 100) * length)
+    return f"{'█' * filled}{'░' * (length - filled)} {clamped:.0f}%"
 
 
 @router.message(lambda m: m.text == WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT)
@@ -70,44 +124,143 @@ async def weight_and_measurements(message: Message):
 
 @router.message(lambda m: m.text == "⚖️ Вес")
 async def my_weight(message: Message):
-    """Показывает историю веса пользователя."""
+    """Показывает сводку по весу пользователя."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} viewed weight history")
-    
+    logger.info(f"User {user_id} viewed weight dashboard")
+
     weights = WeightRepository.get_weights(user_id)
-    
+
     if not weights:
         push_menu_stack(message.bot, weight_menu)
-        await message.answer("⚖️ У тебя пока нет записей веса.", reply_markup=weight_menu)
+        await message.answer(
+            "⚖️ Вес\n\n"
+            "Пока нет записей веса.\n"
+            "Добавь первую запись, и я покажу динамику, тренд и прогресс к цели.",
+            reply_markup=weight_menu,
+        )
         return
-    
-    text = "📊 История твоего веса:\n\n"
-    for i, w in enumerate(weights, 1):
-        text += f"{i}. {w.date.strftime('%d.%m.%Y')} — {w.value} кг\n"
-    
+
+    current_entry = weights[0]
+    current_weight = _to_float_weight(current_entry.value)
+    if current_weight is None:
+        push_menu_stack(message.bot, weight_menu)
+        await message.answer("⚠️ Не удалось прочитать последнее значение веса.", reply_markup=weight_menu)
+        return
+
+    reference_7 = _find_reference_weight(weights, current_entry.date, 7)
+    reference_30 = _find_reference_weight(weights, current_entry.date, 30)
+
+    change_7 = _format_change(current_weight, _to_float_weight(reference_7.value) if reference_7 else None)
+    change_30 = _format_change(current_weight, _to_float_weight(reference_30.value) if reference_30 else None)
+
+    target_weight = None
+    to_goal_text = "Цель веса не задана"
+    progress_text = "Прогресс: недоступен"
+    if target_weight is not None:
+        remaining = current_weight - target_weight
+        if remaining <= 0:
+            to_goal_text = "Цель достигнута 🎉"
+            progress_text = f"Прогресс:\n{_build_progress_bar(100)}"
+        else:
+            start_weight = _to_float_weight(weights[-1].value)
+            if start_weight and start_weight > target_weight:
+                progress = (start_weight - current_weight) / (start_weight - target_weight) * 100
+                progress_text = f"Прогресс:\n{_build_progress_bar(progress)}"
+            to_goal_text = f"Осталось: {remaining:.1f} кг"
+
+    trend_text = _detect_trend(weights[:3])
+
+    speed_text = "Недостаточно данных"
+    if len(weights) > 1:
+        oldest_entry = weights[-1]
+        oldest_weight = _to_float_weight(oldest_entry.value)
+        if oldest_weight is not None:
+            total_days = (current_entry.date - oldest_entry.date).days
+            if total_days >= 7:
+                weekly_speed = (current_weight - oldest_weight) / (total_days / 7)
+                speed_text = f"{weekly_speed:+.2f} кг в неделю"
+
+    recent_rows = []
+    for entry in weights[:7]:
+        entry_value = _to_float_weight(entry.value)
+        if entry_value is None:
+            continue
+        recent_rows.append(f"{entry.date.strftime('%d.%m')} — {entry_value:.2f} кг")
+
+    recent_text = "\n".join(recent_rows) if recent_rows else "Нет записей для отображения"
+    text = (
+        "⚖️ Вес\n\n"
+        f"Текущий вес: {current_weight:.2f} кг\n\n"
+        "📉 Изменение:\n"
+        f"За 7 дней: {change_7}\n"
+        f"За 30 дней: {change_30}\n\n"
+        "🎯 До цели:\n"
+        f"{to_goal_text}\n\n"
+        "📊 Тренд:\n"
+        f"{trend_text}\n\n"
+        "🚀 Средняя скорость:\n"
+        f"{speed_text}\n\n"
+        f"{progress_text}\n\n"
+        "📅 Последние записи:\n\n"
+        f"{recent_text}"
+    )
+
     push_menu_stack(message.bot, weight_menu)
     await message.answer(text, reply_markup=weight_menu)
 
 
 @router.message(lambda m: m.text == "📏 Замеры")
 async def my_measurements(message: Message):
-    """Показывает историю замеров пользователя."""
+    """Показывает экран замеров тела."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} viewed measurements history")
-    
-    measurements = WeightRepository.get_measurements(user_id)
-    
-    if not measurements:
-        push_menu_stack(message.bot, measurements_menu)
-        await message.answer("📐 У тебя пока нет замеров.", reply_markup=measurements_menu)
-        return
-    
-    text = "📊 История замеров:\n\n"
-    for i, m in enumerate(measurements, 1):
-        text += f"{i}. {m.date.strftime('%d.%m.%Y')} — {format_measurements_summary(m)}\n"
-    
+    logger.info(f"User {user_id} opened measurements screen")
+
+    measurements = WeightRepository.get_measurements(user_id, limit=1)
+    latest = measurements[0] if measurements else None
+    value_or_dash = lambda value: f"{value:.1f} см" if value is not None else "—"
+
+    text = (
+        "📏 Замеры тела\n\n"
+        f"Грудь: {value_or_dash(latest.chest) if latest else '—'}\n"
+        f"Талия: {value_or_dash(latest.waist) if latest else '—'}\n"
+        f"Бёдра: {value_or_dash(latest.hips) if latest else '—'}\n"
+        f"Рука: {value_or_dash(latest.biceps) if latest else '—'}\n"
+        f"Нога: {value_or_dash(latest.thigh) if latest else '—'}"
+    )
+
     push_menu_stack(message.bot, measurements_menu)
     await message.answer(text, reply_markup=measurements_menu)
+
+
+@router.message(lambda m: m.text == "📏 Замеры тела")
+async def open_measurements_from_weight(message: Message):
+    """Открывает экран замеров из раздела веса."""
+    await my_measurements(message)
+
+
+@router.message(lambda m: m.text == "📅 История замеров")
+async def show_measurements_history(message: Message):
+    """Показывает компактную историю замеров."""
+    user_id = str(message.from_user.id)
+    measurements = WeightRepository.get_measurements(user_id, limit=7)
+    if not measurements:
+        await message.answer("📏 Пока нет истории замеров.")
+        return
+
+    lines = ["📅 История замеров:\n"]
+    for item in measurements:
+        lines.append(f"{item.date.strftime('%d.%m')} — {format_measurements_summary(item)}")
+    await message.answer("\n".join(lines), reply_markup=measurements_menu)
+
+
+@router.message(lambda m: m.text == "📊 График веса")
+async def show_weight_graph_placeholder(message: Message):
+    """Временный экран с инструкцией для графика веса."""
+    await message.answer(
+        "📊 График веса\n\n"
+        "Раздел графика в разработке.\n"
+        "Пока смотри динамику на экране ⚖️ Вес: там уже есть изменения, тренд и скорость."
+    )
 
 
 def format_measurements_summary(measurements) -> str:
@@ -226,6 +379,18 @@ async def handle_weight_input(message: Message, state: FSMContext):
     else:
         entry_date = date.today()
     
+    previous_weight_value = None
+    existing_weights = WeightRepository.get_weights(user_id)
+    for existing in existing_weights:
+        existing_value = _to_float_weight(existing.value)
+        if existing_value is None:
+            continue
+        if weight_id and existing.id == weight_id:
+            continue
+        if existing.date <= entry_date:
+            previous_weight_value = existing_value
+            break
+
     # Сохраняем или обновляем вес
     try:
         if weight_id:
@@ -235,10 +400,16 @@ async def handle_weight_input(message: Message, state: FSMContext):
                 logger.info(f"User {user_id} updated weight {weight_id}: {weight_value} kg on {entry_date}")
                 await state.clear()
                 # Показываем обновленный день в календаре, если это было из календаря
+                delta_text = ""
+                if previous_weight_value is not None:
+                    delta = weight_value - previous_weight_value
+                    direction = "📉" if delta < 0 else "📈" if delta > 0 else "⚖️"
+                    delta_text = f"\n\nИзменение:\n{delta:+.2f} кг с прошлой записи {direction}"
                 await message.answer(
                     f"✅ Вес обновлён!\n\n"
                     f"⚖️ {weight_value:.1f} кг\n"
-                    f"📅 {entry_date.strftime('%d.%m.%Y')}",
+                    f"📅 {entry_date.strftime('%d.%m.%Y')}"
+                    f"{delta_text}",
                 )
                 # Если это было из календаря, показываем день снова
                 await show_day_weight(message, user_id, entry_date)
@@ -252,10 +423,23 @@ async def handle_weight_input(message: Message, state: FSMContext):
             
             await state.clear()
             push_menu_stack(message.bot, weight_menu)
+            delta_text = "\nИзменение:\nНедостаточно данных"
+            comment_text = ""
+            if previous_weight_value is not None:
+                delta = weight_value - previous_weight_value
+                direction = "📉" if delta < 0 else "📈" if delta > 0 else "⚖️"
+                delta_text = f"\nИзменение:\n{delta:+.2f} кг с прошлой записи {direction}"
+                if delta < 0:
+                    comment_text = "\n\nОтличная динамика."
+                elif delta > 0:
+                    comment_text = "\n\nВес немного вырос.\nОбрати внимание на питание и воду."
+                else:
+                    comment_text = "\n\nВес без изменений. Продолжай в том же ритме."
             await message.answer(
                 f"✅ Вес сохранён!\n\n"
-                f"⚖️ {weight_value:.1f} кг\n"
-                f"📅 {entry_date.strftime('%d.%m.%Y')}",
+                f"{weight_value:.1f} кг"
+                f"{delta_text}"
+                f"{comment_text}",
                 reply_markup=weight_menu,
             )
     except Exception as e:
