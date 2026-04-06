@@ -15,6 +15,10 @@ calculate_bmr = module.calculate_bmr
 calculate_tdee = module.calculate_tdee
 apply_goal = module.apply_goal
 get_activity_multiplier = module.get_activity_multiplier
+get_steps_calories_coefficient = module.get_steps_calories_coefficient
+calculate_counted_steps_calories = module.calculate_counted_steps_calories
+calculate_counted_workout_calories = module.calculate_counted_workout_calories
+calculate_daily_calorie_summary = module.calculate_daily_calorie_summary
 
 
 class NutritionCalculatorTests(unittest.TestCase):
@@ -140,6 +144,50 @@ class NutritionCalculatorTests(unittest.TestCase):
         self.assertGreaterEqual(profile.proteins, 0)
         self.assertGreaterEqual(profile.fats, 0)
         self.assertGreaterEqual(profile.carbs, 0)
+
+    def test_steps_coefficient_thresholds(self):
+        self.assertEqual(get_steps_calories_coefficient(2999), 0.0)
+        self.assertEqual(get_steps_calories_coefficient(3000), 0.30)
+        self.assertEqual(get_steps_calories_coefficient(6999), 0.30)
+        self.assertEqual(get_steps_calories_coefficient(7000), 0.50)
+        self.assertEqual(get_steps_calories_coefficient(11999), 0.50)
+        self.assertEqual(get_steps_calories_coefficient(12000), 0.65)
+
+    def test_counted_steps_calories_uses_partial_coefficient(self):
+        self.assertEqual(calculate_counted_steps_calories(steps=8000, steps_calories=215), 108)
+
+    def test_counted_workout_calories_uses_90_percent(self):
+        self.assertEqual(calculate_counted_workout_calories(workout_calories=333), 300)
+
+    def test_daily_calorie_summary_builds_expected_values(self):
+        summary = calculate_daily_calorie_summary(
+            base_goal=2000,
+            eaten_calories=1800,
+            steps=9500,
+            steps_calories=320,
+            workout_calories=250,
+        )
+
+        self.assertEqual(summary.base_goal, 2000)
+        self.assertEqual(summary.eaten_calories, 1800)
+        self.assertEqual(summary.activity_total, 570)
+        self.assertEqual(summary.activity_counted, 385)
+        self.assertEqual(summary.daily_limit, 2385)
+        self.assertEqual(summary.calories_left, 585)
+
+    def test_daily_calorie_summary_limits_activity_counted_to_800(self):
+        summary = calculate_daily_calorie_summary(
+            base_goal=2100,
+            eaten_calories=2200,
+            steps=13000,
+            steps_calories=1000,
+            workout_calories=500,
+        )
+
+        self.assertEqual(summary.activity_total, 1500)
+        self.assertEqual(summary.activity_counted, 800)
+        self.assertEqual(summary.daily_limit, 2900)
+        self.assertEqual(summary.calories_left, 700)
 
 
 if __name__ == "__main__":
