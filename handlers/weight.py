@@ -246,14 +246,10 @@ async def _start_measurements_wizard(
 
 @router.message(lambda m: m.text == WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT)
 async def weight_and_measurements(message: Message):
-    """Показывает меню веса и замеров."""
+    """Сразу открывает раздел веса из кнопки «Вес и замеры»."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened weight and measurements menu")
-    push_menu_stack(message.bot, weight_and_measurements_menu)
-    await message.answer(
-        f"{WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT}\n\nВыбери действие:",
-        reply_markup=weight_and_measurements_menu,
-    )
+    logger.info(f"User {user_id} opened weight section from weight and measurements button")
+    await my_weight(message)
 
 
 @router.message(lambda m: m.text == "⚖️ Вес")
