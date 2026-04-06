@@ -12,6 +12,7 @@ from states.user_states import WellbeingStates
 from utils.keyboards import (
     WELLBEING_BUTTON_TEXT,
     WELLBEING_AND_PROCEDURES_BUTTON_TEXT,
+    LEGACY_WELLBEING_AND_PROCEDURES_BUTTON_TEXT,
     wellbeing_and_procedures_menu,
     wellbeing_menu,
     wellbeing_quick_mood_menu,
@@ -50,7 +51,9 @@ QUICK_FINISH_RESPONSES = [
 ]
 
 
-@router.message(lambda m: m.text == WELLBEING_AND_PROCEDURES_BUTTON_TEXT)
+@router.message(
+    lambda m: m.text in {WELLBEING_AND_PROCEDURES_BUTTON_TEXT, LEGACY_WELLBEING_AND_PROCEDURES_BUTTON_TEXT}
+)
 async def wellbeing_and_procedures(message: Message, state: FSMContext):
     """Показывает объединенное меню самочувствия и процедур."""
     await state.clear()
@@ -78,7 +81,7 @@ async def start_wellbeing(message: Message, state: FSMContext):
     """Стартует меню заметок."""
     await state.clear()
     text = (
-        "<b>Заметки</b>\n"
+        "<b>Самочувствие</b>\n"
         "Как хочешь отметить состояние сегодня?\n\n"
         "<i>Оба варианта учитываются в анализе.</i>"
     )
