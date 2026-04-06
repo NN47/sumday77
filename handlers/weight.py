@@ -13,7 +13,7 @@ from utils.keyboards import (
 )
 from database.repositories import WeightRepository
 from states.user_states import WeightStates
-from utils.validators import parse_weight, parse_date
+from utils.validators import parse_weight
 from utils.calendar_utils import (
     build_weight_calendar_keyboard,
     build_weight_day_actions_keyboard,
@@ -62,14 +62,6 @@ MEASUREMENT_STEPS = [
     {"key": "arm", "label": "Рука", "question": "Введи руку в см", "db_field": "biceps"},
     {"key": "leg", "label": "Нога", "question": "Введи ногу в см", "db_field": "thigh"},
 ]
-
-measurements_date_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="🗓 Другой день")],
-        [KeyboardButton(text="⬅️ Назад")],
-    ],
-    resize_keyboard=True,
-)
 
 measurements_step_menu = ReplyKeyboardMarkup(
     keyboard=[
@@ -676,52 +668,7 @@ async def add_measurements_start(message: Message, state: FSMContext):
     """Начинает процесс добавления замеров."""
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} started adding measurements")
-
-    await state.set_state(WeightStates.choosing_date_for_measurements)
-
-    push_menu_stack(message.bot, measurements_date_menu)
-    await message.answer(
-        "📏 Добавим замеры\n\n"
-        "За какую дату сохранить замеры?",
-        reply_markup=measurements_date_menu,
-    )
-
-
-@router.message(WeightStates.choosing_date_for_measurements)
-async def handle_measurements_date_choice(message: Message, state: FSMContext):
-    """Обрабатывает выбор даты для замеров."""
-    if message.text == "📅 Сегодня":
-        await _start_measurements_wizard(message, state, date.today())
-        return
-    if message.text == "🗓 Другой день":
-        await state.set_state(WeightStates.entering_measurements_date)
-        await message.answer("Введи дату в формате ДД.ММ.ГГГГ:")
-        return
-    if message.text == "⬅️ Назад":
-        await state.clear()
-        await my_measurements(message)
-        return
-
-    await message.answer("Выбери дату кнопкой или нажми «🗓 Другой день».")
-
-
-@router.message(WeightStates.entering_measurements_date)
-async def handle_measurements_manual_date(message: Message, state: FSMContext):
-    """Обрабатывает ввод даты для мастера замеров."""
-    if message.text == "⬅️ Назад":
-        await state.set_state(WeightStates.choosing_date_for_measurements)
-        await message.answer(
-            "📏 Добавим замеры\n\nЗа какую дату сохранить замеры?",
-            reply_markup=measurements_date_menu,
-        )
-        return
-
-    parsed = parse_date(message.text)
-    if not parsed:
-        await message.answer("Не удалось распознать дату. Введи дату в формате ДД.ММ.ГГГГ")
-        return
-
-    await _start_measurements_wizard(message, state, parsed.date())
+    await _start_measurements_wizard(message, state, date.today())
 
 
 @router.message(WeightStates.entering_measurements)
