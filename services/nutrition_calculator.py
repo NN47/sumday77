@@ -46,6 +46,10 @@ GOAL_LABELS: dict[str, str] = {
     "gain": "Набор массы",
 }
 
+MAX_ACTIVITY_COUNTED_CALORIES = 800
+WORKOUT_CALORIES_COEFFICIENT = 0.90
+
+
 @dataclass(frozen=True)
 class NutritionProfile:
     """Результат полного расчёта нормы КБЖУ."""
@@ -61,6 +65,18 @@ class NutritionProfile:
     goal_label: str
     goal_explanation: str
     goal_percent: int
+
+
+@dataclass(frozen=True)
+class DailyCalorieSummary:
+    """Сводка дневного лимита калорий с частичным учётом активности."""
+
+    base_goal: int
+    eaten_calories: int
+    activity_total: int
+    activity_counted: int
+    daily_limit: int
+    calories_left: int
 
 
 def calculate_bmr(gender: str, age: float, height: float, weight: float) -> float:
@@ -118,6 +134,75 @@ def calculate_macros(weight: float, target_calories: float, goal: str) -> tuple[
     carbs = round(remaining_kcal / CALORIES_PER_GRAM_CARBS)
 
     return max(proteins, 0), max(fats, 0), max(carbs, 0)
+
+
+def get_steps_calories_coefficient(steps: int) -> float:
+    """Возвращает коэффициент учёта калорий от шагов в зависимости от количества шагов."""
+    if steps < 3000:
+        return 0.0
+    if steps < 7000:
+        return 0.30
+    if steps < 12000:
+        return 0.50
+    return 0.65
+
+
+def calculate_counted_steps_calories(steps: int, steps_calories: int) -> int:
+    """Считает учитываемые калории от шагов с округлением до целого."""
+    coefficient = get_steps_calories_coefficient(steps=steps)
+    return round(max(steps_calories, 0) * coefficient)
+
+
+def calculate_counted_workout_calories(workout_calories: int) -> int:
+    """Считает учитываемые калории от тренировок с округлением до целого."""
+    return round(max(workout_calories, 0) * WORKOUT_CALORIES_COEFFICIENT)
+
+
+def calculate_daily_calorie_summary(
+    *,
+    base_goal: int,
+    eaten_calories: int,
+    steps: int,
+    steps_calories: int,
+    workout_calories: int,
+) -> DailyCalorieSummary:
+    """
+    Формирует итоговую дневную сводку:
+    - activity_total = steps_calories + workout_calories
+    - activity_counted = counted_steps_calories + counted_workout_calories (но не более 800 ккал)
+    - daily_limit = base_goal + activity_counted
+    - calories_left = daily_limit - eaten_calories
+    """
+    safe_base_goal = round(max(base_goal, 0))
+    safe_eaten_calories = round(max(eaten_calories, 0))
+    safe_steps_calories = round(max(steps_calories, 0))
+    safe_workout_calories = round(max(workout_calories, 0))
+
+    counted_steps_calories = calculate_counted_steps_calories(
+        steps=steps,
+        steps_calories=safe_steps_calories,
+    )
+    counted_workout_calories = calculate_counted_workout_calories(
+        workout_calories=safe_workout_calories,
+    )
+
+    activity_total = safe_steps_calories + safe_workout_calories
+    activity_counted = min(
+        counted_steps_calories + counted_workout_calories,
+        MAX_ACTIVITY_COUNTED_CALORIES,
+    )
+
+    daily_limit = safe_base_goal + activity_counted
+    calories_left = daily_limit - safe_eaten_calories
+
+    return DailyCalorieSummary(
+        base_goal=safe_base_goal,
+        eaten_calories=safe_eaten_calories,
+        activity_total=activity_total,
+        activity_counted=activity_counted,
+        daily_limit=daily_limit,
+        calories_left=calories_left,
+    )
 
 
 def calculate_nutrition_profile(data: Mapping[str, object]) -> NutritionProfile:
