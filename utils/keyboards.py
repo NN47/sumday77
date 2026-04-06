@@ -10,7 +10,7 @@ main_menu_button = KeyboardButton(text=MAIN_MENU_BUTTON_TEXT)
 WELLBEING_BUTTON_TEXT = "🙂 Самочувствие"
 WELLBEING_AND_PROCEDURES_BUTTON_TEXT = "📝 Заметки"
 LEGACY_WELLBEING_AND_PROCEDURES_BUTTON_TEXT = "📝 Заметки/\n💆 Процедуры"
-WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT = "⚖️ Вес"
+WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT = "⚖️ Вес и замеры"
 TRAINING_BUTTON_TEXT = "🚴 Активность"
 LEGACY_TRAINING_BUTTON_TEXT = "🏋️ Тренировка"
 MEALS_BUTTON_TEXT = "🍱 Дневник питания"
