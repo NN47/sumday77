@@ -2,14 +2,13 @@
 import logging
 from datetime import date, timedelta, datetime
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
 from typing import Optional
 from utils.keyboards import (
     WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT,
     push_menu_stack,
     main_menu_button,
-    training_date_menu,
     other_day_menu,
 )
 from database.repositories import WeightRepository
@@ -27,7 +26,6 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 # Меню для веса и замеров
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 weight_menu = ReplyKeyboardMarkup(
     keyboard=[
@@ -51,6 +49,38 @@ weight_and_measurements_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="⚖️ Вес"), KeyboardButton(text="📏 Замеры")],
         [main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
+MEASUREMENT_STEPS = [
+    {"key": "chest", "label": "Грудь", "question": "Введи грудь в см", "db_field": "chest"},
+    {"key": "waist", "label": "Талия", "question": "Введи талию в см", "db_field": "waist"},
+    {"key": "hips", "label": "Бёдра", "question": "Введи бёдра в см", "db_field": "hips"},
+    {"key": "arm", "label": "Рука", "question": "Введи руку в см", "db_field": "biceps"},
+    {"key": "leg", "label": "Нога", "question": "Введи ногу в см", "db_field": "thigh"},
+]
+
+measurements_date_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="🗓 Другой день")],
+        [KeyboardButton(text="⬅️ Назад")],
+    ],
+    resize_keyboard=True,
+)
+
+measurements_step_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Пропустить")],
+        [KeyboardButton(text="Назад"), KeyboardButton(text="Отмена")],
+    ],
+    resize_keyboard=True,
+)
+
+measurements_review_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="✅ Сохранить"), KeyboardButton(text="✏️ Изменить")],
+        [KeyboardButton(text="⬅️ Назад")],
     ],
     resize_keyboard=True,
 )
@@ -108,6 +138,86 @@ def _build_progress_bar(progress_percent: float, length: int = 10) -> str:
     clamped = max(0.0, min(100.0, progress_percent))
     filled = round((clamped / 100) * length)
     return f"{'█' * filled}{'░' * (length - filled)} {clamped:.0f}%"
+
+
+def _parse_measurement_value(raw_value: str) -> Optional[float]:
+    """Парсит введённое значение замера."""
+    try:
+        return float(raw_value.replace(",", "."))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _format_measurement_value(value: Optional[float]) -> str:
+    """Форматирует значение замера."""
+    if value is None:
+        return "—"
+    normalized = f"{value:.1f}"
+    if normalized.endswith(".0"):
+        normalized = normalized[:-2]
+    return f"{normalized} см"
+
+
+def _format_measurements_card_from_draft(draft: dict) -> str:
+    """Формирует карточку замеров из draft-данных FSM."""
+    return (
+        f"Грудь: {_format_measurement_value(draft.get('chest'))}\n"
+        f"Талия: {_format_measurement_value(draft.get('waist'))}\n"
+        f"Бёдра: {_format_measurement_value(draft.get('hips'))}\n"
+        f"Рука: {_format_measurement_value(draft.get('arm'))}\n"
+        f"Нога: {_format_measurement_value(draft.get('leg'))}"
+    )
+
+
+async def _show_measurement_step(message: Message, state: FSMContext):
+    """Показывает текущий шаг мастера замеров."""
+    data = await state.get_data()
+    step_index = data.get("current_step", 0)
+    entry_date_str = data.get("entry_date", date.today().isoformat())
+    step = MEASUREMENT_STEPS[step_index]
+    entry_date = date.fromisoformat(entry_date_str)
+
+    await message.answer(
+        "📏 Замеры тела\n"
+        f"📅 Дата: {entry_date.strftime('%d.%m.%Y')}\n"
+        f"Шаг {step_index + 1} из {len(MEASUREMENT_STEPS)}\n\n"
+        f"{step['question']}",
+        reply_markup=measurements_step_menu,
+    )
+
+
+async def _show_measurements_review(message: Message, state: FSMContext):
+    """Показывает подтверждение перед сохранением замеров."""
+    data = await state.get_data()
+    draft = data.get("draft_measurements", {})
+    entry_date_str = data.get("entry_date", date.today().isoformat())
+    entry_date = date.fromisoformat(entry_date_str)
+
+    await state.set_state(WeightStates.reviewing_measurements)
+    await message.answer(
+        "✅ Проверь замеры\n\n"
+        f"📅 Дата: {entry_date.strftime('%d.%m.%Y')}\n\n"
+        f"{_format_measurements_card_from_draft(draft)}",
+        reply_markup=measurements_review_menu,
+    )
+
+
+async def _start_measurements_wizard(
+    message: Message,
+    state: FSMContext,
+    entry_date: date,
+    measurement_id: Optional[int] = None,
+    draft: Optional[dict] = None,
+):
+    """Запускает мастер ввода замеров."""
+    await state.update_data(
+        entry_date=entry_date.isoformat(),
+        measurement_id=measurement_id,
+        current_step=0,
+        draft_measurements=draft or {step["key"]: None for step in MEASUREMENT_STEPS},
+    )
+    await state.set_state(WeightStates.entering_measurements)
+    await _show_measurement_step(message, state)
 
 
 @router.message(lambda m: m.text == WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT)
@@ -220,15 +330,14 @@ async def my_measurements(message: Message):
 
     measurements = WeightRepository.get_measurements(user_id, limit=1)
     latest = measurements[0] if measurements else None
-    value_or_dash = lambda value: f"{value:.1f} см" if value is not None else "—"
 
     text = (
         "📏 Замеры тела\n\n"
-        f"Грудь: {value_or_dash(latest.chest) if latest else '—'}\n"
-        f"Талия: {value_or_dash(latest.waist) if latest else '—'}\n"
-        f"Бёдра: {value_or_dash(latest.hips) if latest else '—'}\n"
-        f"Рука: {value_or_dash(latest.biceps) if latest else '—'}\n"
-        f"Нога: {value_or_dash(latest.thigh) if latest else '—'}"
+        f"Грудь: {_format_measurement_value(latest.chest) if latest else '—'}\n"
+        f"Талия: {_format_measurement_value(latest.waist) if latest else '—'}\n"
+        f"Бёдра: {_format_measurement_value(latest.hips) if latest else '—'}\n"
+        f"Рука: {_format_measurement_value(latest.biceps) if latest else '—'}\n"
+        f"Нога: {_format_measurement_value(latest.thigh) if latest else '—'}"
     )
 
     push_menu_stack(message.bot, measurements_menu)
@@ -269,16 +378,16 @@ async def show_weight_graph_placeholder(message: Message):
 def format_measurements_summary(measurements) -> str:
     """Формирует строку замеров для отображения."""
     parts = []
-    if measurements.chest:
-        parts.append(f"Грудь: {measurements.chest} см")
-    if measurements.waist:
-        parts.append(f"Талия: {measurements.waist} см")
-    if measurements.hips:
-        parts.append(f"Бёдра: {measurements.hips} см")
-    if measurements.biceps:
-        parts.append(f"Бицепс: {measurements.biceps} см")
-    if measurements.thigh:
-        parts.append(f"Бедро: {measurements.thigh} см")
+    if measurements.chest is not None:
+        parts.append(f"Грудь: {_format_measurement_value(measurements.chest)}")
+    if measurements.waist is not None:
+        parts.append(f"Талия: {_format_measurement_value(measurements.waist)}")
+    if measurements.hips is not None:
+        parts.append(f"Бёдра: {_format_measurement_value(measurements.hips)}")
+    if measurements.biceps is not None:
+        parts.append(f"Рука: {_format_measurement_value(measurements.biceps)}")
+    if measurements.thigh is not None:
+        parts.append(f"Нога: {_format_measurement_value(measurements.thigh)}")
     return ", ".join(parts) if parts else "нет данных"
 
 
@@ -316,7 +425,6 @@ async def handle_weight_date_choice(message: Message, state: FSMContext):
     if message.text == "📅 Сегодня":
         target_date = date.today()
     elif message.text == "📆 Другой день":
-        from utils.keyboards import other_day_menu
         push_menu_stack(message.bot, other_day_menu)
         await message.answer(
             "Выбери день или введи дату вручную:",
@@ -509,16 +617,14 @@ async def add_measurements_start(message: Message, state: FSMContext):
     """Начинает процесс добавления замеров."""
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} started adding measurements")
-    
-    await state.update_data(entry_date=date.today().isoformat())
+
     await state.set_state(WeightStates.choosing_date_for_measurements)
-    
-    push_menu_stack(message.bot, training_date_menu)
+
+    push_menu_stack(message.bot, measurements_date_menu)
     await message.answer(
-        "За какой день добавить замеры?\n\n"
-        "📅 Сегодня\n"
-        "📆 Другой день",
-        reply_markup=training_date_menu,
+        "📏 Добавим замеры\n\n"
+        "За какую дату сохранить замеры?",
+        reply_markup=measurements_date_menu,
     )
 
 
@@ -526,130 +632,127 @@ async def add_measurements_start(message: Message, state: FSMContext):
 async def handle_measurements_date_choice(message: Message, state: FSMContext):
     """Обрабатывает выбор даты для замеров."""
     if message.text == "📅 Сегодня":
-        target_date = date.today()
-    elif message.text == "📅 Вчера":
-        target_date = date.today() - timedelta(days=1)
-    elif message.text == "📆 Позавчера":
-        target_date = date.today() - timedelta(days=2)
-    elif message.text == "✏️ Ввести дату вручную":
-        await state.set_state(WeightStates.entering_measurements)
+        await _start_measurements_wizard(message, state, date.today())
+        return
+    if message.text == "🗓 Другой день":
+        await state.set_state(WeightStates.entering_measurements_date)
         await message.answer("Введи дату в формате ДД.ММ.ГГГГ:")
         return
-    else:
-        # Проверяем, не дата ли это
-        parsed = parse_date(message.text)
-        if parsed:
-            target_date = parsed.date() if isinstance(parsed, datetime) else date.today()
-        else:
-            await message.answer("Выбери дату из меню или введи в формате ДД.ММ.ГГГГ")
-            return
-    
-    await state.update_data(entry_date=target_date.isoformat())
-    await state.set_state(WeightStates.entering_measurements)
-    await message.answer(
-        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\n"
-        "Введи замеры в формате:\n\n"
-        "грудь=100, талия=80, руки=35\n\n"
-        "Можно указать только нужные параметры."
-    )
+    if message.text == "⬅️ Назад":
+        await state.clear()
+        await my_measurements(message)
+        return
+
+    await message.answer("Выбери дату кнопкой или нажми «🗓 Другой день».")
+
+
+@router.message(WeightStates.entering_measurements_date)
+async def handle_measurements_manual_date(message: Message, state: FSMContext):
+    """Обрабатывает ввод даты для мастера замеров."""
+    if message.text == "⬅️ Назад":
+        await state.set_state(WeightStates.choosing_date_for_measurements)
+        await message.answer(
+            "📏 Добавим замеры\n\nЗа какую дату сохранить замеры?",
+            reply_markup=measurements_date_menu,
+        )
+        return
+
+    parsed = parse_date(message.text)
+    if not parsed:
+        await message.answer("Не удалось распознать дату. Введи дату в формате ДД.ММ.ГГГГ")
+        return
+
+    await _start_measurements_wizard(message, state, parsed.date())
 
 
 @router.message(WeightStates.entering_measurements)
 async def handle_measurements_input(message: Message, state: FSMContext):
-    """Обрабатывает ввод замеров."""
-    user_id = str(message.from_user.id)
-    raw = message.text
-    
-    # Проверяем, не дата ли это
-    parsed = parse_date(raw)
-    if parsed:
-        target_date = parsed.date() if isinstance(parsed, datetime) else date.today()
-        await state.update_data(entry_date=target_date.isoformat())
-        await message.answer(
-            f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\n"
-            "Введи замеры в формате:\n\n"
-            "грудь=100, талия=80, руки=35"
-        )
-        return
-    
-    try:
-        # Разбиваем на части: "грудь=100, талия=80, руки=35"
-        parts = [p.strip() for p in raw.replace(",", " ").split()]
-        if not parts:
-            raise ValueError
-        
-        # Нормализация и маппинг ключей к полям модели
-        key_map = {
-            "грудь": "chest", "груд": "chest",
-            "талия": "waist", "талияю": "waist",
-            "бёдра": "hips", "бедра": "hips", "бёдро": "thigh", "бедро": "thigh",
-            "руки": "biceps", "бицепс": "biceps", "бицепсы": "biceps",
-            "бедро": "thigh"
-        }
-        
-        measurements_mapped = {}
-        for p in parts:
-            if "=" in p:
-                k, v = p.split("=", 1)
-                k = k.strip().lower()
-                v = v.strip()
-                if not v:
-                    continue
-                # Заменить запятую на точку для чисел
-                val = float(v.replace(",", "."))
-                field = key_map.get(k, None)
-                if field:
-                    measurements_mapped[field] = val
-        
-        if not measurements_mapped:
-            raise ValueError
-    except (ValueError, AttributeError):
-        await message.answer("⚠️ Неверный формат. Попробуй так: грудь=100, талия=80, руки=35")
-        return
-    
-    # Сохраняем в базу
+    """Обрабатывает пошаговый ввод замеров."""
+    text = (message.text or "").strip()
     data = await state.get_data()
-    entry_date_str = data.get("entry_date", date.today().isoformat())
-    
-    if isinstance(entry_date_str, str):
-        try:
-            entry_date = date.fromisoformat(entry_date_str)
-        except ValueError:
-            entry_date = date.today()
+    draft = data.get("draft_measurements", {step["key"]: None for step in MEASUREMENT_STEPS})
+    step_index = data.get("current_step", 0)
+
+    if text == "Отмена":
+        await state.clear()
+        await my_measurements(message)
+        return
+
+    if text == "Назад":
+        if step_index > 0:
+            await state.update_data(current_step=step_index - 1)
+        await _show_measurement_step(message, state)
+        return
+
+    if text == "Пропустить":
+        draft[MEASUREMENT_STEPS[step_index]["key"]] = None
+        step_index += 1
     else:
-        entry_date = date.today()
-    
+        value = _parse_measurement_value(text)
+        if value is None:
+            await message.answer(
+                "Нужно ввести только число в сантиметрах.\nНапример: 90",
+                reply_markup=measurements_step_menu,
+            )
+            return
+        draft[MEASUREMENT_STEPS[step_index]["key"]] = value
+        step_index += 1
+
+    await state.update_data(draft_measurements=draft, current_step=step_index)
+    if step_index >= len(MEASUREMENT_STEPS):
+        await _show_measurements_review(message, state)
+        return
+    await _show_measurement_step(message, state)
+
+
+@router.message(WeightStates.reviewing_measurements)
+async def handle_measurements_review(message: Message, state: FSMContext):
+    """Обрабатывает действия на шаге подтверждения замеров."""
+    text = (message.text or "").strip()
+    data = await state.get_data()
+    draft = data.get("draft_measurements", {})
+    current_step = data.get("current_step", len(MEASUREMENT_STEPS))
+
+    if text == "⬅️ Назад":
+        await state.update_data(current_step=max(0, current_step - 1))
+        await state.set_state(WeightStates.entering_measurements)
+        await _show_measurement_step(message, state)
+        return
+
+    if text == "✏️ Изменить":
+        await state.update_data(current_step=0, draft_measurements=draft)
+        await state.set_state(WeightStates.entering_measurements)
+        await _show_measurement_step(message, state)
+        return
+
+    if text != "✅ Сохранить":
+        await message.answer("Выбери действие: ✅ Сохранить, ✏️ Изменить или ⬅️ Назад.")
+        return
+
+    user_id = str(message.from_user.id)
+    entry_date = date.fromisoformat(data.get("entry_date", date.today().isoformat()))
     measurement_id = data.get("measurement_id")
+    db_payload = {
+        step["db_field"]: draft.get(step["key"])
+        for step in MEASUREMENT_STEPS
+    }
 
     try:
         if measurement_id:
-            success = WeightRepository.update_measurement(
-                measurement_id,
-                user_id,
-                measurements_mapped,
-            )
-            if success:
-                logger.info(f"User {user_id} updated measurements {measurement_id} on {entry_date}")
-                await state.clear()
-                await message.answer(
-                    f"✅ Замеры обновлены!\n\n"
-                    f"📅 {entry_date.strftime('%d.%m.%Y')}\n"
-                    f"📏 {', '.join(measurements_mapped.keys())}",
-                )
-                await show_day_measurements(message, user_id, entry_date)
-            else:
+            success = WeightRepository.update_measurement(measurement_id, user_id, db_payload)
+            if not success:
                 await message.answer("⚠️ Не удалось обновить замеры.")
                 await state.clear()
+                return
+            logger.info(f"User {user_id} updated measurements {measurement_id} on {entry_date}")
         else:
-            WeightRepository.save_measurements(user_id, measurements_mapped, entry_date)
+            WeightRepository.save_measurements(user_id, db_payload, entry_date)
             logger.info(f"User {user_id} saved measurements on {entry_date}")
 
-            await state.clear()
-            push_menu_stack(message.bot, measurements_menu)
-            await message.answer(
-                f"✅ Замеры сохранены: {measurements_mapped} ({entry_date.strftime('%d.%m.%Y')})",
-                reply_markup=measurements_menu,
-            )
+        await state.clear()
+        push_menu_stack(message.bot, measurements_menu)
+        await message.answer("✅ Замеры сохранены", reply_markup=measurements_menu)
+        await show_day_measurements(message, user_id, entry_date)
     except Exception as e:
         logger.error(f"Error saving measurements: {e}", exc_info=True)
         await message.answer("⚠️ Ошибка при сохранении. Повтори попытку позже.")
@@ -685,9 +788,9 @@ async def delete_measurements_start(message: Message, state: FSMContext):
         if m.hips:
             parts.append(f"Бёдра: {m.hips}")
         if m.biceps:
-            parts.append(f"Бицепс: {m.biceps}")
+            parts.append(f"Рука: {m.biceps}")
         if m.thigh:
-            parts.append(f"Бедро: {m.thigh}")
+            parts.append(f"Нога: {m.thigh}")
         
         summary = ", ".join(parts) if parts else "нет данных"
         text += f"{i}. {m.date.strftime('%d.%m.%Y')} — {summary}\n"
@@ -861,9 +964,17 @@ async def show_day_measurements(message: Message, user_id: str, target_date: dat
         )
         return
 
+    draft = {
+        "chest": measurements.chest,
+        "waist": measurements.waist,
+        "hips": measurements.hips,
+        "arm": measurements.biceps,
+        "leg": measurements.thigh,
+    }
     text = (
-        f"📅 {target_date.strftime('%d.%m.%Y')}\n\n"
-        f"📏 Замеры: {format_measurements_summary(measurements)}"
+        "📏 Замеры тела\n\n"
+        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\n"
+        f"{_format_measurements_card_from_draft(draft)}"
     )
 
     await message.answer(
@@ -911,23 +1022,22 @@ async def add_measurements_from_calendar(callback: CallbackQuery, state: FSMCont
     existing_measurements = WeightRepository.get_measurement_for_date(user_id, target_date)
 
     if existing_measurements:
-        await state.update_data(entry_date=target_date.isoformat(), measurement_id=existing_measurements.id)
-        await state.set_state(WeightStates.entering_measurements)
-        await callback.message.answer(
-            f"✏️ Изменение замеров\n\n"
-            f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n"
-            f"Текущие замеры: {format_measurements_summary(existing_measurements)}\n\n"
-            "Введи замеры в формате:\n"
-            "грудь=100, талия=80, руки=35"
+        draft = {
+            "chest": existing_measurements.chest,
+            "waist": existing_measurements.waist,
+            "hips": existing_measurements.hips,
+            "arm": existing_measurements.biceps,
+            "leg": existing_measurements.thigh,
+        }
+        await _start_measurements_wizard(
+            callback.message,
+            state,
+            target_date,
+            measurement_id=existing_measurements.id,
+            draft=draft,
         )
     else:
-        await state.update_data(entry_date=target_date.isoformat(), measurement_id=None)
-        await state.set_state(WeightStates.entering_measurements)
-        await callback.message.answer(
-            f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\n"
-            "Введи замеры в формате:\n"
-            "грудь=100, талия=80, руки=35"
-        )
+        await _start_measurements_wizard(callback.message, state, target_date)
 
 
 @router.callback_query(lambda c: c.data.startswith("weight_cal_edit:"))
@@ -967,15 +1077,19 @@ async def edit_measurements_from_calendar(callback: CallbackQuery, state: FSMCon
         await callback.message.answer("❌ Не найдены замеры для редактирования.")
         return
 
-    await state.update_data(entry_date=target_date.isoformat(), measurement_id=measurements.id)
-    await state.set_state(WeightStates.entering_measurements)
-
-    await callback.message.answer(
-        f"✏️ Редактирование замеров\n\n"
-        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n"
-        f"Текущие замеры: {format_measurements_summary(measurements)}\n\n"
-        "Введи замеры в формате:\n"
-        "грудь=100, талия=80, руки=35"
+    draft = {
+        "chest": measurements.chest,
+        "waist": measurements.waist,
+        "hips": measurements.hips,
+        "arm": measurements.biceps,
+        "leg": measurements.thigh,
+    }
+    await _start_measurements_wizard(
+        callback.message,
+        state,
+        target_date,
+        measurement_id=measurements.id,
+        draft=draft,
     )
 
 

@@ -33,6 +33,8 @@ class WeightStates(StatesGroup):
     entering_weight = State()
     choosing_period = State()
     entering_measurements = State()
+    entering_measurements_date = State()
+    reviewing_measurements = State()
     choosing_date_for_weight = State()
     choosing_date_for_measurements = State()
 
