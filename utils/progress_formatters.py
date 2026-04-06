@@ -14,6 +14,12 @@ from utils.workout_utils import calculate_workout_calories, get_daily_workout_ca
 
 logger = logging.getLogger(__name__)
 
+LIFESTYLE_ACTIVITY_COEFFICIENTS = {
+    "low": 0.72,
+    "medium": 0.68,
+    "high": 0.55,
+}
+
 
 def build_progress_bar(current: float, target: float, length: int = 10) -> str:
     """
@@ -72,10 +78,15 @@ def format_progress_block(user_id: str) -> str:
         return "🍱 Настрой цель по КБЖУ через «🎯 Цель / Норма КБЖУ», чтобы я показывал прогресс."
     
     totals = MealRepository.get_daily_totals(user_id, date.today())
-    burned_calories = get_daily_workout_calories(user_id, date.today())
+    activity_total = get_daily_workout_calories(user_id, date.today())
+    lifestyle_coef = LIFESTYLE_ACTIVITY_COEFFICIENTS.get(
+        (settings.activity or "").strip().lower(),
+        LIFESTYLE_ACTIVITY_COEFFICIENTS["medium"],
+    )
+    activity_counted = round(activity_total * lifestyle_coef)
     
     base_calories_target = settings.calories
-    adjusted_calories_target = base_calories_target + burned_calories
+    adjusted_calories_target = base_calories_target + activity_counted
     
     if base_calories_target > 0:
         ratio = adjusted_calories_target / base_calories_target
@@ -98,8 +109,9 @@ def format_progress_block(user_id: str) -> str:
     lines.append(f"🎯 <b>Цель:</b> {goal_label}")
     lines.append(f"📊 <b>Базовая норма:</b> {base_calories_target:.0f} ккал")
     
-    if burned_calories > 0:
-        lines.append(f"🔥 <b>Сожжено:</b> ~{burned_calories:.0f} ккал")
+    if activity_total > 0:
+        lines.append(f"🔥 <b>Активность всего:</b> ~{activity_total:.0f} ккал")
+        lines.append(f"📌 <b>Учтено в норме:</b> ~{activity_counted:.0f} ккал")
         lines.append(f"✅ <b>Скорректированная норма:</b> {adjusted_calories_target:.0f} ккал")
     
     lines.append("")
