@@ -9,6 +9,8 @@ from utils.keyboards import (
     kbju_gender_inline,
     kbju_age_range_inline,
     kbju_height_range_inline,
+    kbju_weight_range_inline,
+    build_kbju_weight_values_inline,
     kbju_activity_menu,
     kbju_activity_inline,
     kbju_goal_menu,
@@ -112,6 +114,20 @@ HEIGHT_RANGE_LABELS = {
     "186_190": "186-190",
     "191_195": "191-195",
     "196_plus": "196+",
+}
+
+WEIGHT_RANGE_MAP = {
+    "40_50": (40, 50, "до 50 кг"),
+    "51_60": (51, 60, "51-60 кг"),
+    "61_70": (61, 70, "61-70 кг"),
+    "71_80": (71, 80, "71-80 кг"),
+    "81_90": (81, 90, "81-90 кг"),
+    "91_100": (91, 100, "91-100 кг"),
+    "101_120": (101, 120, "101-120 кг"),
+    "121_150": (121, 150, "121-150 кг"),
+    "151_200": (151, 200, "151-200 кг"),
+    "201_300": (201, 300, "201-300 кг"),
+    "301_500": (301, 500, "301-500 кг"),
 }
 
 
@@ -298,27 +314,61 @@ async def handle_kbju_test_height_callback(callback: CallbackQuery, state: FSMCo
     await callback.message.answer(
         format_step_text(
             BASE_STEP_BY_STATE[KbjuTestStates.entering_weight.state],
-            "Сколько ты весишь сейчас? В кг (например: 86.5)",
-        )
+            "Подскажи, пожалуйста, диапазон текущего веса:",
+        ),
+        reply_markup=kbju_weight_range_inline,
     )
 
 
 @router.message(KbjuTestStates.entering_weight)
 async def handle_kbju_test_weight(message: Message, state: FSMContext):
-    """Обрабатывает ввод веса в тесте КБЖУ."""
+    """Подсказывает, что вес в тесте выбирается через inline-кнопки."""
+    await message.answer("Выбери диапазон веса кнопкой ниже 👇", reply_markup=kbju_weight_range_inline)
+
+
+@router.callback_query(
+    KbjuTestStates.entering_weight,
+    lambda c: c.data is not None and c.data.startswith("kbju_weight_range:")
+)
+async def handle_kbju_test_weight_range_callback(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор диапазона веса в тесте КБЖУ."""
+    weight_range_key = callback.data.split(":", maxsplit=1)[1]
+    weight_range_data = WEIGHT_RANGE_MAP.get(weight_range_key)
+    if weight_range_data is None:
+        await callback.answer("Не удалось определить диапазон веса", show_alert=True)
+        return
+
+    range_min, range_max, range_label = weight_range_data
+    await state.update_data(weight_range=range_label)
+    await callback.answer()
+    await callback.message.answer(
+        "Отлично, спасибо 🙌\n"
+        f"Теперь выбери точный вес в диапазоне {range_label}:",
+        reply_markup=build_kbju_weight_values_inline(range_min, range_max),
+    )
+
+
+@router.callback_query(
+    KbjuTestStates.entering_weight,
+    lambda c: c.data is not None and c.data.startswith("kbju_weight_value:")
+)
+async def handle_kbju_test_weight_value_callback(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор точного веса в тесте КБЖУ."""
+    raw_weight = callback.data.split(":", maxsplit=1)[1]
     try:
-        weight = float(message.text.replace(",", "."))
+        weight = float(raw_weight)
         if weight <= 0 or weight > 500:
             raise ValueError
     except ValueError:
-        await message.answer("Нужно ввести число от 1 до 500, попробуй ещё раз 🙂")
+        await callback.answer("Не удалось определить вес", show_alert=True)
         return
 
     await state.update_data(weight=weight)
     await state.set_state(KbjuTestStates.entering_goal)
+    await callback.answer()
 
-    push_menu_stack(message.bot, kbju_goal_menu)
-    await message.answer(
+    push_menu_stack(callback.message.bot, kbju_goal_menu)
+    await callback.message.answer(
         format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какая цель?"),
         reply_markup=kbju_goal_inline,
     )
