@@ -1,5 +1,6 @@
 """Обработчики для теста КБЖУ."""
 import logging
+from datetime import date
 from aiogram import Router
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -25,7 +26,7 @@ from utils.keyboards import (
     push_menu_stack,
 )
 from services.nutrition_calculator import calculate_nutrition_profile
-from database.repositories import MealRepository
+from database.repositories import MealRepository, WeightRepository
 from utils.formatters import (
     format_kbju_goal_text,
     format_current_kbju_goal,
@@ -131,21 +132,35 @@ WEIGHT_RANGE_MAP = {
     "301_500": (301, 500, "301-500 кг"),
 }
 
+def save_weight_from_test(user_id: str, data: dict) -> None:
+    """Сохраняет вес из теста КБЖУ для других разделов (например, нормы воды)."""
+    raw_weight = data.get("weight")
+    if raw_weight is None:
+        return
+
+    try:
+        weight = float(raw_weight)
+    except (TypeError, ValueError):
+        logger.warning(f"Cannot save weight from KBJU test for user {user_id}: {raw_weight}")
+        return
+
+    if weight <= 0 or weight > 500:
+        logger.warning(f"KBJU weight is out of range for user {user_id}: {weight}")
+        return
+
+    WeightRepository.save_weight(user_id=user_id, value=f"{weight:.1f}", entry_date=date.today())
 
 def format_step_text(step: int, text: str) -> str:
     """Добавляет прогресс шага перед текстом вопроса."""
     return f"Шаг {step}/{BASE_TOTAL_STEPS}\n\n{text}"
 
-
 def format_dynamic_step_text(step: int, total_steps: int, text: str) -> str:
     """Добавляет прогресс шага перед текстом вопроса с динамическим общим числом шагов."""
     return f"Шаг {step}/{total_steps}\n\n{text}"
 
-
 def has_completed_kbju_test(user_id: str) -> bool:
     """Returns True if the user already has KBJU settings."""
     return MealRepository.get_kbju_settings(user_id) is not None
-
 
 async def restart_required_kbju_test(message: Message, state: FSMContext):
     """Starts the mandatory KBJU onboarding test from the first step."""
@@ -159,7 +174,6 @@ async def restart_required_kbju_test(message: Message, state: FSMContext):
         + format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_gender.state], "Для начала укажи пол:"),
         reply_markup=kbju_gender_inline,
     )
-
 
 @router.message(lambda m: m.text == "🎯 Цель / Норма КБЖУ")
 async def show_kbju_goal(message: Message, state: FSMContext):
@@ -184,7 +198,6 @@ async def show_kbju_goal(message: Message, state: FSMContext):
         reply_markup=kbju_intro_menu,
     )
 
-
 @router.message(lambda m: m.text == "✅ Пройти быстрый тест КБЖУ")
 async def start_kbju_test(message: Message, state: FSMContext):
     """Начинает тест КБЖУ."""
@@ -201,7 +214,6 @@ async def start_kbju_test(message: Message, state: FSMContext):
         reply_markup=kbju_gender_inline,
     )
 
-
 @router.message(lambda m: m.text == "✏️ Ввести свою норму")
 async def start_manual_kbju_goal(message: Message, state: FSMContext):
     """Запускает ручной ввод нормы КБЖУ."""
@@ -217,12 +229,10 @@ async def start_manual_kbju_goal(message: Message, state: FSMContext):
         "Введи цель по калориям в день (ккал), например: 2200"
     )
 
-
 @router.message(KbjuTestStates.entering_gender)
 async def handle_kbju_test_gender(message: Message, state: FSMContext):
     """Обрабатывает выбор пола в тесте КБЖУ."""
     await message.answer("Выбери пол кнопкой ниже 👇", reply_markup=kbju_gender_inline)
-
 
 @router.callback_query(
     KbjuTestStates.entering_gender,
@@ -243,12 +253,10 @@ async def handle_kbju_test_gender_callback(callback: CallbackQuery, state: FSMCo
         reply_markup=kbju_age_range_inline,
     )
 
-
 @router.message(KbjuTestStates.entering_age)
 async def handle_kbju_test_age_text(message: Message):
     """Подсказывает, что возраст выбирается только через inline-кнопки."""
     await message.answer("Выбери возрастную группу кнопкой ниже 👇", reply_markup=kbju_age_range_inline)
-
 
 def get_age_data(age_key: str) -> tuple[str, int] | None:
     """Возвращает отображаемый диапазон и возраст для расчёта."""
@@ -257,7 +265,6 @@ def get_age_data(age_key: str) -> tuple[str, int] | None:
     if age is None or age_range is None:
         return None
     return age_range, age
-
 
 @router.callback_query(
     KbjuTestStates.entering_age,
@@ -280,12 +287,10 @@ async def handle_kbju_test_age_callback(callback: CallbackQuery, state: FSMConte
         reply_markup=kbju_height_range_inline,
     )
 
-
 @router.message(KbjuTestStates.entering_height)
 async def handle_kbju_test_height_text(message: Message):
     """Подсказывает, что рост выбирается только через inline-кнопки."""
     await message.answer("Выбери диапазон роста кнопкой ниже 👇", reply_markup=kbju_height_range_inline)
-
 
 def get_height_data(height_key: str) -> tuple[str, int] | None:
     """Возвращает отображаемый диапазон и рост для расчёта."""
@@ -294,7 +299,6 @@ def get_height_data(height_key: str) -> tuple[str, int] | None:
     if height is None or height_range is None:
         return None
     return height_range, height
-
 
 @router.callback_query(
     KbjuTestStates.entering_height,
@@ -320,12 +324,10 @@ async def handle_kbju_test_height_callback(callback: CallbackQuery, state: FSMCo
         reply_markup=kbju_weight_range_inline,
     )
 
-
 @router.message(KbjuTestStates.entering_weight)
 async def handle_kbju_test_weight(message: Message, state: FSMContext):
     """Подсказывает, что вес в тесте выбирается через inline-кнопки."""
     await message.answer("Выбери диапазон веса кнопкой ниже 👇", reply_markup=kbju_weight_range_inline)
-
 
 @router.callback_query(
     KbjuTestStates.entering_weight,
@@ -347,7 +349,6 @@ async def handle_kbju_test_weight_range_callback(callback: CallbackQuery, state:
         f"Теперь выбери точный вес в диапазоне {range_label}:",
         reply_markup=build_kbju_weight_values_inline(range_min, range_max),
     )
-
 
 @router.callback_query(
     KbjuTestStates.entering_weight,
@@ -374,12 +375,10 @@ async def handle_kbju_test_weight_value_callback(callback: CallbackQuery, state:
         reply_markup=kbju_goal_inline,
     )
 
-
 @router.message(KbjuTestStates.entering_goal)
 async def handle_kbju_test_goal(message: Message, state: FSMContext):
     """Обрабатывает выбор цели в тесте КБЖУ."""
     await message.answer("Выбери цель кнопкой ниже 👇", reply_markup=kbju_goal_inline)
-
 
 @router.callback_query(
     KbjuTestStates.entering_goal,
@@ -429,7 +428,6 @@ async def handle_kbju_test_goal_callback(callback: CallbackQuery, state: FSMCont
         reply_markup=kbju_activity_inline,
     )
 
-
 @router.message(KbjuTestStates.entering_goal_speed)
 async def handle_kbju_test_goal_speed(message: Message, state: FSMContext):
     """Обрабатывает выбор темпа изменения веса в тесте КБЖУ."""
@@ -437,7 +435,6 @@ async def handle_kbju_test_goal_speed(message: Message, state: FSMContext):
     goal = data.get("goal")
     speed_menu = kbju_goal_speed_loss_inline if goal == "loss" else kbju_goal_speed_gain_inline
     await message.answer("Выбери темп кнопкой ниже 👇", reply_markup=speed_menu)
-
 
 @router.callback_query(
     KbjuTestStates.entering_goal_speed,
@@ -481,12 +478,10 @@ async def handle_kbju_test_goal_speed_callback(callback: CallbackQuery, state: F
         reply_markup=kbju_activity_inline,
     )
 
-
 @router.message(KbjuTestStates.entering_activity)
 async def handle_kbju_test_activity(message: Message, state: FSMContext):
     """Обрабатывает выбор активности в тесте КБЖУ и сохраняет настройки."""
     await message.answer("Выбери активность кнопкой ниже 👇", reply_markup=kbju_activity_inline)
-
 
 @router.callback_query(
     KbjuTestStates.entering_activity,
@@ -515,7 +510,7 @@ async def handle_kbju_test_activity_callback(callback: CallbackQuery, state: FSM
     # Рассчитываем КБЖУ
     profile = calculate_nutrition_profile(data)
 
-    # Сохраняем настройки
+    # Сохраняем настройки и вес из теста
     MealRepository.save_kbju_settings(
         user_id=user_id,
         calories=profile.target_calories,
@@ -525,6 +520,7 @@ async def handle_kbju_test_activity_callback(callback: CallbackQuery, state: FSM
         goal=goal,
         activity=activity,
     )
+    save_weight_from_test(user_id=user_id, data=data)
 
     await state.clear()
 
@@ -561,7 +557,6 @@ async def handle_kbju_test_activity_callback(callback: CallbackQuery, state: FSM
         push_menu_stack(callback.message.bot, kbju_menu)
         await callback.message.answer("Теперь можешь пользоваться разделом КБЖУ 👇", reply_markup=kbju_menu)
 
-
 @router.message(KbjuTestStates.entering_manual_calories)
 async def handle_manual_calories(message: Message, state: FSMContext):
     """Обрабатывает ручной ввод калорий."""
@@ -576,7 +571,6 @@ async def handle_manual_calories(message: Message, state: FSMContext):
     await state.update_data(calories=calories)
     await state.set_state(KbjuTestStates.entering_manual_protein)
     await message.answer("Теперь укажи белки в граммах (например: 130)")
-
 
 @router.message(KbjuTestStates.entering_manual_protein)
 async def handle_manual_protein(message: Message, state: FSMContext):
@@ -593,7 +587,6 @@ async def handle_manual_protein(message: Message, state: FSMContext):
     await state.set_state(KbjuTestStates.entering_manual_fat)
     await message.answer("Укажи жиры в граммах (например: 70)")
 
-
 @router.message(KbjuTestStates.entering_manual_fat)
 async def handle_manual_fat(message: Message, state: FSMContext):
     """Обрабатывает ручной ввод жиров."""
@@ -608,7 +601,6 @@ async def handle_manual_fat(message: Message, state: FSMContext):
     await state.update_data(fat=fat)
     await state.set_state(KbjuTestStates.entering_manual_carbs)
     await message.answer("И последний шаг: укажи углеводы в граммах (например: 220)")
-
 
 @router.message(KbjuTestStates.entering_manual_carbs)
 async def handle_manual_carbs(message: Message, state: FSMContext):
@@ -643,7 +635,6 @@ async def handle_manual_carbs(message: Message, state: FSMContext):
     push_menu_stack(message.bot, kbju_menu)
     await message.answer(text, parse_mode="HTML")
     await message.answer("Готово! Ручная норма сохранена ✅", reply_markup=kbju_menu)
-
 
 def register_kbju_test_handlers(dp):
     """Регистрирует обработчики теста КБЖУ."""
