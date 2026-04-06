@@ -518,14 +518,14 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
     return result
 
 
-@router.message(lambda m: m.text in {"📊 ИИ анализ деятельности", "🤖 ИИ анализ деятельности"})
+@router.message(lambda m: m.text in {"📊 ИИ анализ", "📊 ИИ анализ деятельности", "🤖 ИИ анализ деятельности"})
 async def analyze_activity(message: Message):
     """Показывает меню анализа деятельности."""
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} opened activity analysis")
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(
-        "📊 <b>ИИ анализ деятельности</b>\n\nВыбери период для анализа:",
+        "📊 <b>ИИ анализ</b>\n\nВыбери период для анализа:",
         parse_mode="HTML",
         reply_markup=activity_analysis_menu,
     )
