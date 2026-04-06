@@ -6,12 +6,17 @@ from aiogram.fsm.context import FSMContext
 from states.user_states import KbjuTestStates
 from utils.keyboards import (
     kbju_gender_menu,
+    kbju_gender_inline,
     kbju_age_range_inline,
     kbju_height_range_inline,
     kbju_activity_menu,
+    kbju_activity_inline,
     kbju_goal_menu,
+    kbju_goal_inline,
     kbju_goal_speed_loss_menu,
+    kbju_goal_speed_loss_inline,
     kbju_goal_speed_gain_menu,
+    kbju_goal_speed_gain_inline,
     kbju_menu,
     kbju_intro_menu,
     onboarding_open_menu,
@@ -40,15 +45,17 @@ BASE_STEP_BY_STATE = {
     KbjuTestStates.entering_goal.state: 5,
 }
 
-GOAL_SPEED_LABEL_TO_PERCENT = {
-    "🌿 Мягко — 10%": 10,
-    "⚖️ Стандарт — 15%": 15,
-    "🔥 Быстро — 20%": 20,
-    "🚀 Быстрее — 20%": 20,
-    "Мягко — 10%": 10,
-    "Стандарт — 15%": 15,
-    "Быстро — 20%": 20,
-    "Быстрее — 20%": 20,
+GOAL_SPEED_PERCENT_TO_LABEL = {
+    "loss": {
+        10: "🌿 Мягко — 10%",
+        15: "⚖️ Стандарт — 15%",
+        20: "🔥 Быстро — 20%",
+    },
+    "gain": {
+        10: "🌿 Мягко — 10%",
+        15: "⚖️ Стандарт — 15%",
+        20: "🚀 Быстрее — 20%",
+    },
 }
 
 AGE_MAP = {
@@ -133,7 +140,7 @@ async def restart_required_kbju_test(message: Message, state: FSMContext):
     await message.answer(
         "Для начала работы с ботом нужно пройти короткий стартовый тест КБЖУ.\n\n"
         + format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_gender.state], "Для начала укажи пол:"),
-        reply_markup=kbju_gender_menu,
+        reply_markup=kbju_gender_inline,
     )
 
 
@@ -174,7 +181,7 @@ async def start_kbju_test(message: Message, state: FSMContext):
     push_menu_stack(message.bot, kbju_gender_menu)
     await message.answer(
         format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_gender.state], "Для начала выбери пол:"),
-        reply_markup=kbju_gender_menu,
+        reply_markup=kbju_gender_inline,
     )
 
 
@@ -197,20 +204,24 @@ async def start_manual_kbju_goal(message: Message, state: FSMContext):
 @router.message(KbjuTestStates.entering_gender)
 async def handle_kbju_test_gender(message: Message, state: FSMContext):
     """Обрабатывает выбор пола в тесте КБЖУ."""
-    user_id = str(message.from_user.id)
-    txt = message.text.strip()
+    await message.answer("Выбери пол кнопкой ниже 👇", reply_markup=kbju_gender_inline)
 
-    if txt == "🙋‍♂️ Мужчина":
-        gender = "male"
-    elif txt == "🙋‍♀️ Женщина":
-        gender = "female"
-    else:
-        await message.answer("Пожалуйста, выбери вариант с кнопки 🙂")
+
+@router.callback_query(
+    KbjuTestStates.entering_gender,
+    lambda c: c.data is not None and c.data.startswith("kbju_gender:")
+)
+async def handle_kbju_test_gender_callback(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор пола в тесте КБЖУ через inline-кнопки."""
+    gender = callback.data.split(":", maxsplit=1)[1]
+    if gender not in {"male", "female"}:
+        await callback.answer("Не удалось определить пол", show_alert=True)
         return
 
     await state.update_data(gender=gender)
     await state.set_state(KbjuTestStates.entering_age)
-    await message.answer(
+    await callback.answer()
+    await callback.message.answer(
         format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_age.state], "Выбери возрастную группу:"),
         reply_markup=kbju_age_range_inline,
     )
@@ -309,33 +320,36 @@ async def handle_kbju_test_weight(message: Message, state: FSMContext):
     push_menu_stack(message.bot, kbju_goal_menu)
     await message.answer(
         format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какая цель?"),
-        reply_markup=kbju_goal_menu,
+        reply_markup=kbju_goal_inline,
     )
 
 
 @router.message(KbjuTestStates.entering_goal)
 async def handle_kbju_test_goal(message: Message, state: FSMContext):
     """Обрабатывает выбор цели в тесте КБЖУ."""
-    txt = message.text.strip()
+    await message.answer("Выбери цель кнопкой ниже 👇", reply_markup=kbju_goal_inline)
 
-    if txt in {"📉 Похудение", "Похудеть"}:
-        goal = "loss"
-    elif txt in {"⚖️ Поддержание", "Поддерживать"}:
-        goal = "maintain"
-    elif txt in {"💪 Набор массы", "Набрать"}:
-        goal = "gain"
-    else:
-        await message.answer("Выбери вариант с кнопки, пожалуйста 🙂")
+
+@router.callback_query(
+    KbjuTestStates.entering_goal,
+    lambda c: c.data is not None and c.data.startswith("kbju_goal:")
+)
+async def handle_kbju_test_goal_callback(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор цели в тесте КБЖУ через inline-кнопки."""
+    goal = callback.data.split(":", maxsplit=1)[1]
+    if goal not in {"loss", "maintain", "gain"}:
+        await callback.answer("Не удалось определить цель", show_alert=True)
         return
 
     await state.update_data(goal=goal)
+    await callback.answer()
 
     if goal in {"loss", "gain"}:
         await state.set_state(KbjuTestStates.entering_goal_speed)
-        speed_menu = kbju_goal_speed_loss_menu if goal == "loss" else kbju_goal_speed_gain_menu
+        speed_menu = kbju_goal_speed_loss_inline if goal == "loss" else kbju_goal_speed_gain_inline
 
-        push_menu_stack(message.bot, speed_menu)
-        await message.answer(
+        push_menu_stack(callback.message.bot, kbju_goal_speed_loss_menu if goal == "loss" else kbju_goal_speed_gain_menu)
+        await callback.message.answer(
             format_dynamic_step_text(
                 step=6,
                 total_steps=TOTAL_STEPS_WITH_GOAL_SPEED,
@@ -348,56 +362,84 @@ async def handle_kbju_test_goal(message: Message, state: FSMContext):
     await state.update_data(goal_speed_label="Поддержание", goal_percent=0)
     await state.set_state(KbjuTestStates.entering_activity)
 
-    push_menu_stack(message.bot, kbju_activity_menu)
-    await message.answer(
+    push_menu_stack(callback.message.bot, kbju_activity_menu)
+    await callback.message.answer(
         format_dynamic_step_text(
             step=6,
             total_steps=BASE_TOTAL_STEPS,
             text="Опиши свой обычный уровень активности:",
         ),
-        reply_markup=kbju_activity_menu,
+        reply_markup=kbju_activity_inline,
     )
 
 
 @router.message(KbjuTestStates.entering_goal_speed)
 async def handle_kbju_test_goal_speed(message: Message, state: FSMContext):
     """Обрабатывает выбор темпа изменения веса в тесте КБЖУ."""
-    speed_label = message.text.strip()
-    goal_percent = GOAL_SPEED_LABEL_TO_PERCENT.get(speed_label)
+    data = await state.get_data()
+    goal = data.get("goal")
+    speed_menu = kbju_goal_speed_loss_inline if goal == "loss" else kbju_goal_speed_gain_inline
+    await message.answer("Выбери темп кнопкой ниже 👇", reply_markup=speed_menu)
 
-    if goal_percent is None:
-        await message.answer("Выбери вариант с кнопки, пожалуйста 🙂")
+
+@router.callback_query(
+    KbjuTestStates.entering_goal_speed,
+    lambda c: c.data is not None and c.data.startswith("kbju_goal_speed:")
+)
+async def handle_kbju_test_goal_speed_callback(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор темпа изменения веса через inline-кнопки."""
+    data = await state.get_data()
+    goal = data.get("goal")
+    if goal not in {"loss", "gain"}:
+        await callback.answer("Сначала выбери цель", show_alert=True)
+        return
+
+    raw_value = callback.data.split(":", maxsplit=1)[1]
+    try:
+        goal_percent = int(raw_value)
+    except ValueError:
+        await callback.answer("Не удалось определить темп", show_alert=True)
+        return
+
+    speed_label = GOAL_SPEED_PERCENT_TO_LABEL[goal].get(goal_percent)
+    if speed_label is None:
+        await callback.answer("Не удалось определить темп", show_alert=True)
         return
 
     await state.update_data(goal_speed_label=speed_label, goal_percent=goal_percent)
     await state.set_state(KbjuTestStates.entering_activity)
+    await callback.answer()
 
-    push_menu_stack(message.bot, kbju_activity_menu)
-    await message.answer(
+    push_menu_stack(callback.message.bot, kbju_activity_menu)
+    await callback.message.answer(
         format_dynamic_step_text(
             step=7,
             total_steps=TOTAL_STEPS_WITH_GOAL_SPEED,
             text="Опиши свой обычный уровень активности:",
         ),
-        reply_markup=kbju_activity_menu,
+        reply_markup=kbju_activity_inline,
     )
 
 
 @router.message(KbjuTestStates.entering_activity)
 async def handle_kbju_test_activity(message: Message, state: FSMContext):
     """Обрабатывает выбор активности в тесте КБЖУ и сохраняет настройки."""
-    user_id = str(message.from_user.id)
-    txt = message.text.strip()
+    await message.answer("Выбери активность кнопкой ниже 👇", reply_markup=kbju_activity_inline)
 
-    if txt == "🪑 Мало движения":
-        activity = "low"
-    elif txt == "🚶 Умеренная активность":
-        activity = "medium"
-    elif txt == "🏋️ Тренировки 3–5 раз/нед":
-        activity = "high"
-    else:
-        await message.answer("Выбери вариант с кнопки, пожалуйста 🙂")
+
+@router.callback_query(
+    KbjuTestStates.entering_activity,
+    lambda c: c.data is not None and c.data.startswith("kbju_activity:")
+)
+async def handle_kbju_test_activity_callback(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор активности в тесте КБЖУ и сохраняет настройки."""
+    user_id = str(callback.from_user.id)
+    activity = callback.data.split(":", maxsplit=1)[1]
+    if activity not in {"low", "medium", "high"}:
+        await callback.answer("Не удалось определить активность", show_alert=True)
         return
+
+    await callback.answer()
 
     # Получаем все данные из FSM
     data = await state.get_data()
@@ -405,7 +447,7 @@ async def handle_kbju_test_activity(message: Message, state: FSMContext):
     goal = data.get("goal")
     if goal not in {"loss", "maintain", "gain"}:
         await state.clear()
-        await message.answer("Не удалось определить цель. Давай начнём тест заново 🙂")
+        await callback.message.answer("Не удалось определить цель. Давай начнём тест заново 🙂")
         return
     required_onboarding = bool(data.get("required_onboarding"))
     
@@ -447,16 +489,16 @@ async def handle_kbju_test_activity(message: Message, state: FSMContext):
         )
     )
     
-    await message.answer(text, parse_mode="HTML")
+    await callback.message.answer(text, parse_mode="HTML")
     if required_onboarding:
-        push_menu_stack(message.bot, onboarding_open_menu)
-        await message.answer(
+        push_menu_stack(callback.message.bot, onboarding_open_menu)
+        await callback.message.answer(
             format_onboarding_finish_text(),
             reply_markup=onboarding_open_menu,
         )
     else:
-        push_menu_stack(message.bot, kbju_menu)
-        await message.answer("Теперь можешь пользоваться разделом КБЖУ 👇", reply_markup=kbju_menu)
+        push_menu_stack(callback.message.bot, kbju_menu)
+        await callback.message.answer("Теперь можешь пользоваться разделом КБЖУ 👇", reply_markup=kbju_menu)
 
 
 @router.message(KbjuTestStates.entering_manual_calories)
