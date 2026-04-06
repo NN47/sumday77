@@ -5,6 +5,7 @@ import json
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from database.session import get_db_session
 from database.models import User, Supplement
 
@@ -21,10 +22,19 @@ class NotificationScheduler:
         self.sent_notifications_today = set()  # Для предотвращения дублирования уведомлений
         self._last_check_date = None  # Дата последней проверки для сброса кэша
         
-    async def send_notification(self, user_id: str, message: str):
+    async def send_notification(
+        self,
+        user_id: str,
+        message: str,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ):
         """Отправляет уведомление пользователю."""
         try:
-            await self.bot.send_message(chat_id=user_id, text=message)
+            await self.bot.send_message(
+                chat_id=user_id,
+                text=message,
+                reply_markup=reply_markup,
+            )
             logger.info(f"Уведомление отправлено пользователю {user_id}")
         except Exception as e:
             logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {e}")
@@ -168,8 +178,29 @@ class NotificationScheduler:
                             continue
                         
                         # Отправляем уведомление
-                        message = f"💊 Напоминание: пора принять добавку {supplement.name}"
-                        await self.send_notification(supplement.user_id, message)
+                        message = (
+                            "🔔 Время принять лекарство!\n\n"
+                            f"💊 {supplement.name}\n"
+                            f"⏰ {current_time_str}\n\n"
+                            "Нажмите кнопку после приема лекарства:"
+                        )
+                        confirm_markup = InlineKeyboardMarkup(
+                            inline_keyboard=[
+                                [
+                                    InlineKeyboardButton(
+                                        text="✅ Подтвердить прием",
+                                        callback_data=(
+                                            f"sup_confirm:{supplement.id}:{current_time_str}"
+                                        ),
+                                    )
+                                ]
+                            ]
+                        )
+                        await self.send_notification(
+                            supplement.user_id,
+                            message,
+                            reply_markup=confirm_markup,
+                        )
                         
                         # Помечаем уведомление как отправленное
                         self.sent_notifications_today.add(notification_key)

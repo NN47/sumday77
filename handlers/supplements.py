@@ -4,6 +4,7 @@ import re
 import json
 from datetime import date, datetime, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -35,6 +36,7 @@ from states.user_states import SupplementStates
 from utils.validators import parse_date
 
 logger = logging.getLogger(__name__)
+MSK_TZ = ZoneInfo("Europe/Moscow")
 
 router = Router()
 
@@ -1800,6 +1802,49 @@ async def edit_supplement_entry(callback: CallbackQuery, state: FSMContext):
         "Укажи новое время приёма в формате ЧЧ:ММ\n"
         "или нажми «⏭️ Пропустить», чтобы оставить текущее время.",
         reply_markup=supplement_history_time_menu(),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("sup_confirm:"))
+async def confirm_supplement_intake_from_notification(callback: CallbackQuery):
+    """Подтверждает приём добавки из уведомления."""
+    await callback.answer()
+    user_id = str(callback.from_user.id)
+
+    try:
+        _, supplement_id_raw, time_text = callback.data.split(":", 2)
+        supplement_id = int(supplement_id_raw)
+    except (ValueError, AttributeError):
+        await callback.message.answer("❌ Не удалось обработать подтверждение приёма.")
+        return
+
+    supplements_list = SupplementRepository.get_supplements(user_id)
+    target = next((item for item in supplements_list if item.get("id") == supplement_id), None)
+    if not target:
+        await callback.message.answer("❌ Добавка не найдена. Возможно, она была удалена.")
+        return
+
+    now = datetime.now(MSK_TZ)
+    try:
+        intake_time = datetime.strptime(time_text, "%H:%M").time()
+    except ValueError:
+        intake_time = now.time().replace(second=0, microsecond=0)
+        time_text = intake_time.strftime("%H:%M")
+
+    timestamp = datetime.combine(now.date(), intake_time)
+    SupplementRepository.save_entry(
+        user_id=user_id,
+        supplement_id=supplement_id,
+        timestamp=timestamp,
+    )
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    await callback.message.answer(
+        f"✅ Приём добавки «{target['name']}» в {time_text} подтверждён."
     )
 
 
