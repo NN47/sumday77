@@ -258,6 +258,15 @@ kbju_gender_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+kbju_gender_inline = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🙋‍♂️ Мужчина", callback_data="kbju_gender:male"),
+            InlineKeyboardButton(text="🙋‍♀️ Женщина", callback_data="kbju_gender:female"),
+        ],
+    ],
+)
+
 kbju_age_range_inline = InlineKeyboardMarkup(
     inline_keyboard=[
         [
@@ -324,6 +333,14 @@ kbju_activity_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+kbju_activity_inline = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🪑 Мало движения", callback_data="kbju_activity:low")],
+        [InlineKeyboardButton(text="🚶 Умеренная активность", callback_data="kbju_activity:medium")],
+        [InlineKeyboardButton(text="🏋️ Тренировки 3–5 раз/нед", callback_data="kbju_activity:high")],
+    ],
+)
+
 kbju_goal_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Похудеть")],
@@ -332,6 +349,14 @@ kbju_goal_menu = ReplyKeyboardMarkup(
         [main_menu_button],
     ],
     resize_keyboard=True,
+)
+
+kbju_goal_inline = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="📉 Похудение", callback_data="kbju_goal:loss")],
+        [InlineKeyboardButton(text="⚖️ Поддержание", callback_data="kbju_goal:maintain")],
+        [InlineKeyboardButton(text="💪 Набор массы", callback_data="kbju_goal:gain")],
+    ],
 )
 
 kbju_goal_speed_loss_menu = ReplyKeyboardMarkup(
@@ -344,6 +369,14 @@ kbju_goal_speed_loss_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+kbju_goal_speed_loss_inline = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🌿 Мягко — 10%", callback_data="kbju_goal_speed:10")],
+        [InlineKeyboardButton(text="⚖️ Стандарт — 15%", callback_data="kbju_goal_speed:15")],
+        [InlineKeyboardButton(text="🔥 Быстро — 20%", callback_data="kbju_goal_speed:20")],
+    ],
+)
+
 kbju_goal_speed_gain_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🌿 Мягко — 10%")],
@@ -352,6 +385,14 @@ kbju_goal_speed_gain_menu = ReplyKeyboardMarkup(
         [main_menu_button],
     ],
     resize_keyboard=True,
+)
+
+kbju_goal_speed_gain_inline = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🌿 Мягко — 10%", callback_data="kbju_goal_speed:10")],
+        [InlineKeyboardButton(text="⚖️ Стандарт — 15%", callback_data="kbju_goal_speed:15")],
+        [InlineKeyboardButton(text="🚀 Быстрее — 20%", callback_data="kbju_goal_speed:20")],
+    ],
 )
 
 kbju_add_menu = ReplyKeyboardMarkup(
