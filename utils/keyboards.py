@@ -182,6 +182,17 @@ duration_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+plank_duration_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="1"), KeyboardButton(text="1,5"), KeyboardButton(text="2")],
+        [KeyboardButton(text="2,5"), KeyboardButton(text="3"), KeyboardButton(text="3,5")],
+        [KeyboardButton(text="4"), KeyboardButton(text="4,5"), KeyboardButton(text="5")],
+        [KeyboardButton(text="✍️ Ввести вручную")],
+        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
 count_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=str(n)) for n in range(1, 6)],
