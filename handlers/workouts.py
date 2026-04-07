@@ -100,7 +100,12 @@ async def quick_today_workout(message: Message, state: FSMContext):
 @router.message(lambda m: m.text == "👣 Шаги")
 async def open_steps_flow(message: Message, state: FSMContext):
     """Быстрый сценарий добавления шагов."""
-    await state.update_data(entry_date=date.today().isoformat(), exercise="Шаги", variant="Количество шагов")
+    await state.update_data(
+        entry_date=date.today().isoformat(),
+        exercise="Шаги",
+        variant="Количество шагов",
+        back_target="training_menu",
+    )
     await state.set_state(WorkoutStates.entering_steps)
     push_menu_stack(message.bot, steps_menu)
     await message.answer("Введи количество шагов за сегодня:", reply_markup=steps_menu)
@@ -360,6 +365,12 @@ async def choose_exercise(message: Message, state: FSMContext):
     """Обрабатывает выбор упражнения."""
     exercise = message.text
 
+    if exercise == "⬅️ Назад":
+        await state.clear()
+        push_menu_stack(message.bot, training_menu)
+        await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
+        return
+
     if exercise in {"🕘 Недавние", "📂 Все упражнения"}:
         user_id = str(message.from_user.id)
         workouts = WorkoutRepository.get_workouts_for_period(user_id, date.today() - timedelta(days=30), date.today())
@@ -408,18 +419,19 @@ async def choose_exercise(message: Message, state: FSMContext):
     
     input_type = _exercise_input_type(exercise)
     if input_type == "steps":
+        await state.update_data(back_target="exercise_picker")
         await state.set_state(WorkoutStates.entering_steps)
         push_menu_stack(message.bot, steps_menu)
         await message.answer("Введи количество шагов за сегодня:", reply_markup=steps_menu)
         return
     if input_type == "duration":
-        await state.update_data(variant="Минуты")
+        await state.update_data(variant="Минуты", back_target="exercise_picker")
         await state.set_state(WorkoutStates.entering_duration)
         push_menu_stack(message.bot, duration_menu)
         await message.answer(f"Введи длительность для {exercise} в минутах:", reply_markup=duration_menu)
         return
 
-    await state.update_data(variant="reps")
+    await state.update_data(variant="reps", back_target="exercise_picker")
     await state.set_state(WorkoutStates.entering_count)
     push_menu_stack(message.bot, count_menu)
     await message.answer("Выбери количество повторений:", reply_markup=count_menu)
@@ -450,9 +462,15 @@ async def handle_steps_input(message: Message, state: FSMContext):
         await go_main_menu(message, state)
         return
     if message.text == "⬅️ Назад":
-        await state.set_state(WorkoutStates.choosing_exercise)
-        push_menu_stack(message.bot, exercise_picker_menu)
-        await message.answer("Выбери упражнение:", reply_markup=exercise_picker_menu)
+        data = await state.get_data()
+        if data.get("back_target") == "training_menu":
+            await state.clear()
+            push_menu_stack(message.bot, training_menu)
+            await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
+        else:
+            await state.set_state(WorkoutStates.choosing_exercise)
+            push_menu_stack(message.bot, exercise_picker_menu)
+            await message.answer("Выбери упражнение:", reply_markup=exercise_picker_menu)
         return
 
     try:
