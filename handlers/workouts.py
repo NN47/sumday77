@@ -18,6 +18,7 @@ from utils.keyboards import (
     bodyweight_exercises,
     weighted_exercises,
     frequent_exercises,
+    build_exercise_selection_menu,
     push_menu_stack,
     add_another_set_menu,
     add_another_exercise_menu,
@@ -386,7 +387,9 @@ async def choose_exercise(message: Message, state: FSMContext):
             recent = [ex for ex in all_exercises if ex != "Другое"]
         if not recent:
             recent = frequent_exercises
-        await message.answer("Выбери упражнение из списка:\n" + "\n".join(f"• {r}" for r in recent))
+        exercise_menu = build_exercise_selection_menu(recent)
+        push_menu_stack(message.bot, exercise_menu)
+        await message.answer("Выбери упражнение из списка:", reply_markup=exercise_menu)
         return
 
     if exercise == "🔎 Поиск упражнения":

@@ -288,6 +288,13 @@ def build_exercise_menu(category: str, custom_exercises: list[str] | None = None
 
     return ReplyKeyboardMarkup(keyboard=exercise_rows, resize_keyboard=True)
 
+
+def build_exercise_selection_menu(exercises: list[str]) -> ReplyKeyboardMarkup:
+    """Строит клавиатуру выбора упражнения из произвольного списка."""
+    rows = [[KeyboardButton(text=exercise)] for exercise in exercises]
+    rows.append([KeyboardButton(text="⬅️ Назад"), main_menu_button])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
 # Меню КБЖУ
 kbju_menu = ReplyKeyboardMarkup(
     keyboard=[
