@@ -18,9 +18,14 @@ class MealEntryStates(StatesGroup):
 
 class WorkoutStates(StatesGroup):
     """Состояния для добавления тренировки."""
-    choosing_category = State()
     choosing_exercise = State()
     entering_custom_exercise = State()
+    entering_duration = State()
+    entering_steps = State()
+    confirming_steps = State()
+    browsing_recent_exercises = State()
+    browsing_all_exercises = State()
+    searching_exercise = State()
     choosing_grip_type = State()  # Выбор типа хвата для подтягиваний
     entering_count = State()
     choosing_date = State()

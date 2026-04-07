@@ -10,16 +10,17 @@ from utils.keyboards import (
     TRAINING_BUTTON_TEXT,
     LEGACY_TRAINING_BUTTON_TEXT,
     training_menu,
-    training_date_menu,
-    other_day_menu,
-    exercise_category_menu,
-    build_exercise_menu,
+    exercise_picker_menu,
+    steps_menu,
+    steps_confirmation_menu,
+    duration_menu,
     count_menu,
     bodyweight_exercises,
     weighted_exercises,
+    frequent_exercises,
     push_menu_stack,
-    main_menu_button,
     add_another_set_menu,
+    add_another_exercise_menu,
     grip_type_menu,
 )
 from states.user_states import WorkoutStates
@@ -35,11 +36,27 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
+REPS_EXERCISES = {"Отжимания", "Подтягивания", "Приседания", "Пресс", "Берпи"}
+DURATION_EXERCISES = {"Планка", "Йога", "Бег", "Силовая тренировка", "Скакалка", "Велосипед", "Пробежка"}
+STEPS_EXERCISES = {"Шаги", "Ходьба", "Шаги (Ходьба)"}
 
-def _get_exercise_menu(user_id: str, category: str):
-    """Возвращает меню упражнений c учётом пользовательских."""
-    custom_exercises = CustomWorkoutExerciseRepository.get_user_exercises(user_id, category)
-    return build_exercise_menu(category, custom_exercises)
+
+def _normalize_exercise_name(exercise: str) -> str:
+    aliases = {
+        "Пробежка": "Бег",
+        "Шаги (Ходьба)": "Шаги",
+        "Ходьба": "Шаги",
+    }
+    return aliases.get(exercise, exercise)
+
+
+def _exercise_input_type(exercise: str) -> str:
+    normalized = _normalize_exercise_name(exercise)
+    if normalized in STEPS_EXERCISES:
+        return "steps"
+    if normalized in DURATION_EXERCISES:
+        return "duration"
+    return "reps"
 
 
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
@@ -80,6 +97,15 @@ async def quick_today_workout(message: Message, state: FSMContext):
     await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
 
 
+@router.message(lambda m: m.text == "👣 Шаги")
+async def open_steps_flow(message: Message, state: FSMContext):
+    """Быстрый сценарий добавления шагов."""
+    await state.update_data(entry_date=date.today().isoformat(), exercise="Шаги", variant="Количество шагов")
+    await state.set_state(WorkoutStates.entering_steps)
+    push_menu_stack(message.bot, steps_menu)
+    await message.answer("Введи количество шагов за сегодня:", reply_markup=steps_menu)
+
+
 @router.callback_query(lambda c: c.data == "quick_today_workout")
 async def quick_today_workout_cb(callback: CallbackQuery, state: FSMContext):
     """Быстрый вход к списку тренировок за сегодня по inline-кнопке."""
@@ -94,24 +120,28 @@ async def quick_today_workout_cb(callback: CallbackQuery, state: FSMContext):
     await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
 
 
-@router.message(lambda m: m.text == "➕ Добавить тренировку")
+@router.message(lambda m: m.text == "💪 Тренировка")
 async def add_training_entry(message: Message, state: FSMContext):
     """Начинает процесс добавления тренировки."""
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} started adding workout")
     
-    # Для тренировок всегда используем сегодняшнюю дату по умолчанию
     await state.update_data(entry_date=date.today().isoformat())
-    await state.set_state(WorkoutStates.choosing_category)
-    
-    push_menu_stack(message.bot, exercise_category_menu)
+    await state.set_state(WorkoutStates.choosing_exercise)
+    push_menu_stack(message.bot, exercise_picker_menu)
     await message.answer(
-        "Выбери категорию упражнений:",
-        reply_markup=exercise_category_menu,
+        "Выбери упражнение:\n\nЧастые:\n- Отжимания\n- Подтягивания\n- Приседания\n- Планка\n- Бег\n- Ходьба\n- Йога",
+        reply_markup=exercise_picker_menu,
     )
 
 
-@router.message(lambda m: m.text == "📆 Календарь тренировок")
+@router.message(lambda m: m.text == "➕ Добавить другое упражнение")
+async def add_another_exercise(message: Message, state: FSMContext):
+    """Позволяет быстро добавить следующее упражнение."""
+    await add_training_entry(message, state)
+
+
+@router.message(lambda m: m.text == "📅 Календарь активности")
 async def show_training_calendar(message: Message):
     """Показывает календарь тренировок."""
     user_id = str(message.from_user.id)
@@ -142,17 +172,32 @@ async def show_day_workouts(message: Message, user_id: str, target_date: date):
         )
         return
     
-    text = [f"📅 {target_date.strftime('%d.%m.%Y')} — тренировки:"]
+    text = [f"📅 {target_date.strftime('%d.%m.%Y')} — активность:"]
     total_calories = 0.0
-    
+    aggregates: dict[str, dict[str, float | str]] = {}
+
     for w in workouts:
-        variant_text = f" ({w.variant})" if w.variant else ""
+        clean_exercise = _normalize_exercise_name(w.exercise)
         entry_calories = w.calories or calculate_workout_calories(user_id, w.exercise, w.variant, w.count)
         total_calories += entry_calories
-        formatted_count = format_count_with_unit(w.count, w.variant)
-        text.append(
-            f"• {w.exercise}{variant_text}: {formatted_count} (~{entry_calories:.0f} ккал)"
-        )
+        key = clean_exercise
+        row = aggregates.setdefault(key, {"count": 0, "calories": 0.0, "variant": w.variant or "reps"})
+        row["count"] += w.count
+        row["calories"] += entry_calories
+        if (w.variant or "").lower() in {"минуты", "мин"}:
+            row["variant"] = "мин"
+        elif "шаг" in (w.variant or "").lower() or clean_exercise == "Шаги":
+            row["variant"] = "steps"
+
+    for exercise, data in aggregates.items():
+        variant = data["variant"]
+        if variant == "steps":
+            formatted_count = f"{int(data['count']):,}".replace(",", " ")
+        elif variant == "мин":
+            formatted_count = f"{int(data['count'])} мин"
+        else:
+            formatted_count = f"{int(data['count'])} повторений"
+        text.append(f"• {exercise}: {formatted_count} (~{data['calories']:.0f} ккал)")
     
     text.append(f"\n🔥 Итого за день: ~{total_calories:.0f} ккал")
     
@@ -200,12 +245,11 @@ async def add_workout_from_calendar(callback: CallbackQuery, state: FSMContext):
     target_date = date.fromisoformat(parts[1])
     
     await state.update_data(entry_date=target_date.isoformat())
-    await state.set_state(WorkoutStates.choosing_category)
-    
-    push_menu_stack(callback.message.bot, exercise_category_menu)
+    await state.set_state(WorkoutStates.choosing_exercise)
+    push_menu_stack(callback.message.bot, exercise_picker_menu)
     await callback.message.answer(
-        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nВыбери категорию упражнений:",
-        reply_markup=exercise_category_menu,
+        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nВыбери упражнение:",
+        reply_markup=exercise_picker_menu,
     )
 
 
@@ -311,46 +355,41 @@ async def delete_workout_from_calendar(callback: CallbackQuery):
         await callback.message.answer("❌ Не удалось удалить тренировку")
 
 
-@router.message(WorkoutStates.choosing_category)
-async def choose_category(message: Message, state: FSMContext):
-    """Обрабатывает выбор категории упражнений."""
-    if message.text == "Со своим весом":
-        category = "bodyweight"
-        await state.update_data(category=category)
-        await state.set_state(WorkoutStates.choosing_exercise)
-        menu = _get_exercise_menu(str(message.from_user.id), "bodyweight")
-        push_menu_stack(message.bot, menu)
-        await message.answer("Выбери упражнение:", reply_markup=menu)
-    elif message.text == "С утяжелителем":
-        category = "weighted"
-        await state.update_data(category=category)
-        await state.set_state(WorkoutStates.choosing_exercise)
-        menu = _get_exercise_menu(str(message.from_user.id), "weighted")
-        push_menu_stack(message.bot, menu)
-        await message.answer("Выбери упражнение:", reply_markup=menu)
-    else:
-        await message.answer("Выбери категорию из меню")
-
-
 @router.message(WorkoutStates.choosing_exercise)
 async def choose_exercise(message: Message, state: FSMContext):
     """Обрабатывает выбор упражнения."""
-    data = await state.get_data()
-    category = data.get("category")
-    
     exercise = message.text
-    
-    # Определяем категорию по упражнению, если не задана
-    if not category:
-        if exercise in bodyweight_exercises:
-            category = "bodyweight"
-        elif exercise in weighted_exercises:
-            category = "weighted"
-        else:
-            await message.answer("Выбери упражнение из меню")
-            return
-    
-    await state.update_data(exercise=exercise, category=category)
+
+    if exercise in {"🕘 Недавние", "📂 Все упражнения"}:
+        user_id = str(message.from_user.id)
+        workouts = WorkoutRepository.get_workouts_for_period(user_id, date.today() - timedelta(days=30), date.today())
+        recent = []
+        for w in reversed(workouts):
+            name = _normalize_exercise_name(w.exercise)
+            if name not in recent:
+                recent.append(name)
+            if len(recent) >= 10:
+                break
+        if exercise == "📂 Все упражнения":
+            all_exercises = sorted({_normalize_exercise_name(ex) for ex in (bodyweight_exercises + weighted_exercises)})
+            recent = [ex for ex in all_exercises if ex != "Другое"]
+        if not recent:
+            recent = frequent_exercises
+        await message.answer("Выбери упражнение из списка:\n" + "\n".join(f"• {r}" for r in recent))
+        return
+
+    if exercise == "🔎 Поиск упражнения":
+        await state.set_state(WorkoutStates.searching_exercise)
+        await message.answer("Введи часть названия упражнения:")
+        return
+
+    known_exercises = set(bodyweight_exercises + weighted_exercises + frequent_exercises) | {"Бег", "Ходьба", "Силовая тренировка", "Велосипед", "Шаги"}
+    if exercise not in known_exercises:
+        await message.answer("Выбери упражнение из меню")
+        return
+
+    exercise = _normalize_exercise_name(exercise)
+    await state.update_data(exercise=exercise, category="bodyweight")
     
     # Обрабатываем "Другое"
     if exercise == "Другое":
@@ -367,43 +406,175 @@ async def choose_exercise(message: Message, state: FSMContext):
         await message.answer("Каким хватом выполнял подтягивания?", reply_markup=grip_type_menu)
         return
     
-    # Особые случаи с временем
-    variant = None
-    if exercise in {"Шаги", "Шаги (Ходьба)"}:
-        variant = "Количество шагов"
-        await state.update_data(variant=variant)
-        await state.set_state(WorkoutStates.entering_count)
-        await message.answer("Сколько шагов сделал? Введи число:")
+    input_type = _exercise_input_type(exercise)
+    if input_type == "steps":
+        await state.set_state(WorkoutStates.entering_steps)
+        push_menu_stack(message.bot, steps_menu)
+        await message.answer("Введи количество шагов за сегодня:", reply_markup=steps_menu)
         return
-    elif exercise == "Пробежка":
-        variant = "Минуты"
-        await state.update_data(variant=variant)
-        await state.set_state(WorkoutStates.entering_count)
-        await message.answer("Сколько минут пробежал? Введи число:")
+    if input_type == "duration":
+        await state.update_data(variant="Минуты")
+        await state.set_state(WorkoutStates.entering_duration)
+        push_menu_stack(message.bot, duration_menu)
+        await message.answer(f"Введи длительность для {exercise} в минутах:", reply_markup=duration_menu)
         return
-    elif exercise == "Скакалка":
-        variant = "Количество прыжков"
-        await state.update_data(variant=variant)
-        await state.set_state(WorkoutStates.entering_count)
-        await message.answer("Сколько раз прыгал на скакалке? Введи число:")
-        return
-    elif exercise == "Йога" or exercise == "Планка":
-        variant = "Минуты"
-        await state.update_data(variant=variant)
-        await state.set_state(WorkoutStates.entering_count)
-        await message.answer(f"Сколько минут {'занимался йогой' if exercise == 'Йога' else 'стоял в планке'}? Введи число:")
-        return
-    
-    # Обычные упражнения
-    if category == "weighted":
-        variant = "С утяжелителем"
-    else:
-        variant = "Со своим весом"
-    
-    await state.update_data(variant=variant)
+
+    await state.update_data(variant="reps")
     await state.set_state(WorkoutStates.entering_count)
     push_menu_stack(message.bot, count_menu)
     await message.answer("Выбери количество повторений:", reply_markup=count_menu)
+
+
+@router.message(WorkoutStates.searching_exercise)
+async def search_exercise(message: Message, state: FSMContext):
+    """Поиск упражнений по подстроке."""
+    query = (message.text or "").strip().lower()
+    all_exercises = sorted({_normalize_exercise_name(ex) for ex in (bodyweight_exercises + weighted_exercises + frequent_exercises)})
+    matches = [ex for ex in all_exercises if query and query in ex.lower()]
+    await state.set_state(WorkoutStates.choosing_exercise)
+    push_menu_stack(message.bot, exercise_picker_menu)
+    if not matches:
+        await message.answer("Ничего не нашёл. Выбери упражнение из меню:", reply_markup=exercise_picker_menu)
+        return
+    await message.answer("Нашёл:\n" + "\n".join(f"• {m}" for m in matches[:15]) + "\n\nВыбери упражнение из меню ниже.", reply_markup=exercise_picker_menu)
+
+
+@router.message(WorkoutStates.entering_steps)
+async def handle_steps_input(message: Message, state: FSMContext):
+    """Обрабатывает ввод шагов."""
+    if message.text == "✍️ Ввести вручную":
+        await message.answer("Введи количество шагов числом:")
+        return
+    if message.text in MAIN_MENU_BUTTON_ALIASES:
+        from handlers.common import go_main_menu
+        await go_main_menu(message, state)
+        return
+    if message.text == "⬅️ Назад":
+        await state.set_state(WorkoutStates.choosing_exercise)
+        push_menu_stack(message.bot, exercise_picker_menu)
+        await message.answer("Выбери упражнение:", reply_markup=exercise_picker_menu)
+        return
+
+    try:
+        steps = int(message.text)
+        if steps < 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        await message.answer("⚠️ Введи корректное число шагов.")
+        return
+
+    user_id = str(message.from_user.id)
+    calories = calculate_workout_calories(user_id, "Шаги", "Количество шагов", steps)
+    await state.update_data(steps=steps, steps_calories=calories)
+    await state.set_state(WorkoutStates.confirming_steps)
+    push_menu_stack(message.bot, steps_confirmation_menu)
+    await message.answer(
+        f"👣 Шаги: {steps:,}".replace(",", " ") + f"\n🔥 Примерный расход: ~{calories:.0f} ккал",
+        reply_markup=steps_confirmation_menu,
+    )
+
+
+@router.message(WorkoutStates.confirming_steps)
+async def confirm_steps(message: Message, state: FSMContext):
+    """Подтверждение сохранения шагов."""
+    user_id = str(message.from_user.id)
+    data = await state.get_data()
+    steps = int(data.get("steps", 0))
+    calories = float(data.get("steps_calories", 0))
+    today = date.today()
+
+    if message.text == "✏️ Изменить":
+        await state.set_state(WorkoutStates.entering_steps)
+        push_menu_stack(message.bot, steps_menu)
+        await message.answer("Введи количество шагов за сегодня:", reply_markup=steps_menu)
+        return
+    if message.text == "⬅️ Назад":
+        await state.set_state(WorkoutStates.entering_steps)
+        push_menu_stack(message.bot, steps_menu)
+        await message.answer("Введи количество шагов за сегодня:", reply_markup=steps_menu)
+        return
+    if message.text in MAIN_MENU_BUTTON_ALIASES:
+        from handlers.common import go_main_menu
+        await go_main_menu(message, state)
+        return
+
+    step_entries = [w for w in WorkoutRepository.get_workouts_for_day(user_id, today) if _normalize_exercise_name(w.exercise) == "Шаги"]
+
+    if message.text == "🗑 Удалить шаги":
+        for entry in step_entries:
+            WorkoutRepository.delete_workout(entry.id, user_id)
+        await state.clear()
+        push_menu_stack(message.bot, training_menu)
+        await message.answer("✅ Шаги за сегодня удалены.", reply_markup=training_menu)
+        return
+
+    if message.text != "✅ Сохранить":
+        await message.answer("Выбери действие кнопкой ниже.")
+        return
+
+    if step_entries:
+        first = step_entries[0]
+        WorkoutRepository.update_workout(first.id, user_id, steps, calories)
+        for entry in step_entries[1:]:
+            WorkoutRepository.delete_workout(entry.id, user_id)
+    else:
+        WorkoutRepository.save_workout(
+            user_id=user_id,
+            exercise="Шаги",
+            count=steps,
+            entry_date=today,
+            variant="Количество шагов",
+            calories=calories,
+        )
+
+    await state.clear()
+    from utils.progress_formatters import format_today_workouts_block
+    workouts_text = format_today_workouts_block(user_id, include_date=False)
+    push_menu_stack(message.bot, training_menu)
+    await message.answer(f"✅ Шаги сохранены!\n\n{workouts_text}", reply_markup=training_menu, parse_mode="HTML")
+
+
+@router.message(WorkoutStates.entering_duration)
+async def handle_duration_input(message: Message, state: FSMContext):
+    """Обрабатывает ввод длительности упражнения."""
+    if message.text == "✍️ Ввести вручную":
+        await message.answer("Введи длительность в минутах:")
+        return
+    if message.text == "⬅️ Назад":
+        await state.set_state(WorkoutStates.choosing_exercise)
+        push_menu_stack(message.bot, exercise_picker_menu)
+        await message.answer("Выбери упражнение:", reply_markup=exercise_picker_menu)
+        return
+    if message.text in MAIN_MENU_BUTTON_ALIASES:
+        from handlers.common import go_main_menu
+        await go_main_menu(message, state)
+        return
+
+    try:
+        minutes = int(message.text)
+        if minutes <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        await message.answer("⚠️ Введи положительное число минут.")
+        return
+
+    data = await state.get_data()
+    exercise = data.get("exercise")
+    user_id = str(message.from_user.id)
+    calories = calculate_workout_calories(user_id, exercise, "Минуты", minutes)
+    WorkoutRepository.save_workout(
+        user_id=user_id,
+        exercise=exercise,
+        count=minutes,
+        entry_date=date.today(),
+        variant="Минуты",
+        calories=calories,
+    )
+    await state.clear()
+    await message.answer(
+        f"✅ Записал!\n💪 {exercise}\n⏱ {minutes} мин\n🔥 ~{calories:.0f}\n📅 сегодня",
+        reply_markup=add_another_exercise_menu,
+    )
 
 
 @router.message(WorkoutStates.choosing_grip_type)
@@ -415,9 +586,8 @@ async def choose_grip_type(message: Message, state: FSMContext):
     if grip_type == "⬅️ Назад" or grip_type in MAIN_MENU_BUTTON_ALIASES:
         if grip_type == "⬅️ Назад":
             await state.set_state(WorkoutStates.choosing_exercise)
-            menu = _get_exercise_menu(str(message.from_user.id), "bodyweight")
-            push_menu_stack(message.bot, menu)
-            await message.answer("Выбери упражнение:", reply_markup=menu)
+            push_menu_stack(message.bot, exercise_picker_menu)
+            await message.answer("Выбери упражнение:", reply_markup=exercise_picker_menu)
         else:
             from handlers.common import go_main_menu
             await go_main_menu(message, state)
@@ -428,7 +598,7 @@ async def choose_grip_type(message: Message, state: FSMContext):
         "Прямой хват": "Прямой хват",
         "Обратный хват": "Обратный хват",
         "Нейтральный хват": "Нейтральный хват",
-        "Пропустить": "Со своим весом"
+        "Пропустить": "reps"
     }
     
     if grip_type not in grip_mapping:
@@ -448,24 +618,15 @@ async def handle_custom_exercise(message: Message, state: FSMContext):
     # Обработка кнопок навигации
     if message.text == "⬅️ Назад" or message.text in MAIN_MENU_BUTTON_ALIASES:
         if message.text == "⬅️ Назад":
-            data = await state.get_data()
-            category = data.get("category", "bodyweight")
             await state.set_state(WorkoutStates.choosing_exercise)
-            if category == "weighted":
-                menu = _get_exercise_menu(str(message.from_user.id), "weighted")
-                push_menu_stack(message.bot, menu)
-                await message.answer("Выбери упражнение:", reply_markup=menu)
-            else:
-                menu = _get_exercise_menu(str(message.from_user.id), "bodyweight")
-                push_menu_stack(message.bot, menu)
-                await message.answer("Выбери упражнение:", reply_markup=menu)
+            push_menu_stack(message.bot, exercise_picker_menu)
+            await message.answer("Выбери упражнение:", reply_markup=exercise_picker_menu)
         else:
             from handlers.common import go_main_menu
             await go_main_menu(message, state)
         return
     
-    data = await state.get_data()
-    category = data.get("category", "bodyweight")
+    category = "bodyweight"
     
     exercise = (message.text or "").strip()
     if not exercise:
@@ -484,12 +645,7 @@ async def handle_custom_exercise(message: Message, state: FSMContext):
 
     await state.update_data(exercise=exercise)
     
-    if category == "weighted":
-        variant = "С утяжелителем"
-    else:
-        variant = "Со своим весом"
-    
-    await state.update_data(variant=variant)
+    await state.update_data(variant="reps")
     await state.set_state(WorkoutStates.entering_count)
     push_menu_stack(message.bot, count_menu)
     await message.answer(
@@ -510,18 +666,9 @@ async def handle_count_input(message: Message, state: FSMContext):
     
     if message.text == "⬅️ Назад":
         # Возвращаемся к выбору упражнения
-        data = await state.get_data()
-        category = data.get("category", "bodyweight")
-        
         await state.set_state(WorkoutStates.choosing_exercise)
-        if category == "weighted":
-            menu = _get_exercise_menu(str(message.from_user.id), "weighted")
-            push_menu_stack(message.bot, menu)
-            await message.answer("Выбери упражнение:", reply_markup=menu)
-        else:
-            menu = _get_exercise_menu(str(message.from_user.id), "bodyweight")
-            push_menu_stack(message.bot, menu)
-            await message.answer("Выбери упражнение:", reply_markup=menu)
+        push_menu_stack(message.bot, exercise_picker_menu)
+        await message.answer("Выбери упражнение:", reply_markup=exercise_picker_menu)
         return
     
     if message.text in MAIN_MENU_BUTTON_ALIASES:
@@ -530,7 +677,7 @@ async def handle_count_input(message: Message, state: FSMContext):
         return
     
     # Обработка ответа на вопрос "добавить еще подход?"
-    if message.text == "💪Добавить еще подход":
+    if message.text == "💪 Добавить еще подход":
         # Остаемся в том же состоянии, просто просим ввести количество
         # Явно убеждаемся, что состояние установлено правильно и данные сохранены
         data = await state.get_data()
@@ -538,7 +685,7 @@ async def handle_count_input(message: Message, state: FSMContext):
         variant = data.get("variant")
         entry_date_str = data.get("entry_date")
         
-        if not exercise or not variant:
+        if not exercise:
             logger.error(f"User {user_id}: missing exercise or variant when adding another set. Data: {data}")
             await message.answer("❌ Ошибка: данные потеряны. Начни добавление тренировки заново.")
             await state.clear()
@@ -590,7 +737,7 @@ async def handle_count_input(message: Message, state: FSMContext):
     entry_date_str = data.get("entry_date", date.today().isoformat())
     
     # Проверяем, что данные есть
-    if not exercise or not variant:
+    if not exercise:
         logger.error(f"User {user_id}: missing exercise or variant in state. Data: {data}")
         await message.answer("❌ Ошибка: данные потеряны. Начни добавление тренировки заново.")
         await state.clear()
@@ -632,52 +779,16 @@ async def handle_count_input(message: Message, state: FSMContext):
     
     date_label = "сегодня" if entry_date == date.today() else entry_date.strftime("%d.%m.%Y")
     
-    # Определяем, нужно ли спрашивать про еще подход
-    # Для упражнений по времени (Пробежка, Йога, Планка, Шаги) не спрашиваем
-    exercises_without_sets = [
-        "Пробежка",
-        "Йога",
-        "Планка",
-        "Шаги",
-        "Шаги (Ходьба)",
-        "Скакалка",
-    ]
-    
-    if exercise in exercises_without_sets:
-        # Для упражнений по времени сразу завершаем
-        await state.clear()
-        push_menu_stack(message.bot, training_menu)
-        
-        # Добавляем variant в сообщение, если это не стандартный вариант
-        variant_display = ""
-        if variant and variant not in ["Со своим весом", "С утяжелителем"]:
-            variant_display = f" ({variant})"
-        
-        await message.answer(
-            f"✅ Записал! 👍\n"
-            f"💪 {exercise}{variant_display}\n"
-            f"📊 {formatted_count}\n"
-            f"🔥 ~{calories:.0f} ккал\n"
-            f"📅 {date_label}",
-            reply_markup=training_menu,
-        )
-    else:
-        # Для обычных упражнений спрашиваем про еще подход
-        # Добавляем variant в сообщение, если это не стандартный вариант
-        variant_display = ""
-        if variant and variant not in ["Со своим весом", "С утяжелителем"]:
-            variant_display = f" ({variant})"
-        
-        await message.answer(
-            f"✅ Записал! 👍\n"
-            f"💪 {exercise}{variant_display}\n"
-            f"📊 {formatted_count}\n"
-            f"🔥 ~{calories:.0f} ккал\n"
-            f"📅 {date_label}\n\n"
-            f"Всего {exercise}{variant_display} за {date_label}: {total_formatted}\n\n"
-            f"Хотите ввести еще подход?",
-            reply_markup=add_another_set_menu,
-        )
+    await message.answer(
+        f"✅ Записал! 👍\n"
+        f"💪 {exercise}\n"
+        f"📊 {formatted_count}\n"
+        f"🔥 ~{calories:.0f} ккал\n"
+        f"📅 {date_label}\n\n"
+        f"Всего {exercise} за {date_label}: {total_formatted}\n\n"
+        f"Хотите ввести еще подход?",
+        reply_markup=add_another_set_menu,
+    )
 
 
 @router.message(lambda m: m.text == "✏️ Ввести вручную")
