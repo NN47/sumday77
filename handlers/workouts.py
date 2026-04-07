@@ -447,11 +447,16 @@ async def search_exercise(message: Message, state: FSMContext):
     all_exercises = sorted({_normalize_exercise_name(ex) for ex in (bodyweight_exercises + weighted_exercises + frequent_exercises)})
     matches = [ex for ex in all_exercises if query and query in ex.lower()]
     await state.set_state(WorkoutStates.choosing_exercise)
-    push_menu_stack(message.bot, exercise_picker_menu)
     if not matches:
+        push_menu_stack(message.bot, exercise_picker_menu)
         await message.answer("Ничего не нашёл. Выбери упражнение из меню:", reply_markup=exercise_picker_menu)
         return
-    await message.answer("Нашёл:\n" + "\n".join(f"• {m}" for m in matches[:15]) + "\n\nВыбери упражнение из меню ниже.", reply_markup=exercise_picker_menu)
+    matched_exercises_menu = build_exercise_selection_menu(matches[:15])
+    push_menu_stack(message.bot, matched_exercises_menu)
+    await message.answer(
+        "Нашёл:\n" + "\n".join(f"• {m}" for m in matches[:15]) + "\n\nВыбери упражнение из меню ниже.",
+        reply_markup=matched_exercises_menu,
+    )
 
 
 @router.message(WorkoutStates.entering_steps)
