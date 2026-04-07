@@ -155,6 +155,23 @@ async def add_another_exercise(message: Message, state: FSMContext):
     await add_training_entry(message, state)
 
 
+@router.message(StateFilter(None), lambda m: m.text == "✅ Завершить упражнение")
+async def finish_exercise_without_active_state(message: Message, state: FSMContext):
+    """Завершает ввод упражнения, когда пользователь уже вне FSM-сценария."""
+    user_id = str(message.from_user.id)
+    await state.clear()
+
+    from utils.progress_formatters import format_today_workouts_block
+
+    workouts_text = format_today_workouts_block(user_id, include_date=False)
+    push_menu_stack(message.bot, training_menu)
+    await message.answer(
+        f"✅ Тренировка завершена!\n\n{workouts_text}\n\nВыбери действие:",
+        reply_markup=training_menu,
+        parse_mode="HTML",
+    )
+
+
 @router.message(lambda m: m.text == "📅 Календарь активности")
 async def show_training_calendar(message: Message):
     """Показывает календарь тренировок."""
