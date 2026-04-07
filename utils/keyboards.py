@@ -314,7 +314,7 @@ kbju_intro_menu = ReplyKeyboardMarkup(
 
 kbju_gender_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🙋‍♂️ Мужчина"), KeyboardButton(text="🙋‍♀️ Женщина")],
+        [KeyboardButton(text="🙋‍♂️ Муж"), KeyboardButton(text="🙋‍♀️ Жен")],
         [main_menu_button],
     ],
     resize_keyboard=True,
@@ -323,8 +323,8 @@ kbju_gender_menu = ReplyKeyboardMarkup(
 kbju_gender_inline = InlineKeyboardMarkup(
     inline_keyboard=[
         [
-            InlineKeyboardButton(text="🙋‍♂️ Мужчина", callback_data="kbju_gender:male"),
-            InlineKeyboardButton(text="🙋‍♀️ Женщина", callback_data="kbju_gender:female"),
+            InlineKeyboardButton(text="🙋‍♂️ Муж", callback_data="kbju_gender:male"),
+            InlineKeyboardButton(text="🙋‍♀️ Жен", callback_data="kbju_gender:female"),
         ],
     ],
 )
