@@ -14,6 +14,7 @@ from utils.keyboards import (
     steps_menu,
     steps_confirmation_menu,
     duration_menu,
+    plank_duration_menu,
     count_menu,
     bodyweight_exercises,
     weighted_exercises,
@@ -58,6 +59,12 @@ def _exercise_input_type(exercise: str) -> str:
     if normalized in DURATION_EXERCISES:
         return "duration"
     return "reps"
+
+
+def _format_minutes(minutes: float) -> str:
+    if float(minutes).is_integer():
+        return str(int(minutes))
+    return f"{minutes:.1f}".replace(".", ",")
 
 
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
@@ -442,8 +449,12 @@ async def choose_exercise(message: Message, state: FSMContext):
     if input_type == "duration":
         await state.update_data(variant="Минуты", back_target="exercise_picker")
         await state.set_state(WorkoutStates.entering_duration)
-        push_menu_stack(message.bot, duration_menu)
-        await message.answer(f"Введи длительность для {exercise} в минутах:", reply_markup=duration_menu)
+        selected_duration_menu = plank_duration_menu if exercise == "Планка" else duration_menu
+        push_menu_stack(message.bot, selected_duration_menu)
+        await message.answer(
+            f"Введи длительность для {exercise} в минутах или выбери предложенное время:",
+            reply_markup=selected_duration_menu,
+        )
         return
 
     await state.update_data(variant="reps", back_target="exercise_picker")
@@ -576,7 +587,7 @@ async def confirm_steps(message: Message, state: FSMContext):
 async def handle_duration_input(message: Message, state: FSMContext):
     """Обрабатывает ввод длительности упражнения."""
     if message.text == "✍️ Ввести вручную":
-        await message.answer("Введи длительность в минутах:")
+        await message.answer("Введи длительность в минутах (например, 1,5):")
         return
     if message.text == "⬅️ Назад":
         await state.set_state(WorkoutStates.choosing_exercise)
@@ -589,11 +600,11 @@ async def handle_duration_input(message: Message, state: FSMContext):
         return
 
     try:
-        minutes = int(message.text)
+        minutes = float((message.text or "").replace(",", ".").strip())
         if minutes <= 0:
             raise ValueError
     except (ValueError, TypeError):
-        await message.answer("⚠️ Введи положительное число минут.")
+        await message.answer("⚠️ Введи положительное число минут (например, 1 или 1,5).")
         return
 
     data = await state.get_data()
@@ -610,7 +621,7 @@ async def handle_duration_input(message: Message, state: FSMContext):
     )
     await state.clear()
     await message.answer(
-        f"✅ Записал!\n💪 {exercise}\n⏱ {minutes} мин\n🔥 ~{calories:.0f}\n📅 сегодня",
+        f"✅ Записал!\n💪 {exercise}\n⏱ {_format_minutes(minutes)} мин\n🔥 ~{calories:.0f}\n📅 сегодня",
         reply_markup=add_another_exercise_menu,
     )
 
