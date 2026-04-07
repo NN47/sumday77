@@ -181,7 +181,6 @@ bodyweight_exercises = [
     "Приседания",
     "Пресс",
     "Берпи",
-    "Шаги (Ходьба)",
     "Пробежка",
     "Скакалка",
     "Становая тяга без утяжелителя",
@@ -226,7 +225,6 @@ frequent_exercises = [
     "Приседания",
     "Планка",
     "Бег",
-    "Ходьба",
     "Йога",
 ]
 
@@ -234,7 +232,7 @@ exercise_picker_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Отжимания"), KeyboardButton(text="Подтягивания")],
         [KeyboardButton(text="Приседания"), KeyboardButton(text="Планка")],
-        [KeyboardButton(text="Бег"), KeyboardButton(text="Ходьба"), KeyboardButton(text="Йога")],
+        [KeyboardButton(text="Бег"), KeyboardButton(text="Йога")],
         [KeyboardButton(text="🕘 Недавние"), KeyboardButton(text="🔎 Поиск упражнения")],
         [KeyboardButton(text="📂 Все упражнения")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],

@@ -136,7 +136,7 @@ async def add_training_entry(message: Message, state: FSMContext):
     await state.set_state(WorkoutStates.choosing_exercise)
     push_menu_stack(message.bot, exercise_picker_menu)
     await message.answer(
-        "Выбери упражнение:\n\nЧастые:\n- Отжимания\n- Подтягивания\n- Приседания\n- Планка\n- Бег\n- Ходьба\n- Йога",
+        "Выбери упражнение:\n\nЧастые:\n- Отжимания\n- Подтягивания\n- Приседания\n- Планка\n- Бег\n- Йога",
         reply_markup=exercise_picker_menu,
     )
 
@@ -409,7 +409,7 @@ async def choose_exercise(message: Message, state: FSMContext):
         await message.answer("Введи часть названия упражнения:")
         return
 
-    known_exercises = set(bodyweight_exercises + weighted_exercises + frequent_exercises) | {"Бег", "Ходьба", "Силовая тренировка", "Велосипед", "Шаги"}
+    known_exercises = set(bodyweight_exercises + weighted_exercises + frequent_exercises) | {"Бег", "Силовая тренировка", "Велосипед", "Шаги"}
     if exercise not in known_exercises:
         await message.answer("Выбери упражнение из меню")
         return
