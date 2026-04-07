@@ -146,8 +146,7 @@ def format_today_workouts_block(user_id: str, include_date: bool = True) -> str:
         return (
             "🔥 Итого за день: ~0 ккал\n"
             "👣 Шаги: 0 (~0 ккал)\n"
-            "💪 Упражнения: 0 записей (~0 ккал)\n\n"
-            "Сегодня:\n—"
+            "💪 Упражнения: 0 записей (~0 ккал)"
         )
 
     def normalize_exercise_name(exercise: str) -> str:
@@ -159,7 +158,6 @@ def format_today_workouts_block(user_id: str, include_date: bool = True) -> str:
     steps_calories = 0.0
     exercise_entries = 0
     exercise_calories = 0.0
-    aggregates: dict[str, dict[str, float | str]] = {}
 
     for w in workouts:
         exercise = normalize_exercise_name(w.exercise)
@@ -173,29 +171,12 @@ def format_today_workouts_block(user_id: str, include_date: bool = True) -> str:
 
         exercise_entries += 1
         exercise_calories += entry_calories
-        item = aggregates.setdefault(exercise, {"count": 0, "calories": 0.0, "variant": "reps"})
-        item["count"] += w.count
-        item["calories"] += entry_calories
-        if (w.variant or "").lower() in {"минуты", "мин"}:
-            item["variant"] = "duration"
 
     lines = [
         f"🔥 Итого за день: ~{total_calories:.0f} ккал",
         f"👣 Шаги: {steps_count:,} (~{steps_calories:.0f} ккал)".replace(",", " "),
         f"💪 Упражнения: {exercise_entries} запись (~{exercise_calories:.0f} ккал)",
-        "",
-        "Сегодня:",
     ]
-
-    if steps_count:
-        lines.append(f"- 👣 Шаги — {steps_count:,} (~{steps_calories:.0f} ккал)".replace(",", " "))
-
-    for ex, data in aggregates.items():
-        if data["variant"] == "duration":
-            metric = f"{int(data['count'])} мин"
-        else:
-            metric = f"{int(data['count'])} повторений"
-        lines.append(f"- 💪 {ex} — {metric} (~{data['calories']:.0f} ккал)")
 
     return "\n".join(lines)
 
