@@ -226,7 +226,7 @@ async def handle_kbju_test_back(callback: CallbackQuery, state: FSMContext):
 
         await state.set_state(KbjuTestStates.entering_goal)
         await callback.message.answer(
-            format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какая цель?"),
+            format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какую цель ты хочешь достичь?"),
             reply_markup=kbju_goal_inline,
         )
         return
@@ -470,7 +470,7 @@ async def handle_kbju_test_weight_value_callback(callback: CallbackQuery, state:
 
     push_menu_stack(callback.message.bot, kbju_goal_menu)
     await callback.message.answer(
-        format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какая цель?"),
+        format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какую цель ты хочешь достичь?"),
         reply_markup=kbju_goal_inline,
     )
 
