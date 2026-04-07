@@ -52,9 +52,9 @@ wellbeing_and_procedures_menu = ReplyKeyboardMarkup(
 
 notes_main_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="➕ Добавить запись"), KeyboardButton(text="✏️ Изменить")],
-        [KeyboardButton(text="🗑 Удалить"), KeyboardButton(text="📅 Календарь")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+        [KeyboardButton(text="➕ Добавить запись")],
+        [KeyboardButton(text="📅 Календарь")],
+        [main_menu_button],
     ],
     resize_keyboard=True,
 )
@@ -134,7 +134,7 @@ quick_actions_inline = InlineKeyboardMarkup(
             InlineKeyboardButton(text="👣", callback_data="quick_steps_add"),
             InlineKeyboardButton(text="⚖️", callback_data="quick_weight"),
             InlineKeyboardButton(text="🍱", callback_data="quick_meal_add"),
-            InlineKeyboardButton(text="💧300", callback_data="quick_water_300"),
+            InlineKeyboardButton(text="💧+300", callback_data="quick_water_300"),
         ],
     ]
 )
@@ -658,7 +658,7 @@ water_quick_add_inline = InlineKeyboardMarkup(
     inline_keyboard=[
         [
             InlineKeyboardButton(text="250", callback_data="quick_water_add_250"),
-            InlineKeyboardButton(text="300", callback_data="quick_water_add_300"),
+            InlineKeyboardButton(text="+300", callback_data="quick_water_add_300"),
             InlineKeyboardButton(text="330", callback_data="quick_water_add_330"),
             InlineKeyboardButton(text="500", callback_data="quick_water_add_500"),
         ],
