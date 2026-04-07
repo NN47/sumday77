@@ -179,12 +179,12 @@ async def quick_supplements(callback: CallbackQuery, state: FSMContext):
     await start_log_supplement_flow(callback.message, state, str(callback.from_user.id))
 
 
-@router.callback_query(lambda c: c.data == "quick_workout_add")
-async def quick_workout_add(callback: CallbackQuery, state: FSMContext):
-    """Быстрый переход к добавлению тренировки."""
+@router.callback_query(lambda c: c.data == "quick_steps_add")
+async def quick_steps_add(callback: CallbackQuery, state: FSMContext):
+    """Быстрый переход к добавлению шагов."""
     await callback.answer()
-    from handlers.workouts import add_training_entry
-    await add_training_entry(callback.message, state)
+    from handlers.workouts import open_steps_flow
+    await open_steps_flow(callback.message, state)
 
 
 @router.callback_query(lambda c: c.data == "quick_weight")
