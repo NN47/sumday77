@@ -95,7 +95,7 @@ quick_actions_inline = InlineKeyboardMarkup(
             InlineKeyboardButton(text="🏋️", callback_data="quick_workout_add"),
             InlineKeyboardButton(text="⚖️", callback_data="quick_weight"),
             InlineKeyboardButton(text="🍱", callback_data="quick_meal_add"),
-            InlineKeyboardButton(text="💧+0,3", callback_data="quick_water_300"),
+            InlineKeyboardButton(text="💧+300", callback_data="quick_water_300"),
         ],
     ]
 )
