@@ -112,8 +112,12 @@ training_menu = ReplyKeyboardMarkup(
 
 steps_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="3000"), KeyboardButton(text="5000"), KeyboardButton(text="8000")],
-        [KeyboardButton(text="10000"), KeyboardButton(text="12000")],
+        [KeyboardButton(text="3000"), KeyboardButton(text="5000"), KeyboardButton(text="6000"), KeyboardButton(text="6500")],
+        [KeyboardButton(text="7000"), KeyboardButton(text="7500"), KeyboardButton(text="8000"), KeyboardButton(text="8500")],
+        [KeyboardButton(text="9000"), KeyboardButton(text="9500"), KeyboardButton(text="10000"), KeyboardButton(text="10500")],
+        [KeyboardButton(text="11000"), KeyboardButton(text="11500"), KeyboardButton(text="12000"), KeyboardButton(text="12500")],
+        [KeyboardButton(text="13000"), KeyboardButton(text="13500"), KeyboardButton(text="14000"), KeyboardButton(text="14500")],
+        [KeyboardButton(text="15000")],
         [KeyboardButton(text="✍️ Ввести вручную")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
