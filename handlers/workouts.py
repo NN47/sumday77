@@ -21,7 +21,6 @@ from utils.keyboards import (
     build_exercise_selection_menu,
     push_menu_stack,
     add_another_set_menu,
-    add_another_exercise_menu,
     grip_type_menu,
 )
 from states.user_states import WorkoutStates
@@ -575,6 +574,38 @@ async def confirm_steps(message: Message, state: FSMContext):
 @router.message(WorkoutStates.entering_duration)
 async def handle_duration_input(message: Message, state: FSMContext):
     """Обрабатывает ввод длительности упражнения."""
+    user_id = str(message.from_user.id)
+
+    if message.text == "💪 Добавить еще подход":
+        data = await state.get_data()
+        exercise = data.get("exercise")
+        if not exercise:
+            logger.error(f"User {user_id}: missing exercise when adding another duration set. Data: {data}")
+            await message.answer("❌ Ошибка: данные потеряны. Начни добавление тренировки заново.")
+            await state.clear()
+            push_menu_stack(message.bot, training_menu)
+            await message.answer("Выбери действие:", reply_markup=training_menu)
+            return
+
+        await message.answer(
+            f"Введи длительность для {exercise} в минутах:",
+            reply_markup=duration_menu,
+        )
+        return
+
+    if message.text == "✅ Завершить упражнение":
+        await state.clear()
+        from utils.progress_formatters import format_today_workouts_block
+
+        workouts_text = format_today_workouts_block(user_id, include_date=False)
+        push_menu_stack(message.bot, training_menu)
+        await message.answer(
+            f"✅ Тренировка завершена!\n\n{workouts_text}\n\nВыбери действие:",
+            reply_markup=training_menu,
+            parse_mode="HTML",
+        )
+        return
+
     if message.text == "✍️ Ввести вручную":
         await message.answer("Введи длительность в минутах:")
         return
@@ -598,7 +629,6 @@ async def handle_duration_input(message: Message, state: FSMContext):
 
     data = await state.get_data()
     exercise = data.get("exercise")
-    user_id = str(message.from_user.id)
     calories = calculate_workout_calories(user_id, exercise, "Минуты", minutes)
     WorkoutRepository.save_workout(
         user_id=user_id,
@@ -608,10 +638,9 @@ async def handle_duration_input(message: Message, state: FSMContext):
         variant="Минуты",
         calories=calories,
     )
-    await state.clear()
     await message.answer(
         f"✅ Записал!\n💪 {exercise}\n⏱ {minutes} мин\n🔥 ~{calories:.0f}\n📅 сегодня",
-        reply_markup=add_another_exercise_menu,
+        reply_markup=add_another_set_menu,
     )
 
 
