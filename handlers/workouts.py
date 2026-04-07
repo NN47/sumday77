@@ -365,8 +365,17 @@ async def delete_workout_from_calendar(callback: CallbackQuery):
 async def choose_exercise(message: Message, state: FSMContext):
     """Обрабатывает выбор упражнения."""
     exercise = message.text
+    data = await state.get_data()
 
     if exercise == "⬅️ Назад":
+        # После просмотра полного списка упражнений по кнопке
+        # "📂 Все упражнения" возвращаем пользователя сразу в меню тренировок.
+        if data.get("exercise_list_mode") == "all":
+            await state.clear()
+            push_menu_stack(message.bot, training_menu)
+            await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
+            return
+
         await state.clear()
         push_menu_stack(message.bot, training_menu)
         await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
@@ -385,6 +394,9 @@ async def choose_exercise(message: Message, state: FSMContext):
         if exercise == "📂 Все упражнения":
             all_exercises = sorted({_normalize_exercise_name(ex) for ex in (bodyweight_exercises + weighted_exercises)})
             recent = [ex for ex in all_exercises if ex != "Другое"]
+            await state.update_data(exercise_list_mode="all")
+        else:
+            await state.update_data(exercise_list_mode="recent")
         if not recent:
             recent = frequent_exercises
         exercise_menu = build_exercise_selection_menu(recent)
