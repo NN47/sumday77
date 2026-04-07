@@ -128,8 +128,7 @@ WEIGHT_RANGE_MAP = {
     "101_120": (101, 120, "101-120 кг"),
     "121_150": (121, 150, "121-150 кг"),
     "151_200": (151, 200, "151-200 кг"),
-    "201_300": (201, 300, "201-300 кг"),
-    "301_500": (301, 500, "301-500 кг"),
+    "200_plus": (200, 500, "200+ кг"),
 }
 
 
@@ -140,8 +139,7 @@ def build_weight_range_inline(prefix: str) -> InlineKeyboardMarkup:
         [("61–70 кг", "61_70"), ("71–80 кг", "71_80")],
         [("81–90 кг", "81_90"), ("91–100 кг", "91_100")],
         [("101–120 кг", "101_120"), ("121–150 кг", "121_150")],
-        [("151–200 кг", "151_200"), ("201–300 кг", "201_300")],
-        [("301–500 кг", "301_500")],
+        [("151–200 кг", "151_200"), ("200+ кг", "200_plus")],
     ]
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -152,6 +150,86 @@ def build_weight_range_inline(prefix: str) -> InlineKeyboardMarkup:
 
 
 kbju_target_weight_range_inline = build_weight_range_inline("kbju_target_weight_range")
+
+
+@router.callback_query(lambda c: c.data is not None and c.data.startswith("kbju_back:"))
+async def handle_kbju_test_back(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает переход на предыдущий шаг теста КБЖУ."""
+    back_target = callback.data.split(":", maxsplit=1)[1]
+    data = await state.get_data()
+    goal = data.get("goal")
+    await callback.answer()
+
+    if back_target == "gender":
+        await state.set_state(KbjuTestStates.entering_gender)
+        await callback.message.answer(
+            format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_gender.state], "Для начала выбери пол:"),
+            reply_markup=kbju_gender_inline,
+        )
+        return
+
+    if back_target == "age":
+        await state.set_state(KbjuTestStates.entering_age)
+        await callback.message.answer(
+            format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_age.state], "Выбери возрастную группу:"),
+            reply_markup=kbju_age_range_inline,
+        )
+        return
+
+    if back_target == "height":
+        await state.set_state(KbjuTestStates.entering_height)
+        await callback.message.answer(
+            format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_height.state], "Выбери диапазон роста:"),
+            reply_markup=kbju_height_range_inline,
+        )
+        return
+
+    if back_target == "weight":
+        await state.set_state(KbjuTestStates.entering_weight)
+        await callback.message.answer(
+            format_step_text(
+                BASE_STEP_BY_STATE[KbjuTestStates.entering_weight.state],
+                "Подскажи, пожалуйста, диапазон текущего веса:",
+            ),
+            reply_markup=kbju_weight_range_inline,
+        )
+        return
+
+    if back_target == "target_weight":
+        await state.set_state(KbjuTestStates.entering_target_weight)
+        await callback.message.answer(
+            format_dynamic_step_text(
+                step=6,
+                total_steps=TOTAL_STEPS_WITH_TARGET_WEIGHT,
+                text="Укажи целевой вес (в кг), к которому хочешь прийти:",
+            ),
+            reply_markup=kbju_target_weight_range_inline,
+        )
+        return
+
+    if back_target == "goal_or_speed":
+        if goal in {"loss", "gain"}:
+            await state.set_state(KbjuTestStates.entering_goal_speed)
+            speed_menu = kbju_goal_speed_loss_inline if goal == "loss" else kbju_goal_speed_gain_inline
+            await callback.message.answer(
+                format_dynamic_step_text(
+                    step=7,
+                    total_steps=TOTAL_STEPS_WITH_TARGET_WEIGHT,
+                    text=(
+                        "Какой темп тебе комфортнее?\n\n"
+                        "Темп можно изменить позже в разделе 🎯 Цель / Норма КБЖУ"
+                    ),
+                ),
+                reply_markup=speed_menu,
+            )
+            return
+
+        await state.set_state(KbjuTestStates.entering_goal)
+        await callback.message.answer(
+            format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_goal.state], "Какая цель?"),
+            reply_markup=kbju_goal_inline,
+        )
+        return
 
 def save_weight_from_test(user_id: str, data: dict) -> None:
     """Сохраняет вес из теста КБЖУ для других разделов (например, нормы воды)."""
@@ -368,7 +446,7 @@ async def handle_kbju_test_weight_range_callback(callback: CallbackQuery, state:
     await callback.message.answer(
         "Отлично, спасибо 🙌\n"
         f"Теперь выбери точный вес в диапазоне {range_label}:",
-        reply_markup=build_kbju_weight_values_inline(range_min, range_max),
+        reply_markup=build_kbju_weight_values_inline(range_min, range_max, back_callback="kbju_back:weight"),
     )
 
 @router.callback_query(
@@ -471,7 +549,12 @@ async def handle_kbju_test_target_weight_range_callback(callback: CallbackQuery,
     await callback.answer()
     await callback.message.answer(
         "Супер! Теперь выбери точный целевой вес:",
-        reply_markup=build_kbju_weight_values_inline(range_min, range_max, callback_prefix="kbju_target_weight_value"),
+        reply_markup=build_kbju_weight_values_inline(
+            range_min,
+            range_max,
+            callback_prefix="kbju_target_weight_value",
+            back_callback="kbju_back:target_weight",
+        ),
     )
 
 

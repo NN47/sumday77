@@ -354,6 +354,7 @@ kbju_age_range_inline = InlineKeyboardMarkup(
         [
             InlineKeyboardButton(text="65+", callback_data="kbju_age:65_plus"),
         ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="kbju_back:gender")],
     ],
 )
 
@@ -382,6 +383,7 @@ kbju_height_range_inline = InlineKeyboardMarkup(
         [
             InlineKeyboardButton(text="195+", callback_data="kbju_height:195_plus"),
         ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="kbju_back:age")],
     ],
 )
 
@@ -405,11 +407,9 @@ kbju_weight_range_inline = InlineKeyboardMarkup(
         ],
         [
             InlineKeyboardButton(text="151–200 кг", callback_data="kbju_weight_range:151_200"),
-            InlineKeyboardButton(text="201–300 кг", callback_data="kbju_weight_range:201_300"),
+            InlineKeyboardButton(text="200+ кг", callback_data="kbju_weight_range:200_plus"),
         ],
-        [
-            InlineKeyboardButton(text="301–500 кг", callback_data="kbju_weight_range:301_500"),
-        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="kbju_back:height")],
     ],
 )
 
@@ -418,6 +418,7 @@ def build_kbju_weight_values_inline(
     range_min: int,
     range_max: int,
     callback_prefix: str = "kbju_weight_value",
+    back_callback: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Строит inline-клавиатуру с точным весом внутри выбранного диапазона."""
     buttons = [
@@ -425,6 +426,8 @@ def build_kbju_weight_values_inline(
         for weight in range(range_min, range_max + 1)
     ]
     rows = [buttons[i:i + 3] for i in range(0, len(buttons), 3)]
+    if back_callback:
+        rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 kbju_activity_menu = ReplyKeyboardMarkup(
@@ -444,6 +447,7 @@ kbju_activity_inline = InlineKeyboardMarkup(
         [InlineKeyboardButton(text="🚶 Немного активный\nМного ходьбы", callback_data="kbju_activity:light")],
         [InlineKeyboardButton(text="🏃 Активный\nРегулярные тренировки", callback_data="kbju_activity:moderate")],
         [InlineKeyboardButton(text="🏋️ Очень активный\nФизическая работа или спорт", callback_data="kbju_activity:active")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="kbju_back:goal_or_speed")],
     ],
 )
 
@@ -462,6 +466,7 @@ kbju_goal_inline = InlineKeyboardMarkup(
         [InlineKeyboardButton(text="📉 Похудение", callback_data="kbju_goal:loss")],
         [InlineKeyboardButton(text="⚖️ Поддержание", callback_data="kbju_goal:maintain")],
         [InlineKeyboardButton(text="💪 Набор массы", callback_data="kbju_goal:gain")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="kbju_back:weight")],
     ],
 )
 
@@ -480,6 +485,7 @@ kbju_goal_speed_loss_inline = InlineKeyboardMarkup(
         [InlineKeyboardButton(text="🌿 Медленно — ~0.3 кг в неделю", callback_data="kbju_goal_speed:slow")],
         [InlineKeyboardButton(text="⚖️ Стандарт — ~0.5 кг в неделю", callback_data="kbju_goal_speed:normal")],
         [InlineKeyboardButton(text="🔥 Быстро — ~0.7 кг в неделю", callback_data="kbju_goal_speed:fast")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="kbju_back:target_weight")],
     ],
 )
 
@@ -498,6 +504,7 @@ kbju_goal_speed_gain_inline = InlineKeyboardMarkup(
         [InlineKeyboardButton(text="🌿 Медленно — ~0.3 кг в неделю", callback_data="kbju_goal_speed:slow")],
         [InlineKeyboardButton(text="⚖️ Стандарт — ~0.5 кг в неделю", callback_data="kbju_goal_speed:normal")],
         [InlineKeyboardButton(text="🔥 Быстро — ~0.7 кг в неделю", callback_data="kbju_goal_speed:fast")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="kbju_back:target_weight")],
     ],
 )
 
