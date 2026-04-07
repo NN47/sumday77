@@ -550,10 +550,16 @@ async def show_activity_analysis_calendar_view(
     year = year or today.year
     month = month or today.month
     keyboard = build_activity_analysis_calendar_keyboard(user_id, year, month)
-    await message.answer(
-        "🗓 Календарь ИИ-анализа",
-        reply_markup=keyboard,
-    )
+    try:
+        await message.edit_text(
+            "🗓 Календарь ИИ-анализа",
+            reply_markup=keyboard,
+        )
+    except Exception:
+        await message.answer(
+            "🗓 Календарь ИИ-анализа",
+            reply_markup=keyboard,
+        )
 
 
 @router.callback_query(lambda c: c.data.startswith("act_cal_nav:"))
@@ -625,10 +631,12 @@ async def show_activity_analysis_day(message: Message, user_id: str, target_date
     entries = ActivityAnalysisRepository.get_entries_for_date(user_id, target_date)
 
     if not entries:
-        await message.answer(
-            f"📅 {target_date.strftime('%d.%m.%Y')}\n\nЗа этот день анализов нет.",
-            reply_markup=build_activity_analysis_day_actions_keyboard([], target_date),
-        )
+        text = f"📅 {target_date.strftime('%d.%m.%Y')}\n\nЗа этот день анализов нет."
+        keyboard = build_activity_analysis_day_actions_keyboard([], target_date)
+        try:
+            await message.edit_text(text, reply_markup=keyboard)
+        except Exception:
+            await message.answer(text, reply_markup=keyboard)
         return
 
     lines = [f"📅 {target_date.strftime('%d.%m.%Y')}\n\nСохранённые анализы:"]
@@ -638,10 +646,12 @@ async def show_activity_analysis_day(message: Message, user_id: str, target_date
         preview = html.escape(short_summary)
         lines.append(f"{idx}. {source}\nПодитог: {preview}")
 
-    await message.answer(
-        "\n\n".join(lines),
-        reply_markup=build_activity_analysis_day_actions_keyboard(entries, target_date),
-    )
+    text = "\n\n".join(lines)
+    keyboard = build_activity_analysis_day_actions_keyboard(entries, target_date)
+    try:
+        await message.edit_text(text, reply_markup=keyboard)
+    except Exception:
+        await message.answer(text, reply_markup=keyboard)
 
 
 @router.message(ActivityAnalysisStates.entering_manual_analysis)
