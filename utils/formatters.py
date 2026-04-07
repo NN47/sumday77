@@ -131,11 +131,16 @@ def format_current_kbju_goal(settings: KbjuSettings) -> str:
 
 def format_count_with_unit(count: int | float, variant: str | None) -> str:
     """Форматирует количество с единицей измерения."""
+    v = (variant or "").strip().lower()
+    if v in {"reps", "раз", "повторения", "повторений"}:
+        return f"{int(count)} повторений"
+    if v in {"steps", "количество шагов", "шаги"}:
+        return f"{int(count):,}".replace(",", " ")
     if variant == "раз":
         return f"{count} раз"
     elif variant == "сек":
         return f"{count} сек"
-    elif variant == "мин":
+    elif variant == "мин" or v in {"минуты", "мин"}:
         return f"{count} мин"
     elif variant == "км":
         return f"{count} км"

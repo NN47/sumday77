@@ -29,7 +29,7 @@ def build_day_actions_keyboard(workouts: list[Workout], target_date: date) -> In
     rows.append(
         [
         InlineKeyboardButton(
-            text="➕ Добавить тренировку",
+            text="➕ Добавить упражнение",
             callback_data=f"wrk_add:{target_date.isoformat()}",
             )
         ]
@@ -38,7 +38,7 @@ def build_day_actions_keyboard(workouts: list[Workout], target_date: date) -> In
     rows.append(
         [
         InlineKeyboardButton(
-            text="⬅️ Назад к календарю",
+            text="⬅️ Назад к календарю активности",
             callback_data=f"cal_back:{target_date.year}-{target_date.month:02d}",
             )
         ]

@@ -9,7 +9,7 @@ from database.repositories import (
     WaterRepository,
 )
 from database.models import Workout
-from utils.formatters import get_kbju_goal_label, format_count_with_unit
+from utils.formatters import get_kbju_goal_label
 from utils.workout_utils import calculate_workout_calories, get_daily_workout_calories
 
 logger = logging.getLogger(__name__)
@@ -143,35 +143,61 @@ def format_today_workouts_block(user_id: str, include_date: bool = True) -> str:
     workouts = WorkoutRepository.get_workouts_for_day(user_id, today)
     
     if not workouts:
-        return "💪 <b>Тренировки</b>\n—"
-    
-    text = ["💪 <b>Тренировки</b>"]
+        return (
+            "🔥 Итого за день: ~0 ккал\n"
+            "👣 Шаги: 0 (~0 ккал)\n"
+            "💪 Упражнения: 0 записей (~0 ккал)\n\n"
+            "Сегодня:\n—"
+        )
+
+    def normalize_exercise_name(exercise: str) -> str:
+        aliases = {"Шаги (Ходьба)": "Шаги", "Ходьба": "Шаги", "Пробежка": "Бег"}
+        return aliases.get(exercise, exercise)
+
     total_calories = 0.0
-    aggregates: dict[tuple[str, str | None], dict[str, float]] = {}
-    
+    steps_count = 0
+    steps_calories = 0.0
+    exercise_entries = 0
+    exercise_calories = 0.0
+    aggregates: dict[str, dict[str, float | str]] = {}
+
     for w in workouts:
-        entry_calories = w.calories or calculate_workout_calories(
-            user_id, w.exercise, w.variant, w.count
-        )
+        exercise = normalize_exercise_name(w.exercise)
+        entry_calories = w.calories or calculate_workout_calories(user_id, w.exercise, w.variant, w.count)
         total_calories += entry_calories
-        
-        key = (w.exercise, w.variant)
-        if key not in aggregates:
-            aggregates[key] = {"count": 0, "calories": 0.0}
-        
-        aggregates[key]["count"] += w.count
-        aggregates[key]["calories"] += entry_calories
-    
-    for (exercise, variant), data in aggregates.items():
-        variant_text = f" ({variant})" if variant else ""
-        formatted_count = format_count_with_unit(data["count"], variant)
-        text.append(
-            f"• {exercise}{variant_text}: {formatted_count} (~{data['calories']:.0f} ккал)"
-        )
-    
-    text.append(f"🔥 Итого за день: ~{total_calories:.0f} ккал")
-    
-    return "\n".join(text)
+
+        if exercise == "Шаги" or "шаг" in (w.variant or "").lower():
+            steps_count += int(w.count or 0)
+            steps_calories += entry_calories
+            continue
+
+        exercise_entries += 1
+        exercise_calories += entry_calories
+        item = aggregates.setdefault(exercise, {"count": 0, "calories": 0.0, "variant": "reps"})
+        item["count"] += w.count
+        item["calories"] += entry_calories
+        if (w.variant or "").lower() in {"минуты", "мин"}:
+            item["variant"] = "duration"
+
+    lines = [
+        f"🔥 Итого за день: ~{total_calories:.0f} ккал",
+        f"👣 Шаги: {steps_count:,} (~{steps_calories:.0f} ккал)".replace(",", " "),
+        f"💪 Упражнения: {exercise_entries} запись (~{exercise_calories:.0f} ккал)",
+        "",
+        "Сегодня:",
+    ]
+
+    if steps_count:
+        lines.append(f"- 👣 Шаги — {steps_count:,} (~{steps_calories:.0f} ккал)".replace(",", " "))
+
+    for ex, data in aggregates.items():
+        if data["variant"] == "duration":
+            metric = f"{int(data['count'])} мин"
+        else:
+            metric = f"{int(data['count'])} повторений"
+        lines.append(f"- 💪 {ex} — {metric} (~{data['calories']:.0f} ккал)")
+
+    return "\n".join(lines)
 
 
 def get_today_summary_text(user_id: str) -> str:

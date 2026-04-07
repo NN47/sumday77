@@ -103,8 +103,37 @@ quick_actions_inline = InlineKeyboardMarkup(
 # Меню тренировок
 training_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="➕ Добавить тренировку")],
-        [KeyboardButton(text="📆 Календарь тренировок")],
+        [KeyboardButton(text="👣 Шаги"), KeyboardButton(text="💪 Тренировка")],
+        [KeyboardButton(text="📅 Календарь активности")],
+        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
+steps_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="3000"), KeyboardButton(text="5000"), KeyboardButton(text="8000")],
+        [KeyboardButton(text="10000"), KeyboardButton(text="12000")],
+        [KeyboardButton(text="✍️ Ввести вручную")],
+        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
+steps_confirmation_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="✅ Сохранить"), KeyboardButton(text="✏️ Изменить")],
+        [KeyboardButton(text="🗑 Удалить шаги")],
+        [KeyboardButton(text="⬅️ Назад")],
+    ],
+    resize_keyboard=True,
+)
+
+duration_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="10"), KeyboardButton(text="15"), KeyboardButton(text="20")],
+        [KeyboardButton(text="30"), KeyboardButton(text="45"), KeyboardButton(text="60")],
+        [KeyboardButton(text="✍️ Ввести вручную")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,
@@ -185,6 +214,36 @@ exercise_category_menu = ReplyKeyboardMarkup(
         [main_menu_button],
     ],
     resize_keyboard=True
+)
+
+frequent_exercises = [
+    "Отжимания",
+    "Подтягивания",
+    "Приседания",
+    "Планка",
+    "Бег",
+    "Ходьба",
+    "Йога",
+]
+
+exercise_picker_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Отжимания"), KeyboardButton(text="Подтягивания")],
+        [KeyboardButton(text="Приседания"), KeyboardButton(text="Планка")],
+        [KeyboardButton(text="Бег"), KeyboardButton(text="Ходьба"), KeyboardButton(text="Йога")],
+        [KeyboardButton(text="🕘 Недавние"), KeyboardButton(text="🔎 Поиск упражнения")],
+        [KeyboardButton(text="📂 Все упражнения")],
+        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
+add_another_exercise_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="✅ Завершить упражнение")],
+        [KeyboardButton(text="➕ Добавить другое упражнение")],
+    ],
+    resize_keyboard=True,
 )
 
 bodyweight_exercise_menu = ReplyKeyboardMarkup(
@@ -571,7 +630,7 @@ activity_analysis_menu = ReplyKeyboardMarkup(
 # Меню для добавления еще подхода
 add_another_set_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="💪Добавить еще подход")],
+        [KeyboardButton(text="💪 Добавить еще подход")],
         [KeyboardButton(text="✅ Завершить упражнение")],
     ],
     resize_keyboard=True,
