@@ -50,6 +50,45 @@ wellbeing_and_procedures_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+notes_main_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="➕ Добавить запись"), KeyboardButton(text="✏️ Изменить")],
+        [KeyboardButton(text="🗑 Удалить"), KeyboardButton(text="📅 Календарь")],
+        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
+notes_rating_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="😄 Отлично"), KeyboardButton(text="🙂 Нормально")],
+        [KeyboardButton(text="😐 Средне"), KeyboardButton(text="😞 Плохо")],
+        [KeyboardButton(text="😫 Очень тяжёлый")],
+        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
+
+def build_notes_factors_menu(factor_labels: list[str]) -> ReplyKeyboardMarkup:
+    keyboard = [[KeyboardButton(text=label)] for label in factor_labels]
+    keyboard.extend(
+        [
+            [KeyboardButton(text="✅ Продолжить"), KeyboardButton(text="⏭ Пропустить")],
+            [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+        ]
+    )
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+notes_text_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="💾 Сохранить"), KeyboardButton(text="⏭ Пропустить")],
+        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
 wellbeing_quick_mood_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="😄 Отлично"), KeyboardButton(text="🙂 Нормально")],
