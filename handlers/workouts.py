@@ -3,6 +3,7 @@ import logging
 from datetime import date, timedelta, datetime
 from typing import Optional
 from aiogram import Router, F
+from aiogram.filters import StateFilter
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
@@ -73,7 +74,7 @@ def reset_user_state(message: Message, *, keep_supplements: bool = False):
     pass
 
 
-@router.message(lambda m: m.text in {TRAINING_BUTTON_TEXT, LEGACY_TRAINING_BUTTON_TEXT})
+@router.message(StateFilter(None), lambda m: m.text in {TRAINING_BUTTON_TEXT, LEGACY_TRAINING_BUTTON_TEXT})
 async def show_training_menu(message: Message, state: FSMContext):
     """Показывает меню тренировок."""
     user_id = str(message.from_user.id)

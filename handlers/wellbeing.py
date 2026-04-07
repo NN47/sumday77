@@ -88,7 +88,8 @@ async def show_notes_day(message: Message, user_id: str, target_date: date):
     else:
         text = (
             "📝 Заметки дня\n\n"
-            "Здесь можно отметить самочувствие и события дня.\n\n"
+            "Здесь ты можешь коротко отметить самочувствие, важные события и настроение за день 💛\n\n"
+            "Эти заметки учитываются в ИИ-анализе, чтобы рекомендации были точнее.\n\n"
             "📝 Как прошёл день?"
         )
         keyboard = notes_main_menu
@@ -237,6 +238,12 @@ async def toggle_factor_message(message: Message, state: FSMContext):
         "Что повлияло на день? (можно несколько)",
         reply_markup=build_notes_factors_menu(_build_factor_labels(selected)),
     )
+
+
+@router.message(WellbeingStates.note_rating, lambda m: m.text == "⬅️ Назад")
+async def note_rating_back(message: Message, state: FSMContext):
+    await state.clear()
+    await show_notes_day(message, str(message.from_user.id), date.today())
 
 
 @router.callback_query(lambda c: c.data in {"done_factors", "skip_factors"})
