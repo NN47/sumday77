@@ -27,7 +27,7 @@ from utils.keyboards import (
     grip_type_menu,
 )
 from states.user_states import WorkoutStates
-from database.repositories import WorkoutRepository
+from database.repositories import WorkoutRepository, AnalyticsRepository
 from database.repositories import CustomWorkoutExerciseRepository
 from utils.workout_utils import calculate_workout_calories
 from utils.validators import parse_date
@@ -79,6 +79,7 @@ async def show_training_menu(message: Message, state: FSMContext):
     """Показывает меню тренировок."""
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} opened training menu")
+    AnalyticsRepository.track_event(user_id, "open_activity", section="activity")
     await state.clear()  # Очищаем FSM состояние
     
     # Показываем прогресс тренировок
@@ -593,6 +594,7 @@ async def confirm_steps(message: Message, state: FSMContext):
             variant="Количество шагов",
             calories=calories,
         )
+    AnalyticsRepository.track_event(user_id, "add_steps", section="activity")
 
     await state.clear()
     from utils.progress_formatters import format_today_workouts_block
@@ -835,6 +837,7 @@ async def handle_count_input(message: Message, state: FSMContext):
     )
     
     logger.info(f"User {user_id} saved workout: {exercise} x {count} on {entry_date}")
+    AnalyticsRepository.track_event(user_id, "add_workout", section="activity")
     
     # Получаем общее количество для этого упражнения за день
     workouts_today = WorkoutRepository.get_workouts_for_day(user_id, entry_date)

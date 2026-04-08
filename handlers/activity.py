@@ -2,6 +2,7 @@
 import logging
 import re
 import json
+import traceback
 from datetime import date, timedelta
 from collections import Counter
 from aiogram import Router
@@ -14,6 +15,7 @@ from utils.calendar_utils import (
     build_activity_analysis_day_actions_keyboard,
 )
 from database.repositories.activity_analysis_repository import ActivityAnalysisRepository
+from database.repositories import AnalyticsRepository, ErrorLogRepository
 from states.user_states import ActivityAnalysisStates
 from services.gemini_service import gemini_service
 
@@ -490,6 +492,7 @@ async def analyze_activity(message: Message):
     """Показывает меню анализа деятельности."""
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} opened activity analysis")
+    AnalyticsRepository.track_event(user_id, "open_activity", section="activity")
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(
         "📊 <b>ИИ анализ</b>\n\nВыбери период для анализа:",
@@ -569,8 +572,24 @@ async def add_activity_analysis_from_calendar(callback: CallbackQuery, state: FS
     )
 
     user_id = str(callback.from_user.id)
-    analysis = await generate_activity_analysis(user_id, target_date, target_date, "за день")
-    ActivityAnalysisRepository.create_entry(user_id, analysis, target_date, source="generated")
+    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
+    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
+    try:
+        analysis = await generate_activity_analysis(user_id, target_date, target_date, "за день")
+        ActivityAnalysisRepository.create_entry(user_id, analysis, target_date, source="generated")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
+    except Exception as e:
+        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
+        ErrorLogRepository.log_error(
+            user_id=user_id,
+            error_type=type(e).__name__,
+            error_message=str(e),
+            module=__name__,
+            function_name="add_activity_analysis_from_calendar",
+            traceback_text=traceback.format_exc(),
+        )
+        await callback.message.answer("⚠️ Не удалось сгенерировать анализ дня. Попробуй позже.")
+        return
 
     await callback.message.answer("✅ Анализ сохранён в календаре.")
     await show_activity_analysis_day(callback.message, user_id, target_date)
@@ -650,9 +669,25 @@ async def analyze_activity_day(message: Message):
     """Анализ за день."""
     user_id = str(message.from_user.id)
     today = date.today()
+    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
+    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
     await message.answer("⏳ Подожди немного, бот анализирует твой день...")
-    analysis = await generate_activity_analysis(user_id, today, today, "за день")
-    ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="generated")
+    try:
+        analysis = await generate_activity_analysis(user_id, today, today, "за день")
+        ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="generated")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
+    except Exception as e:
+        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
+        ErrorLogRepository.log_error(
+            user_id=user_id,
+            error_type=type(e).__name__,
+            error_message=str(e),
+            module=__name__,
+            function_name="analyze_activity_day",
+            traceback_text=traceback.format_exc(),
+        )
+        await message.answer("⚠️ Не удалось сгенерировать анализ дня. Попробуй позже.")
+        return
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
 

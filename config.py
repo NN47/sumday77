@@ -13,6 +13,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///fitness_bot.db")
 API_TOKEN = os.getenv("API_TOKEN")
 if not API_TOKEN:
     raise RuntimeError("API_TOKEN не найден. Установи переменную окружения или создай .env с API_TOKEN.")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "6065083722"))
 
 # Внешние API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -46,4 +47,3 @@ MONTH_NAMES = [
     "Ноябрь",
     "Декабрь",
 ]
-

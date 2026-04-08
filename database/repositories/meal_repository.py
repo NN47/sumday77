@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy import func
 from database.session import get_db_session
 from database.models import Meal, KbjuSettings
+from database.repositories.analytics_repository import AnalyticsRepository
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class MealRepository:
             session.commit()
             session.refresh(meal)
             logger.info(f"Saved meal {meal.id} for user {user_id}")
+            AnalyticsRepository.track_event(user_id, "add_meal", section="kbju")
             return meal
     
     @staticmethod

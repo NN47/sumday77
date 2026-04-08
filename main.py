@@ -14,7 +14,7 @@ from aiogram.client.bot import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import API_TOKEN, KEEPALIVE_PORT
-from middlewares import OnboardingMiddleware
+from middlewares import OnboardingMiddleware, UserActivityMiddleware
 from utils.logging_config import setup_logging
 
 # Настраиваем логирование
@@ -62,6 +62,7 @@ from handlers import (
     register_activity_handlers,
     register_kbju_test_handlers,
     register_wellbeing_handlers,
+    register_admin_handlers,
 )
 from services.notification_scheduler import NotificationScheduler
 
@@ -76,7 +77,10 @@ async def main():
     bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
+    user_activity_middleware = UserActivityMiddleware()
     onboarding_middleware = OnboardingMiddleware()
+    dp.message.outer_middleware(user_activity_middleware)
+    dp.callback_query.outer_middleware(user_activity_middleware)
     dp.message.outer_middleware(onboarding_middleware)
     dp.callback_query.outer_middleware(onboarding_middleware)
     
@@ -93,6 +97,7 @@ async def main():
     register_activity_handlers(dp)
     register_kbju_test_handlers(dp)
     register_wellbeing_handlers(dp)
+    register_admin_handlers(dp)
     from handlers.calendar import register_calendar_handlers
     register_calendar_handlers(dp)
     
