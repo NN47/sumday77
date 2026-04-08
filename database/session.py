@@ -112,6 +112,20 @@ def init_db():
         except Exception as e:
             logger.warning(f"Ошибка при проверке kbju_settings.gender: {e}")
 
+        # meals.meal_type
+        try:
+            meal_columns = {col["name"] for col in inspector.get_columns("meals")}
+            if "meal_type" not in meal_columns:
+                conn.execute(text("ALTER TABLE meals ADD COLUMN meal_type VARCHAR"))
+                conn.execute(text("UPDATE meals SET meal_type = 'snack' WHERE meal_type IS NULL"))
+                conn.commit()
+                logger.info("Добавлен столбец meals.meal_type")
+            else:
+                conn.execute(text("UPDATE meals SET meal_type = 'snack' WHERE meal_type IS NULL OR meal_type = ''"))
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Ошибка при проверке meals.meal_type: {e}")
+
 
 @contextmanager
 def get_db_session():

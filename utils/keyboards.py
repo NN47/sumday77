@@ -579,6 +579,15 @@ kbju_add_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+kbju_meal_type_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🍳 Завтрак"), KeyboardButton(text="🍲 Обед")],
+        [KeyboardButton(text="🍽 Ужин"), KeyboardButton(text="🍎 Перекус")],
+        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
 kbju_after_meal_menu = ReplyKeyboardMarkup(
     keyboard=[
         [
