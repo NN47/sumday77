@@ -12,6 +12,7 @@ class MealEntryStates(StatesGroup):
     waiting_for_weight_input = State()  # Вес продукта (для этикетки)
     choosing_edit_type = State()  # Выбор типа редактирования
     editing_meal_weight = State()  # Редактирование веса продукта
+    editing_meal_weight_manual_input = State()  # Ручной ввод веса для выбранного продукта
     editing_meal_composition = State()  # Редактирование состава продуктов
     editing_meal = State()  # Старое состояние (для обратной совместимости)
 
