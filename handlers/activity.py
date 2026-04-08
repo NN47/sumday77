@@ -500,7 +500,7 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
     return result
 
 
-@router.message(lambda m: m.text in {"📊 ИИ анализ", "📊 ИИ анализ деятельности", "🤖 ИИ анализ деятельности"})
+@router.message(lambda m: m.text in {"🧠 ИИ анализ", "📊 ИИ анализ", "📊 ИИ анализ деятельности", "🤖 ИИ анализ деятельности"})
 async def analyze_activity(message: Message):
     """Показывает меню анализа деятельности."""
     user_id = str(message.from_user.id)
