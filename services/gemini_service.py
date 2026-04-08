@@ -1,6 +1,7 @@
 """Сервис для работы с Gemini API."""
 import json
 import logging
+import time
 from typing import Optional
 from google import genai
 from google.genai import errors as genai_errors
@@ -77,6 +78,31 @@ class GeminiService:
         
         return any(indicator in error_str for indicator in quota_indicators) or \
                error_type in ["ResourceExhausted", "RateLimitError", "QuotaExceeded"]
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        """Проверяет, является ли ошибка временной и подходящей для повтора."""
+        error_str = str(error).lower()
+        error_type = type(error).__name__
+
+        retryable_indicators = [
+            "503",
+            "unavailable",
+            "deadline exceeded",
+            "timed out",
+            "timeout",
+            "connection reset",
+            "temporarily unavailable",
+            "client has been closed",
+            "high demand",
+            "internal server error",
+            "500",
+        ]
+        retryable_error_types = {"ServerError", "ServiceUnavailable", "InternalServerError"}
+
+        return (
+            any(indicator in error_str for indicator in retryable_indicators)
+            or error_type in retryable_error_types
+        )
     
     def _switch_to_next_account(self, current_account_id: int) -> bool:
         """Переключается на следующий аккаунт и сохраняет активный в БД."""
@@ -92,7 +118,7 @@ class GeminiService:
     
     def _make_request(self, func, *args, **kwargs):
         """Выполняет запрос с автоматическим переключением ключей при ошибках квоты."""
-        max_attempts = len(self.account_configs)
+        max_attempts = max(len(self.account_configs) * 3, 3)
         last_error = None
         
         for attempt in range(max_attempts):
@@ -112,6 +138,7 @@ class GeminiService:
             except Exception as e:
                 last_error = e
                 is_quota = self._is_quota_error(e)
+                is_retryable = self._is_retryable_error(e)
                 status = "limit_exceeded" if is_quota else "error"
                 GeminiRepository.increment_account_stats(
                     active_account.id,
@@ -127,6 +154,20 @@ class GeminiService:
                     # Переключаемся на следующий аккаунт
                     if self._switch_to_next_account(active_account.id):
                         continue  # Пробуем снова с новым ключом
+
+                # Повторяем временные ошибки, а при наличии резервных аккаунтов переключаемся
+                if is_retryable:
+                    logger.warning(
+                        "⚠️ Временная ошибка Gemini на аккаунте %s (попытка %s/%s): %s",
+                        active_account.account_name,
+                        attempt + 1,
+                        max_attempts,
+                        e,
+                    )
+                    if len(self.account_configs) > 1:
+                        self._switch_to_next_account(active_account.id)
+                    time.sleep(min(1.5 * (attempt + 1), 6))
+                    continue
                 
                 # Если это не ошибка квоты или нет резервных ключей - пробрасываем ошибку
                 raise
