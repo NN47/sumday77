@@ -29,69 +29,89 @@ def fmt_dt(value) -> str:
 
 
 def human_event_name(event_name: str) -> str:
-    return EVENT_LABELS.get(event_name, f"🔹 {event_name}")
+    return EVENT_LABELS.get(event_name, "🔹 Неизвестное событие")
 
 
 def format_dashboard(metrics: dict) -> str:
     latest_error = metrics.get("latest_error")
     latest_error_line = (
-        f"{fmt_dt(latest_error.created_at)} — {latest_error.error_type}" if latest_error else "✅ Ошибок нет"
+        f"{fmt_dt(latest_error.created_at)} — {latest_error.error_type}" if latest_error else "✅ ошибок нет"
     )
     return (
         "📊 <b>Дашборд</b>\n\n"
-        f"👥 Всего пользователей: <b>{metrics['total_users']}</b>\n"
-        f"🟢 Активные 24ч: <b>{metrics['active_24h']}</b>\n"
-        f"🟢 Активные 7д: <b>{metrics['active_7d']}</b>\n"
-        f"🟢 Активные 30д: <b>{metrics['active_30d']}</b>\n"
-        f"🆕 Новые сегодня: <b>{metrics['new_today']}</b>\n"
-        f"🆕 Новые 7д: <b>{metrics['new_7d']}</b>\n\n"
-        f"💎 Core users today: <b>{metrics['core_users_today']}</b>\n"
-        f"💎 Core users 7d: <b>{metrics['core_users_7d']}</b>\n"
-        f"💎 Core users 30d: <b>{metrics['core_users_30d']}</b>\n"
-        f"📈 Conversion to core: <b>{metrics['conversion_to_core']:.1f}%</b>\n"
-        f"📣 Total events today: <b>{metrics['total_events_today']}</b>\n"
-        f"⚙️ Avg actions per user: <b>{metrics['avg_actions_per_user']:.2f}</b>\n\n"
-        f"🧠 Анализ дня: started <b>{metrics['daily_analysis_started']}</b> / "
-        f"sent <b>{metrics['daily_analysis_sent']}</b> / "
-        f"failed <b>{metrics['daily_analysis_failed']}</b>\n"
-        f"✅ Success rate: <b>{metrics['daily_analysis_success_rate']:.1f}%</b>\n\n"
-        f"⚠️ Ошибки сегодня: <b>{metrics['errors_today']}</b>\n"
-        f"🕘 Последняя ошибка: <b>{latest_error_line}</b>"
+        "👥 <b>Пользователи</b>\n"
+        f"• Всего: <b>{metrics['total_users']}</b>\n"
+        f"• Активные 24ч: <b>{metrics['active_24h']}</b>\n"
+        f"• Активные 7д: <b>{metrics['active_7d']}</b>\n"
+        f"• Активные 30д: <b>{metrics['active_30d']}</b>\n"
+        f"• Новые сегодня: <b>{metrics['new_today']}</b>\n"
+        f"• Новые 7д: <b>{metrics['new_7d']}</b>\n\n"
+        "💎 <b>Использование</b>\n"
+        f"• Пользователи с действиями сегодня: <b>{metrics['core_users_today']}</b>\n"
+        f"• Пользователи с действиями 7д: <b>{metrics['core_users_7d']}</b>\n"
+        f"• Пользователи с действиями 30д: <b>{metrics['core_users_30d']}</b>\n"
+        f"• Конверсия в действия: <b>{metrics['conversion_to_core']:.1f}%</b>\n\n"
+        "📢 <b>Активность</b>\n"
+        f"• Всего действий сегодня: <b>{metrics['total_events_today']}</b>\n"
+        f"• Среднее действий на активного пользователя: <b>{metrics['avg_actions_per_user']:.2f}</b>\n\n"
+        "🧠 <b>Анализ дня</b>\n"
+        f"• Запущено: <b>{metrics['daily_analysis_started']}</b>\n"
+        f"• Отправлено: <b>{metrics['daily_analysis_sent']}</b>\n"
+        f"• Ошибок: <b>{metrics['daily_analysis_failed']}</b>\n"
+        f"• Успешность: <b>{metrics['daily_analysis_success_rate']:.1f}%</b>\n\n"
+        "⚠️ <b>Ошибки</b>\n"
+        f"• Сегодня: <b>{metrics['errors_today']}</b>\n"
+        f"• Последняя: <b>{latest_error_line}</b>"
     )
 
 
 def format_today(metrics: dict) -> str:
+    navigation_labels = {
+        "open_main_menu": "📱 Открыли главное меню",
+        "open_kbju": "🍱 Открыли КБЖУ",
+        "open_weight": "⚖️ Открыли вес",
+        "open_activity": "🏃 Открыли активность",
+        "open_notes": "📝 Открыли заметки",
+    }
+    helpful_labels = {
+        "add_meal": "➕ Добавили еду",
+        "add_weight": "⚖️ Добавили вес",
+        "add_steps": "🚶 Добавили шаги",
+        "add_workout": "💪 Добавили тренировку",
+        "request_daily_analysis": "🧠 Запросили анализ дня",
+    }
     lines = [
         "📅 <b>Сегодня</b>",
         "",
-        f"🟢 Активные пользователи сегодня: <b>{metrics['active_users_today']}</b>",
+        f"👥 Активные пользователи: <b>{metrics['active_users_today']}</b>",
         "",
-        "🧭 <b>Навигация</b>",
+        "📂 <b>Переходы</b>",
     ]
     for name, count in metrics["navigation"].items():
-        lines.append(f"• {human_event_name(name)}: <b>{count}</b>")
+        lines.append(f"• {navigation_labels.get(name, human_event_name(name))}: <b>{count}</b>")
 
-    lines.extend(["", "🎯 <b>Полезные действия</b>"])
+    lines.extend(["", "✍️ <b>Действия</b>"])
     for name, count in metrics["helpful"].items():
-        lines.append(f"• {human_event_name(name)}: <b>{count}</b>")
+        lines.append(f"• {helpful_labels.get(name, human_event_name(name))}: <b>{count}</b>")
     return "\n".join(lines)
 
 
 def format_funnel(metrics: dict) -> str:
     return (
-        "📉 <b>Воронка (сегодня)</b>\n\n"
-        f"1) 📱 Открыли главное меню: <b>{metrics['menu']}</b>\n"
-        f"2) 📂 Открыли разделы: <b>{metrics['sections']}</b>"
-        f" (<b>{metrics['sections_from_menu']:.1f}%</b> от шага 1)\n"
-        f"3) 🎯 Сделали полезное действие: <b>{metrics['core']}</b>"
-        f" (<b>{metrics['core_from_sections']:.1f}%</b> от шага 2)\n"
-        f"4) 🧠 Запросили анализ дня: <b>{metrics['analysis']}</b>"
-        f" (<b>{metrics['analysis_from_core']:.1f}%</b> от шага 3)"
+        "📉 <b>Воронка за сегодня</b>\n\n"
+        f"• Открыли главное меню: <b>{metrics['menu']}</b>\n"
+        f"• Зашли в разделы: <b>{metrics['sections']}</b>\n"
+        f"• Сделали хотя бы одно действие: <b>{metrics['core']}</b>\n"
+        f"• Запросили анализ дня: <b>{metrics['analysis']}</b>\n\n"
+        "📈 <b>Конверсия</b>\n"
+        f"• Меню → разделы: <b>{metrics['sections_from_menu']:.1f}%</b>\n"
+        f"• Разделы → действия: <b>{metrics['core_from_sections']:.1f}%</b>\n"
+        f"• Действия → анализ: <b>{metrics['analysis_from_core']:.1f}%</b>"
     )
 
 
 def format_retention(points: list) -> str:
-    lines = ["🔁 <b>Retention</b>", ""]
+    lines = ["🔁 <b>Возвраты</b>", ""]
     has_data = False
     for point in points:
         if point.cohort_size > 0:
@@ -104,7 +124,7 @@ def format_retention(points: list) -> str:
             lines.append(f"• D{point.days}: недостаточно данных (когорта = 0)")
 
     if not has_data:
-        lines.append("\nПока недостаточно исторических данных для расчёта retention.")
+        lines.append("\nПока недостаточно исторических данных для расчёта возвратов.")
     return "\n".join(lines)
 
 
@@ -149,11 +169,11 @@ def format_users(metrics: dict) -> str:
                     f"• <b>{user['user_id']}</b>",
                     f"  рег: {fmt_dt(user['registered_at'])} | визит: {fmt_dt(user['last_seen_at'])}",
                     f"  действий сегодня: <b>{user['actions_today']}</b> | за 7д: <b>{user['actions_7d']}</b>",
-                    f"  core user сегодня: <b>{core_mark}</b> | запросов анализа дня: <b>{user['daily_analysis_requests']}</b>",
+                    f"  пользователь с действиями сегодня: <b>{core_mark}</b> | запросов анализа дня: <b>{user['daily_analysis_requests']}</b>",
                 ]
             )
 
-    lines.extend(["", "🏆 <b>Top users (7д)</b>"])
+    lines.extend(["", "🏆 <b>Топ пользователей (7д)</b>"])
     top_users = metrics["top_users"]
     if not top_users:
         lines.append("Нет данных.")
