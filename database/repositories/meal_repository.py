@@ -6,6 +6,7 @@ from sqlalchemy import func
 from database.session import get_db_session
 from database.models import Meal, KbjuSettings
 from database.repositories.analytics_repository import AnalyticsRepository
+from utils.meal_types import normalize_meal_type, MealType
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class MealRepository:
         description: Optional[str] = None,
         products_json: Optional[str] = None,
         api_details: Optional[str] = None,
+        meal_type: Optional[str] = MealType.SNACK.value,
     ) -> Meal:
         """Сохраняет приём пищи."""
         with get_db_session() as session:
@@ -39,6 +41,7 @@ class MealRepository:
                 date=entry_date,
                 products_json=products_json or "[]",
                 api_details=api_details,
+                meal_type=normalize_meal_type(meal_type),
             )
             session.add(meal)
             session.commit()

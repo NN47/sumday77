@@ -84,6 +84,7 @@ class Meal(Base):
     protein = Column(Float, default=0)
     fat = Column(Float, default=0)
     carbs = Column(Float, default=0)
+    meal_type = Column(String, nullable=False, default="snack", index=True)
     date = Column(Date, default=date.today)
 
 

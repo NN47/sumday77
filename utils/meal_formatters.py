@@ -3,11 +3,11 @@ import logging
 import json
 import html
 from datetime import date
-from typing import Optional
+from collections import defaultdict
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from database.repositories import MealRepository
 from database.models import Meal
 from utils.emoji_map import EMOJI_MAP
+from utils.meal_types import MEAL_TYPE_ORDER, display_meal_type, normalize_meal_type
 
 logger = logging.getLogger(__name__)
 
@@ -18,82 +18,38 @@ def format_today_meals(
     day_str: str,
     include_date_header: bool = True,
 ) -> str:
-    """Форматирует список приёмов пищи за день."""
+    """Форматирует дневник питания с группировкой по приёмам пищи."""
     lines: list[str] = []
     if include_date_header:
-        lines.append(f"Приём пищи за {day_str}:\n")
-    
-    for idx, meal in enumerate(meals, start=1):
-        # Что вводил пользователь
-        user_text = getattr(meal, "raw_query", None) or meal.description or "Без описания"
-        
-        # Заголовок "Ты ввёл(а):" жирным через HTML
-        lines.append(f"{idx}) 📝 <b>Ты ввёл(а):</b> {html.escape(user_text)}")
-        
-        api_details = getattr(meal, "api_details", None)
-        
-        if api_details:
-            # "Результат:" жирным
-            lines.append("🔍 <b>Результат:</b>")
-            # api_details уже готовый текст, не экранируем
-            lines.append(api_details)
-        else:
-            # Что мы показывали раньше как распознанный текст
-            api_text_fallback = meal.description or "нет описания"
-            
-            # Пробуем достать продукты из JSON
-            products = []
-            raw_products = getattr(meal, "products_json", None)
-            if raw_products:
-                try:
-                    products = json.loads(raw_products)
-                except Exception as e:
-                    logger.warning(f"Не смог распарсить products_json: {e}")
-            
-            if products:
-                lines.append("🔍 <b>Результат:</b>")
-                for p in products:
-                    name = p.get("name_ru") or p.get("name") or "продукт"
-                    
-                    # Поддержка разных форматов данных (CalorieNinjas и Gemini API)
-                    # CalorieNinjas использует: _calories, _protein_g, _fat_total_g, _carbohydrates_total_g
-                    # Gemini API использует: kcal, protein, fat, carbs, grams
-                    cal = (p.get("calories") or p.get("_calories") or 
-                           p.get("kcal") or 0)
-                    prot = (p.get("protein_g") or p.get("_protein_g") or 
-                            p.get("protein") or 0)
-                    fat = (p.get("fat_total_g") or p.get("_fat_total_g") or 
-                           p.get("fat") or 0)
-                    carb = (p.get("carbohydrates_total_g") or p.get("_carbohydrates_total_g") or 
-                            p.get("carbs") or 0)
-                    
-                    # Если есть вес, показываем его
-                    grams = p.get("grams") or p.get("weight")
-                    if grams:
-                        lines.append(
-                            f"• {html.escape(name)} ({grams:.0f} г) — {cal:.0f} ккал "
-                            f"(Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})"
-                        )
-                    else:
-                        lines.append(
-                            f"• {html.escape(name)} — {cal:.0f} ккал "
-                            f"(Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})"
-                        )
-            else:
-                # Старый вариант без products_json
-                lines.append(
-                    f"🔍 <b>Результат:</b> {html.escape(api_text_fallback)}"
-                )
-        
-        # Итого по этому приёму
-        lines.append(f"{EMOJI_MAP['calories']} Калории: {meal.calories:.0f} ккал")
-        lines.append(f"{EMOJI_MAP['protein']} Белки: {meal.protein:.1f} г")
-        lines.append(f"{EMOJI_MAP['fat']} Жиры: {meal.fat:.1f} г")
-        lines.append(f"{EMOJI_MAP['carbs']} Углеводы: {meal.carbs:.1f} г")
-        lines.append("— — — — —")
-    
-    # Итоги за день — тоже жирным
-    lines.append("\n<b>Итого за день:</b>")
+        lines.append(f"📅 Дневник питания за {day_str}\n")
+
+    grouped: dict[str, list[Meal]] = defaultdict(list)
+    for meal in meals:
+        grouped[normalize_meal_type(getattr(meal, "meal_type", None))].append(meal)
+
+    for meal_type in MEAL_TYPE_ORDER:
+        meal_group = grouped.get(meal_type, [])
+        if not meal_group:
+            continue
+        lines.append(display_meal_type(meal_type))
+        meal_totals = {"calories": 0.0, "protein": 0.0, "fat": 0.0, "carbs": 0.0}
+        for meal in meal_group:
+            for product_line in _extract_product_lines(meal):
+                lines.append(product_line)
+            meal_totals["calories"] += float(getattr(meal, "calories", 0) or 0)
+            meal_totals["protein"] += float(getattr(meal, "protein", 0) or 0)
+            meal_totals["fat"] += float(getattr(meal, "fat", 0) or 0)
+            meal_totals["carbs"] += float(getattr(meal, "carbs", 0) or 0)
+
+        title = display_meal_type(meal_type).split(" ", 1)[1].lower()
+        lines.append(f"\nИтого {title}:")
+        lines.append(f"{EMOJI_MAP['calories']} {meal_totals['calories']:.0f} ккал")
+        lines.append(f"{EMOJI_MAP['protein']} {meal_totals['protein']:.1f} г")
+        lines.append(f"{EMOJI_MAP['fat']} {meal_totals['fat']:.1f} г")
+        lines.append(f"{EMOJI_MAP['carbs']} {meal_totals['carbs']:.1f} г")
+        lines.append("")
+
+    lines.append("📊 Итого за день:")
     lines.append(f"{EMOJI_MAP['calories']} Калории: {daily_totals.get('calories', 0):.0f} ккал")
     lines.append(
         f"{EMOJI_MAP['protein']} Белки: {daily_totals.get('protein_g', daily_totals.get('protein', 0)):.1f} г"
@@ -104,6 +60,67 @@ def format_today_meals(
     )
     
     return "\n".join(lines)
+
+
+def _safe_float(value: object) -> float:
+    try:
+        if value is None:
+            return 0.0
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _safe_product_name(value: object, fallback: str = "Продукт") -> str:
+    name = str(value or "").strip()
+    if not name or name.lower() == "none":
+        return fallback
+    return name
+
+
+def _extract_product_lines(meal: Meal) -> list[str]:
+    """Извлекает строки продуктов из meals.products_json без служебного шума."""
+    raw_products = getattr(meal, "products_json", None)
+    products: list[dict] = []
+    if raw_products:
+        try:
+            parsed = json.loads(raw_products)
+            if isinstance(parsed, list):
+                products = [item for item in parsed if isinstance(item, dict)]
+        except Exception as e:
+            logger.warning(f"Не смог распарсить products_json: {e}")
+
+    if not products:
+        fallback_name = _safe_product_name(
+            getattr(meal, "description", None) or getattr(meal, "raw_query", None)
+        )
+        return [
+            f"• {html.escape(fallback_name)} — {float(getattr(meal, 'calories', 0) or 0):.0f} ккал "
+            f"(Б {float(getattr(meal, 'protein', 0) or 0):.1f} / "
+            f"Ж {float(getattr(meal, 'fat', 0) or 0):.1f} / "
+            f"У {float(getattr(meal, 'carbs', 0) or 0):.1f})"
+        ]
+
+    lines: list[str] = []
+    for p in products:
+        name = _safe_product_name(p.get("name_ru") or p.get("name"))
+        cal = _safe_float(p.get("calories") or p.get("_calories") or p.get("kcal"))
+        prot = _safe_float(p.get("protein_g") or p.get("_protein_g") or p.get("protein"))
+        fat = _safe_float(p.get("fat_total_g") or p.get("_fat_total_g") or p.get("fat"))
+        carb = _safe_float(
+            p.get("carbohydrates_total_g") or p.get("_carbohydrates_total_g") or p.get("carbs")
+        )
+        grams = _safe_float(p.get("grams") or p.get("weight"))
+        if grams > 0:
+            lines.append(
+                f"• {html.escape(name)} ({grams:.0f} г) — {cal:.0f} ккал "
+                f"(Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})"
+            )
+        else:
+            lines.append(
+                f"• {html.escape(name)} — {cal:.0f} ккал (Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})"
+            )
+    return lines
 
 
 def build_meals_actions_keyboard(

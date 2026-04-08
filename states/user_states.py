@@ -4,6 +4,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 class MealEntryStates(StatesGroup):
     """Состояния для добавления приёма пищи."""
+    choosing_meal_type = State()  # Выбор типа приёма пищи
     waiting_for_food_input = State()  # CalorieNinjas
     waiting_for_ai_food_input = State()  # Gemini AI
     waiting_for_photo = State()  # Фото еды

@@ -15,6 +15,7 @@ from utils.keyboards import (
     LEGACY_MEALS_BUTTON_TEXT,
     kbju_menu,
     kbju_add_menu,
+    kbju_meal_type_menu,
     kbju_after_meal_menu,
     kbju_edit_type_menu,
     push_menu_stack,
@@ -25,10 +26,26 @@ from services.gemini_service import gemini_service
 from utils.validators import parse_date
 from utils.telegram_text import split_telegram_message
 from datetime import datetime
+from utils.meal_types import MealType, normalize_meal_type, display_meal_type
 
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+MEAL_TYPE_BUTTONS = {
+    "🍳 Завтрак": MealType.BREAKFAST.value,
+    "🍲 Обед": MealType.LUNCH.value,
+    "🍽 Ужин": MealType.DINNER.value,
+    "🍎 Перекус": MealType.SNACK.value,
+}
+
+ADD_METHOD_TEXTS = {
+    "calorieninjas": "➕ Через CalorieNinjas",
+    "ai": "📝 Ввести приём пищи текстом (AI-анализ)",
+    "photo": "📷 Анализ еды по фото",
+    "label": "📋 Анализ этикетки",
+    "barcode": "📷 Скан штрих-кода",
+}
 
 
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
@@ -59,6 +76,39 @@ def translate_text(text: str, source_lang: str = "ru", target_lang: str = "en") 
         return text
 
 
+async def _prompt_meal_type_selection(message: Message, state: FSMContext, pending_add_method: str | None = None):
+    """Просит выбрать тип приёма пищи и сохраняет контекст добавления."""
+    payload = {"entry_date": date.today().isoformat()}
+    if pending_add_method:
+        payload["pending_add_method"] = pending_add_method
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(**payload)
+    push_menu_stack(message.bot, kbju_meal_type_menu)
+    await message.answer(
+        "Сначала выбери, к какому приёму пищи добавить запись:",
+        reply_markup=kbju_meal_type_menu,
+    )
+
+
+async def _ensure_meal_type_selected(
+    message: Message,
+    state: FSMContext,
+    pending_add_method: str,
+) -> bool:
+    """Проверяет, что meal_type выбран; иначе запрашивает выбор."""
+    data = await state.get_data()
+    raw_meal_type = str(data.get("meal_type") or "").strip().lower()
+    if raw_meal_type in {
+        MealType.BREAKFAST.value,
+        MealType.LUNCH.value,
+        MealType.DINNER.value,
+        MealType.SNACK.value,
+    }:
+        return True
+    await _prompt_meal_type_selection(message, state, pending_add_method=pending_add_method)
+    return False
+
+
 @router.message(lambda m: m.text in {MEALS_BUTTON_TEXT, LEGACY_MEALS_BUTTON_TEXT})
 async def calories(message: Message, state: FSMContext):
     """Показывает меню КБЖУ."""
@@ -85,6 +135,7 @@ async def quick_snack(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} used quick snack button")
     
+    await state.update_data(meal_type=MealType.SNACK.value, pending_add_method=None, entry_date=date.today().isoformat())
     # Начинаем поток как для ИИ-ввода, но с более короткими подсказками под перекус
     await state.set_state(MealEntryStates.waiting_for_ai_food_input)
     
@@ -110,6 +161,7 @@ async def quick_snack_cb(callback: CallbackQuery, state: FSMContext):
     user_id = str(callback.from_user.id)
     logger.info(f"User {user_id} used quick snack inline button")
     
+    await state.update_data(meal_type=MealType.SNACK.value, pending_add_method=None, entry_date=date.today().isoformat())
     await state.set_state(MealEntryStates.waiting_for_ai_food_input)
     
     text = (
@@ -178,25 +230,59 @@ async def calories_add(message: Message, state: FSMContext):
 
 async def start_kbju_add_flow(message: Message, entry_date: date, state: FSMContext):
     """Запускает поток добавления приёма пищи."""
-    user_id = str(message.from_user.id)
-    
-    # Сохраняем дату в FSM
-    await state.update_data(entry_date=entry_date.isoformat())
-    
-    text = (
-        "<b>Выбери, как добавить приём пищи:</b>\n"
-        "• 📝 Ввести приём пищи текстом (AI-анализ) — умный анализ кбжу\n"
-        "• 📷 Анализ еды по фото — отправь фото еды\n"
-        "• 📋 Анализ этикетки — отправь фото этикетки/упаковки"
+    _ = str(message.from_user.id)
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(entry_date=entry_date.isoformat(), pending_add_method=None)
+    push_menu_stack(message.bot, kbju_meal_type_menu)
+    await message.answer(
+        "Выбери приём пищи, к которому нужно добавить продукты:",
+        reply_markup=kbju_meal_type_menu,
     )
-    
+
+
+@router.message(MealEntryStates.choosing_meal_type, lambda m: m.text in MEAL_TYPE_BUTTONS)
+async def select_meal_type(message: Message, state: FSMContext):
+    """Сохраняет выбранный тип приёма пищи и продолжает сценарий добавления."""
+    meal_type = MEAL_TYPE_BUTTONS[message.text]
+    data = await state.get_data()
+    pending_method = data.get("pending_add_method")
+    await state.update_data(meal_type=meal_type)
+
+    if pending_method in ADD_METHOD_TEXTS:
+        await message.answer(f"Выбрано: {display_meal_type(meal_type)}")
+        if pending_method == "ai":
+            await kbju_add_via_ai(message, state)
+            return
+        if pending_method == "photo":
+            await kbju_add_via_photo(message, state)
+            return
+        if pending_method == "label":
+            await kbju_add_via_label(message, state)
+            return
+        if pending_method == "barcode":
+            await kbju_add_via_barcode(message, state)
+            return
+        if pending_method == "calorieninjas":
+            await kbju_add_via_calorieninjas(message, state)
+            return
+
+    text = (
+        f"Отлично! {display_meal_type(meal_type)}.\n\n"
+        "<b>Теперь выбери, как добавить еду:</b>\n"
+        "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
+        "• 📷 Анализ еды по фото\n"
+        "• 📋 Анализ этикетки"
+    )
     push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu)
+    await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
 
 
 @router.message(lambda m: m.text == "➕ Через CalorieNinjas")
 async def kbju_add_via_calorieninjas(message: Message, state: FSMContext):
     """Обработчик добавления через CalorieNinjas."""
+    if not await _ensure_meal_type_selected(message, state, "calorieninjas"):
+        return
+    await state.update_data(pending_add_method=None)
     await state.set_state(MealEntryStates.waiting_for_food_input)
     
     text = (
@@ -215,6 +301,9 @@ async def kbju_add_via_calorieninjas(message: Message, state: FSMContext):
 @router.message(lambda m: m.text == "📝 Ввести приём пищи текстом (AI-анализ)")
 async def kbju_add_via_ai(message: Message, state: FSMContext):
     """Обработчик добавления через Gemini AI."""
+    if not await _ensure_meal_type_selected(message, state, "ai"):
+        return
+    await state.update_data(pending_add_method=None)
     await state.set_state(MealEntryStates.waiting_for_ai_food_input)
     
     text = (
@@ -242,7 +331,10 @@ async def kbju_add_via_ai(message: Message, state: FSMContext):
 @router.message(lambda m: m.text == "📷 Анализ еды по фото")
 async def kbju_add_via_photo(message: Message, state: FSMContext):
     """Обработчик анализа еды по фото."""
+    if not await _ensure_meal_type_selected(message, state, "photo"):
+        return
     reset_user_state(message)
+    await state.update_data(pending_add_method=None)
     await state.set_state(MealEntryStates.waiting_for_photo)
     
     text = (
@@ -265,6 +357,7 @@ async def handle_food_input(message: Message, state: FSMContext):
     
     user_id = str(message.from_user.id)
     data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
     if entry_date_str:
         if isinstance(entry_date_str, str):
@@ -336,6 +429,7 @@ async def handle_food_input(message: Message, state: FSMContext):
         entry_date=entry_date,
         api_details=api_details,
         products_json=json.dumps(items),
+        meal_type=meal_type,
     )
     
     # Сохраняем ID последнего приёма для редактирования
@@ -368,6 +462,7 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
     
     user_id = str(message.from_user.id)
     data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
     if entry_date_str:
         if isinstance(entry_date_str, str):
@@ -447,6 +542,7 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
         carbs=totals_for_db["carbs"],
         entry_date=entry_date,
         products_json=json.dumps(items),
+        meal_type=meal_type,
     )
     
     # Сохраняем ID последнего приёма для редактирования
@@ -472,7 +568,10 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
 @router.message(lambda m: m.text == "📋 Анализ этикетки")
 async def kbju_add_via_label(message: Message, state: FSMContext):
     """Обработчик анализа этикетки."""
+    if not await _ensure_meal_type_selected(message, state, "label"):
+        return
     reset_user_state(message)
+    await state.update_data(pending_add_method=None)
     await state.set_state(MealEntryStates.waiting_for_label_photo)
     
     text = (
@@ -490,7 +589,10 @@ async def kbju_add_via_label(message: Message, state: FSMContext):
 @router.message(lambda m: m.text == "📷 Скан штрих-кода")
 async def kbju_add_via_barcode(message: Message, state: FSMContext):
     """Обработчик сканирования штрих-кода."""
+    if not await _ensure_meal_type_selected(message, state, "barcode"):
+        return
     reset_user_state(message)
+    await state.update_data(pending_add_method=None)
     await state.set_state(MealEntryStates.waiting_for_barcode_photo)
     
     text = (
@@ -509,6 +611,7 @@ async def handle_photo_input(message: Message, state: FSMContext):
     
     user_id = str(message.from_user.id)
     data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
     if entry_date_str:
         if isinstance(entry_date_str, str):
@@ -594,6 +697,7 @@ async def handle_photo_input(message: Message, state: FSMContext):
         carbs=totals_for_db["carbs"],
         entry_date=entry_date,
         products_json=json.dumps(items),
+        meal_type=meal_type,
     )
     
     # Сохраняем ID последнего приёма для редактирования
@@ -621,6 +725,7 @@ async def handle_label_photo(message: Message, state: FSMContext):
     """Обрабатывает фото этикетки."""
     user_id = str(message.from_user.id)
     data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
     if entry_date_str:
         if isinstance(entry_date_str, str):
@@ -976,6 +1081,7 @@ async def handle_weight_input(message: Message, state: FSMContext):
         carbs=totals_for_db["carbs"],
         entry_date=entry_date,
         products_json=products_json,
+        meal_type=meal_type,
     )
     
     # Сохраняем ID последнего приёма для редактирования
