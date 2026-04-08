@@ -1822,8 +1822,8 @@ async def edit_supplement_entry(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(lambda c: c.data.startswith("sup_confirm:"))
-async def confirm_supplement_intake_from_notification(callback: CallbackQuery):
-    """Подтверждает приём добавки из уведомления."""
+async def confirm_supplement_intake_from_notification(callback: CallbackQuery, state: FSMContext):
+    """Запрашивает количество приёма добавки из уведомления."""
     await callback.answer()
     user_id = str(callback.from_user.id)
 
@@ -1848,11 +1848,15 @@ async def confirm_supplement_intake_from_notification(callback: CallbackQuery):
         time_text = intake_time.strftime("%H:%M")
 
     timestamp = datetime.combine(now.date(), intake_time)
-    SupplementRepository.save_entry(
-        user_id=user_id,
+
+    await state.update_data(
         supplement_id=supplement_id,
-        timestamp=timestamp,
+        supplement_name=target["name"],
+        timestamp=timestamp.isoformat(),
+        entry_date=now.date().isoformat(),
+        from_calendar=False,
     )
+    await state.set_state(SupplementStates.entering_history_amount)
 
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
@@ -1860,7 +1864,8 @@ async def confirm_supplement_intake_from_notification(callback: CallbackQuery):
         pass
 
     await callback.message.answer(
-        f"✅ Приём добавки «{target['name']}» в {time_text} подтверждён."
+        f"✅ Зафиксировал время приёма «{target['name']}» в {time_text}.\n"
+        "Укажи количество для приёма (например: 1 или 2.5):"
     )
 
 

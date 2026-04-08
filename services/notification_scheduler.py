@@ -201,10 +201,10 @@ class NotificationScheduler:
                         
                         # Отправляем уведомление
                         message = (
-                            "🔔 Время принять лекарство!\n\n"
+                            "🔔 Время принять добавку!\n\n"
                             f"💊 {supplement.name}\n"
                             f"⏰ {current_time_str}\n\n"
-                            "Нажмите кнопку после приема лекарства:"
+                            "Нажмите кнопку после приёма:"
                         )
                         confirm_markup = InlineKeyboardMarkup(
                             inline_keyboard=[
