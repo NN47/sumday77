@@ -12,6 +12,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
+from sqlalchemy import text
 
 from config import API_TOKEN, KEEPALIVE_PORT
 from middlewares import OnboardingMiddleware, UserActivityMiddleware
@@ -50,6 +51,7 @@ threading.Thread(target=start_keepalive_server, daemon=True).start()
 # Теперь импортируем handlers
 logger.info("Импорт обработчиков...")
 from database.session import init_db
+from database.session import engine
 from handlers import (
     register_common_handlers,
     register_start_handlers,
@@ -65,6 +67,30 @@ from handlers import (
     register_admin_handlers,
 )
 from services.notification_scheduler import NotificationScheduler
+
+TELEGRAM_POLLING_LOCK_KEY = 8471265468
+
+
+def acquire_polling_lock():
+    """Пытается получить межпроцессный lock для polling (PostgreSQL advisory lock)."""
+    backend_name = engine.url.get_backend_name()
+    if backend_name != "postgresql":
+        logger.warning(
+            "База данных %s не поддерживает advisory lock. "
+            "Защита от параллельного polling неактивна.",
+            backend_name,
+        )
+        return None
+
+    connection = engine.connect()
+    acquired = connection.execute(
+        text("SELECT pg_try_advisory_lock(:lock_key)"),
+        {"lock_key": TELEGRAM_POLLING_LOCK_KEY},
+    ).scalar()
+    if not acquired:
+        connection.close()
+        return None
+    return connection
 
 
 async def main():
@@ -107,8 +133,18 @@ async def main():
     scheduler_task = asyncio.create_task(notification_scheduler.start())
     
     logger.info("🚀 Бот запущен и готов к работе!")
-    
+    polling_lock_conn = acquire_polling_lock()
+    if polling_lock_conn is None:
+        logger.error(
+            "Не удалось получить lock для polling. "
+            "Скорее всего, другой инстанс бота уже запущен."
+        )
+        return
+
+    logger.info("Lock для polling получен. Запускаем long polling.")
+
     try:
+        await bot.delete_webhook(drop_pending_updates=False)
         # Запускаем polling
         await dp.start_polling(bot)
     finally:
@@ -119,6 +155,13 @@ async def main():
             await scheduler_task
         except asyncio.CancelledError:
             pass
+        try:
+            polling_lock_conn.execute(
+                text("SELECT pg_advisory_unlock(:lock_key)"),
+                {"lock_key": TELEGRAM_POLLING_LOCK_KEY},
+            )
+        finally:
+            polling_lock_conn.close()
 
 
 if __name__ == "__main__":
