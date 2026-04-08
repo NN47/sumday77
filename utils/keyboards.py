@@ -74,6 +74,7 @@ def build_notes_factors_menu(factor_labels: list[str]) -> ReplyKeyboardMarkup:
     keyboard = [[KeyboardButton(text=label)] for label in factor_labels]
     keyboard.extend(
         [
+            [KeyboardButton(text="✍️ Свой вариант")],
             [KeyboardButton(text="✅ Продолжить"), KeyboardButton(text="⏭ Пропустить")],
             [KeyboardButton(text="⬅️ Назад"), main_menu_button],
         ]

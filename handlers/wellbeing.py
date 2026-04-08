@@ -75,7 +75,7 @@ async def show_notes_day(message: Message, user_id: str, target_date: date):
     note = NoteRepository.get_note_for_date(user_id, target_date)
 
     if note:
-        factors = [FACTOR_LABELS[f] for f in note.factors if f in FACTOR_LABELS]
+        factors = [_format_factor_label(f) for f in note.factors]
         factors_short = " ".join(label.split()[0] for label in factors) or "—"
         text = (
             "📝 Заметки дня\n\n"
@@ -107,6 +107,11 @@ def build_factors_keyboard(selected: list[str]) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text="⏭ Пропустить", callback_data="skip_factors")])
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_rating")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _format_factor_label(factor_key: str) -> str:
+    """Возвращает подпись фактора, включая пользовательские варианты."""
+    return FACTOR_LABELS.get(factor_key, f"✍️ {factor_key}")
 
 
 async def start_note_flow(message: Message, state: FSMContext, target_date: date, user_id: str | None = None):
@@ -156,7 +161,7 @@ async def select_rating(callback: CallbackQuery, state: FSMContext):
     await state.update_data(day_rating=rating, factors=data.get("factors", []))
     await state.set_state(WellbeingStates.note_factors)
     await callback.message.answer(
-        "Что повлияло на день? (можно несколько)",
+        "Что повлияло на день? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
         reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", []))),
     )
 
@@ -168,7 +173,7 @@ async def select_rating_message(message: Message, state: FSMContext):
     await state.update_data(day_rating=rating, factors=data.get("factors", []))
     await state.set_state(WellbeingStates.note_factors)
     await message.answer(
-        "Что повлияло на день? (можно несколько)",
+        "Что повлияло на день? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
         reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", []))),
     )
 
@@ -185,7 +190,7 @@ async def toggle_factor(callback: CallbackQuery, state: FSMContext):
         selected.append(factor)
     await state.update_data(factors=selected)
     await callback.message.answer(
-        "Что повлияло на день? (можно несколько)",
+        "Что повлияло на день? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
         reply_markup=build_factors_keyboard(selected),
     )
 
@@ -195,6 +200,9 @@ def _build_factor_labels(selected: list[str]) -> list[str]:
     for factor_key in FACTOR_CALLBACK_TO_KEY.values():
         prefix = "✅ " if factor_key in selected else ""
         labels.append(f"{prefix}{FACTOR_LABELS[factor_key]}")
+    custom_factors = [factor for factor in selected if factor not in FACTOR_LABELS]
+    for custom_factor in custom_factors:
+        labels.append(f"✅ ✍️ {custom_factor}")
     return labels
 
 
@@ -220,12 +228,20 @@ async def toggle_factor_message(message: Message, state: FSMContext):
         await state.set_state(WellbeingStates.note_rating)
         await message.answer("📝 Как прошёл день?\n\nВыбери вариант:", reply_markup=notes_rating_menu)
         return
+    if text == "✍️ Свой вариант":
+        await message.answer("Напиши свой фактор одним сообщением, и я добавлю его в список.")
+        return
 
     clean_label = text.removeprefix("✅ ").strip()
     label_to_key = {label: key for key, label in FACTOR_LABELS.items()}
     factor = label_to_key.get(clean_label)
     if not factor:
-        return
+        factor = clean_label.removeprefix("✍️ ").strip()
+        if not factor:
+            return
+        if len(factor) > 80:
+            await message.answer("Слишком длинно. Напиши фактор короче (до 80 символов).")
+            return
 
     data = await state.get_data()
     selected = list(data.get("factors", []))
@@ -235,7 +251,7 @@ async def toggle_factor_message(message: Message, state: FSMContext):
         selected.append(factor)
     await state.update_data(factors=selected)
     await message.answer(
-        "Что повлияло на день? (можно несколько)",
+        "Что повлияло на день? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
         reply_markup=build_notes_factors_menu(_build_factor_labels(selected)),
     )
 
@@ -285,7 +301,7 @@ async def persist_note(message: Message, state: FSMContext, user_id: str | None 
     )
     await state.clear()
 
-    factors_text = "\n".join(FACTOR_LABELS[f] for f in note.factors if f in FACTOR_LABELS) or "—"
+    factors_text = "\n".join(_format_factor_label(f) for f in note.factors) or "—"
     msg = (
         "📝 Заметка сохранена\n\n"
         f"{note.date.strftime('%d.%m.%Y')}:\n\n"
@@ -326,7 +342,7 @@ async def back_to_factors(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     await state.set_state(WellbeingStates.note_factors)
     await callback.message.answer(
-        "Что повлияло на день? (можно несколько)",
+        "Что повлияло на день? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
         reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", []))),
     )
 
@@ -412,7 +428,7 @@ async def note_text_back(message: Message, state: FSMContext):
     data = await state.get_data()
     await state.set_state(WellbeingStates.note_factors)
     await message.answer(
-        "Что повлияло на день? (можно несколько)",
+        "Что повлияло на день? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
         reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", []))),
     )
 
@@ -456,7 +472,7 @@ async def show_note_calendar_day(message: Message, user_id: str, target_date: da
         await message.answer(f"📝 {target_date.strftime('%d.%m')}\n\nЗаписи нет.", reply_markup=keyboard)
         return
 
-    factors_text = "\n".join(FACTOR_LABELS[f] for f in note.factors if f in FACTOR_LABELS) or "—"
+    factors_text = "\n".join(_format_factor_label(f) for f in note.factors) or "—"
     text = f"📝 {target_date.strftime('%d.%m')}\n\n{RATING_LABELS.get(note.day_rating, '—')}\n\nФакторы:\n{factors_text}"
     if note.text:
         text += f"\n\nКомментарий:\n{note.text}"
