@@ -6,7 +6,6 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import ADMIN_ID
-from database.repositories import SupportRepository
 from services.admin_stats_service import AdminStatsService
 from utils.admin_formatters import (
     format_dashboard,
@@ -15,8 +14,7 @@ from utils.admin_formatters import (
     format_retention,
     format_errors,
     format_recent_events,
-    format_users,
-    fmt_dt,
+    format_users
 )
 
 router = Router()
@@ -32,7 +30,7 @@ def _admin_menu_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📊 Дашборд", callback_data="admin:dashboard")],
             [InlineKeyboardButton(text="📅 Сегодня", callback_data="admin:today")],
             [InlineKeyboardButton(text="📉 Воронка", callback_data="admin:funnel")],
-            [InlineKeyboardButton(text="🔁 Retention", callback_data="admin:retention")],
+            [InlineKeyboardButton(text="🔁 Возвраты", callback_data="admin:retention")],
             [InlineKeyboardButton(text="🧠 Анализ дня", callback_data="admin:daily")],
             [InlineKeyboardButton(text="👤 Пользователи", callback_data="admin:users")],
             [InlineKeyboardButton(text="⚠️ Ошибки", callback_data="admin:errors")],
@@ -101,10 +99,10 @@ async def admin_callbacks(callback: CallbackQuery):
         lines = [
             "🧠 <b>Анализ дня (сегодня)</b>",
             "",
-            f"• started: <b>{dashboard['daily_analysis_started']}</b>",
-            f"• sent: <b>{dashboard['daily_analysis_sent']}</b>",
-            f"• failed: <b>{dashboard['daily_analysis_failed']}</b>",
-            f"• success rate: <b>{dashboard['daily_analysis_success_rate']:.1f}%</b>",
+            f"• Запущено: <b>{dashboard['daily_analysis_started']}</b>",
+            f"• Отправлено: <b>{dashboard['daily_analysis_sent']}</b>",
+            f"• Ошибок: <b>{dashboard['daily_analysis_failed']}</b>",
+            f"• Успешность: <b>{dashboard['daily_analysis_success_rate']:.1f}%</b>",
         ]
         await _edit_or_answer(callback.message, "\n".join(lines), _back_kb())
         return
@@ -117,29 +115,6 @@ async def admin_callbacks(callback: CallbackQuery):
     if action == "users":
         text = format_users(AdminStatsService.get_users_metrics(limit=15))
         await _edit_or_answer(callback.message, text, _back_kb())
-        return
-
-    if action == "support":
-        recent = SupportRepository.get_recent(limit=10)
-        lines = [
-            "💬 Поддержка\n",
-            f"• today: <b>{SupportRepository.count_today()}</b>",
-            f"• 7d: <b>{SupportRepository.count_7d()}</b>",
-            "\nПоследние 10:",
-        ]
-        for item in recent:
-            text_short = (item.message_text or "").replace("\n", " ")[:70]
-            lines.append(f"• [{item.id}] {fmt_dt(item.created_at)} | {item.user_id} | @{item.username or '-'} | {text_short}")
-        extra = [InlineKeyboardButton(text="Mark as read", callback_data="admin:support_mark")]
-        await _edit_or_answer(callback.message, "\n".join(lines), _back_kb(extra=extra))
-        return
-
-    if action == "support_mark":
-        updated = 0
-        for msg in SupportRepository.get_recent(limit=10):
-            if not msg.is_read and SupportRepository.mark_read(msg.id):
-                updated += 1
-        await _edit_or_answer(callback.message, f"✅ Отмечено прочитанными: {updated}", _back_kb())
         return
 
     if action == "events":
