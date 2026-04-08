@@ -105,8 +105,7 @@ def format_progress_block(user_id: str) -> str:
     
     goal_label = get_kbju_goal_label(settings.goal)
     
-    lines = ["🍱 <b>КБЖУ</b>"]
-    lines.append(f"🎯 <b>Цель:</b> {goal_label}")
+    lines = [f"🎯 <b>Цель:</b> {goal_label}"]
     lines.append(f"📊 <b>Базовая норма:</b> {base_calories_target:.0f} ккал")
     
     if activity_total > 0:
@@ -144,9 +143,9 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
     
     if not workouts:
         return (
-            "🔥 Итого за день: ~0 ккал\n"
             "👣 Шаги: 0 (~0 ккал)\n"
-            "💪 Упражнения: 0 записей (~0 ккал)"
+            "💪 Упражнения: 0 записей (~0 ккал)\n"
+            "🔥 Итого за день: ~0 ккал"
         )
 
     def normalize_exercise_name(exercise: str) -> str:
@@ -172,10 +171,7 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
         exercise_entries += 1
         exercise_calories += entry_calories
 
-    lines = [
-        f"🔥 Итого за день: ~{total_calories:.0f} ккал",
-        f"👣 Шаги: {steps_count:,} (~{steps_calories:.0f} ккал)".replace(",", " "),
-    ]
+    lines = [f"👣 Шаги: {steps_count:,} (~{steps_calories:.0f} ккал)".replace(",", " ")]
 
     if include_exercise_details:
         details = []
@@ -200,6 +196,8 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
             lines.append("💪 Упражнения: 0 записей (~0 ккал)")
     else:
         lines.append(f"💪 Упражнения: {exercise_entries} запись (~{exercise_calories:.0f} ккал)")
+
+    lines.append(f"🔥 Итого за день: ~{total_calories:.0f} ккал")
 
     return "\n".join(lines)
 
