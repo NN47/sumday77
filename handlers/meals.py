@@ -1469,21 +1469,26 @@ async def edit_last_meal(message: Message, state: FSMContext):
         )
         return
     
-    # Сохраняем данные в FSM для редактирования
-    await state.set_state(MealEntryStates.choosing_edit_type)
+    # Сохраняем данные в FSM для редактирования состава
     await state.update_data(
         meal_id=last_meal_id,
         target_date=meal.date.isoformat(),
         saved_products=products,
     )
-    
-    # Показываем выбор типа редактирования
-    push_menu_stack(message.bot, kbju_edit_type_menu)
-    await message.answer(
-        "✏️ Редактирование приёма пищи\n\n"
-        "Выбери, что хочешь изменить:",
-        reply_markup=kbju_edit_type_menu,
-    )
+    await state.set_state(MealEntryStates.editing_meal_composition)
+
+    edit_lines = ["✏️ Изменение состава продуктов\n\nТекущий состав:"]
+    for i, p in enumerate(products, 1):
+        name = p.get("name") or "продукт"
+        grams = p.get("grams", 0)
+        edit_lines.append(f"{i}. {name}, {grams:.0f} г")
+
+    edit_lines.append("\nВведи новый состав текстом (как в «Ввести приём пищи»):")
+    edit_lines.append("Например: 200 г курицы, 100 г йогурта, 30 г орехов")
+    edit_lines.append("\nИИ автоматически определит КБЖУ на основе типичных значений продуктов.")
+
+    push_menu_stack(message.bot, kbju_after_meal_menu)
+    await message.answer("\n".join(edit_lines), reply_markup=kbju_after_meal_menu)
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_edit:"))
@@ -1551,21 +1556,26 @@ async def start_meal_edit(callback: CallbackQuery, state: FSMContext):
         )
         return
     
-    # Сохраняем данные в FSM
+    # Сохраняем данные в FSM для редактирования состава
     await state.update_data(
         meal_id=meal_id,
         target_date=target_date.isoformat(),
         saved_products=products,
     )
-    await state.set_state(MealEntryStates.choosing_edit_type)
-    
-    # Показываем выбор типа редактирования
-    push_menu_stack(callback.message.bot, kbju_edit_type_menu)
-    await callback.message.answer(
-        "✏️ Редактирование приёма пищи\n\n"
-        "Выбери, что хочешь изменить:",
-        reply_markup=kbju_edit_type_menu,
-    )
+    await state.set_state(MealEntryStates.editing_meal_composition)
+
+    edit_lines = ["✏️ Изменение состава продуктов\n\nТекущий состав:"]
+    for i, p in enumerate(products, 1):
+        name = p.get("name") or "продукт"
+        grams = p.get("grams", 0)
+        edit_lines.append(f"{i}. {name}, {grams:.0f} г")
+
+    edit_lines.append("\nВведи новый состав текстом (как в «Ввести приём пищи»):")
+    edit_lines.append("Например: 200 г курицы, 100 г йогурта, 30 г орехов")
+    edit_lines.append("\nИИ автоматически определит КБЖУ на основе типичных значений продуктов.")
+
+    push_menu_stack(callback.message.bot, kbju_after_meal_menu)
+    await callback.message.answer("\n".join(edit_lines), reply_markup=kbju_after_meal_menu)
 
 
 @router.message(MealEntryStates.choosing_edit_type)
