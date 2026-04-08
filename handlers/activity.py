@@ -8,6 +8,7 @@ from collections import Counter
 from aiogram import Router
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
+from google.genai import errors as genai_errors
 from utils.keyboards import activity_analysis_menu, push_menu_stack
 from utils.emoji_map import EMOJI_MAP
 from utils.calendar_utils import (
@@ -22,6 +23,18 @@ from services.gemini_service import gemini_service
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT = (
+    "🤖 AI-анализ временно недоступен\n\n"
+    "Сервис анализа сейчас испытывает высокую нагрузку и временно не отвечает. "
+    "Данные сохранены, попробуй чуть позже.\n\n"
+    "Можно продолжать пользоваться ботом — всё остальное работает нормально."
+)
+
+
+def _is_gemini_temporarily_unavailable_error(error: Exception) -> bool:
+    """Проверяет, связана ли ошибка с временной недоступностью Gemini (ServerError/503)."""
+    return isinstance(error, genai_errors.ServerError) or "503" in str(error)
 
 
 def _normalize_workout_type(exercise: str, variant: str | None = None) -> str:
@@ -580,6 +593,9 @@ async def add_activity_analysis_from_calendar(callback: CallbackQuery, state: FS
         AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
     except Exception as e:
         AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
+        if _is_gemini_temporarily_unavailable_error(e):
+            await callback.message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT)
+            return
         ErrorLogRepository.log_error(
             user_id=user_id,
             error_type=type(e).__name__,
@@ -678,6 +694,10 @@ async def analyze_activity_day(message: Message):
         AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
     except Exception as e:
         AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
+        if _is_gemini_temporarily_unavailable_error(e):
+            push_menu_stack(message.bot, activity_analysis_menu)
+            await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
+            return
         ErrorLogRepository.log_error(
             user_id=user_id,
             error_type=type(e).__name__,
@@ -698,7 +718,17 @@ async def analyze_activity_week(message: Message):
     user_id = str(message.from_user.id)
     today = date.today()
     week_start = today - timedelta(days=today.weekday())
-    analysis = await generate_activity_analysis(user_id, week_start, today, "за неделю")
+    try:
+        analysis = await generate_activity_analysis(user_id, week_start, today, "за неделю")
+    except Exception as e:
+        if _is_gemini_temporarily_unavailable_error(e):
+            push_menu_stack(message.bot, activity_analysis_menu)
+            await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
+            return
+        logger.exception("Ошибка при генерации анализа за неделю")
+        push_menu_stack(message.bot, activity_analysis_menu)
+        await message.answer("⚠️ Не удалось сгенерировать анализ недели. Попробуй позже.", reply_markup=activity_analysis_menu)
+        return
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
 
@@ -709,7 +739,17 @@ async def analyze_activity_month(message: Message):
     user_id = str(message.from_user.id)
     today = date.today()
     month_start = date(today.year, today.month, 1)
-    analysis = await generate_activity_analysis(user_id, month_start, today, "за месяц")
+    try:
+        analysis = await generate_activity_analysis(user_id, month_start, today, "за месяц")
+    except Exception as e:
+        if _is_gemini_temporarily_unavailable_error(e):
+            push_menu_stack(message.bot, activity_analysis_menu)
+            await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
+            return
+        logger.exception("Ошибка при генерации анализа за месяц")
+        push_menu_stack(message.bot, activity_analysis_menu)
+        await message.answer("⚠️ Не удалось сгенерировать анализ месяца. Попробуй позже.", reply_markup=activity_analysis_menu)
+        return
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
 
