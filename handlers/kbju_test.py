@@ -695,6 +695,7 @@ async def handle_kbju_test_activity_callback(callback: CallbackQuery, state: FSM
         carbs=profile.carbs,
         goal=goal,
         activity=activity,
+        gender=data.get("gender"),
     )
     save_weight_from_test(user_id=user_id, data=data)
     WeightRepository.set_target_weight(user_id=user_id, target_weight=data.get("target_weight"))

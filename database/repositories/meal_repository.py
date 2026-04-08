@@ -168,6 +168,7 @@ class MealRepository:
         carbs: float,
         goal: Optional[str] = None,
         activity: Optional[str] = None,
+        gender: Optional[str] = None,
     ) -> KbjuSettings:
         """Сохраняет настройки КБЖУ."""
         with get_db_session() as session:
@@ -186,6 +187,8 @@ class MealRepository:
                     settings.goal = goal
                 if activity:
                     settings.activity = activity
+                if gender:
+                    settings.gender = gender
             else:
                 settings = KbjuSettings(
                     user_id=user_id,
@@ -195,6 +198,7 @@ class MealRepository:
                     carbs=carbs,
                     goal=goal,
                     activity=activity,
+                    gender=gender,
                 )
                 session.add(settings)
             
