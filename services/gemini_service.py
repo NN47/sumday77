@@ -102,8 +102,8 @@ class GeminiService:
             if "503" in str(e):
                 logger.warning(f"Gemini временно недоступен (503): {e}")
                 raise
-            logger.error(f"Ошибка Gemini при анализе: {e}", exc_info=True)
-            return "Сервис анализа временно недоступен, попробуй позже 🙏"
+            logger.exception("Ошибка Gemini при анализе")
+            raise
     
     def estimate_kbju(self, food_text: str) -> Optional[dict]:
         """
