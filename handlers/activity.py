@@ -59,6 +59,21 @@ def _is_strength_type(workout_type: str) -> bool:
     return workout_type in {"pushups", "squats", "abs", "pullups"}
 
 
+def _safe_percent(actual: float, goal: float) -> int | None:
+    if goal <= 0:
+        return None
+    return round((actual / goal) * 100)
+
+
+def _goal_label_ru(goal: str | None) -> str:
+    mapping = {
+        "lose": "Похудение",
+        "maintain": "Поддержание",
+        "gain": "Набор",
+    }
+    return mapping.get((goal or "").lower(), "Не указана")
+
+
 async def generate_activity_analysis(user_id: str, start_date: date, end_date: date, period_name: str) -> str:
     """Генерирует анализ активности за указанный период через Gemini."""
     from database.repositories import (
@@ -428,6 +443,148 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
 Вес:
 {weight_summary}{comparison_summary}
 """
+
+    if days_count == 1:
+        # 🏋️ Активность
+        today_training_items = [item for item in today_workouts_by_type.values() if item["type"] != "steps" and item["value"] > 0]
+        activity_lines = ["🏋️ Активность"]
+        if not today_training_items and today_steps <= 0:
+            activity_lines.extend([
+                "• Тренировок сегодня не было",
+                "• Шагов: 0",
+                "• День получился спокойным, без дополнительной нагрузки",
+            ])
+            activity_state = "low"
+        elif not today_training_items and today_steps > 0:
+            activity_lines.extend([
+                "• Тренировок сегодня не было",
+                f"• Шагов: {today_steps}",
+                "• Была лёгкая бытовая активность",
+            ])
+            activity_state = "light"
+        else:
+            training_summary = ", ".join(f"{item['type']}: {item['value']}" for item in today_training_items[:3])
+            activity_lines.extend([
+                f"• Тренировка: {training_summary}",
+                f"• Шагов: {today_steps}",
+                f"• Ориентировочный расход на тренировках: ~{round(today_workout_kcal)} ккал",
+            ])
+            activity_state = "trained"
+
+        # 🍱 Питание за день
+        goal_cal = settings.calories if settings else 0
+        goal_pro = settings.protein if settings else 0
+        goal_fat_day = settings.fat if settings else 0
+        goal_carb = settings.carbs if settings else 0
+
+        calories_percent_day = _safe_percent(total_calories, goal_cal)
+        protein_percent_day = _safe_percent(total_protein, goal_pro)
+        fat_percent_day = _safe_percent(total_fat, goal_fat_day)
+        carbs_percent_day = _safe_percent(total_carbs, goal_carb)
+
+        def fmt_macro_line(name: str, actual: float, goal: float, percent: int | None, unit: str = "г") -> str:
+            if goal > 0 and percent is not None:
+                actual_text = f"{actual:.0f}" if unit == "ккал" else f"{actual:.1f}".rstrip("0").rstrip(".")
+                goal_text = f"{goal:.0f}" if unit == "ккал" else f"{goal:.1f}".rstrip("0").rstrip(".")
+                return f"• {name}: {actual_text} / {goal_text} {unit} ({percent}%)"
+            actual_text = f"{actual:.0f}" if unit == "ккал" else f"{actual:.1f}".rstrip("0").rstrip(".")
+            return f"• {name}: {actual_text} {unit}"
+
+        nutrition_lines = [
+            "🍱 Питание за день",
+            f"Цель: {_goal_label_ru(settings.goal if settings else None)}",
+            fmt_macro_line("Калории", total_calories, goal_cal, calories_percent_day, unit="ккал"),
+            fmt_macro_line("Белки", total_protein, goal_pro, protein_percent_day),
+            fmt_macro_line("Жиры", total_fat, goal_fat_day, fat_percent_day),
+            fmt_macro_line("Углеводы", total_carbs, goal_carb, carbs_percent_day),
+            f"• Вода: {round(total_water)} мл",
+        ]
+
+        # ⚖️ Вес
+        weight_lines = ["⚖️ Вес"]
+        if weights:
+            current_day_weight = weights[0]
+            weight_lines.append(f"• Текущий вес: {current_day_weight.value} кг")
+            previous_weight = next((w for w in trend_weights if w.date < end_date), None)
+            if previous_weight:
+                current_val = float(str(current_day_weight.value).replace(",", "."))
+                previous_val = float(str(previous_weight.value).replace(",", "."))
+                delta = current_val - previous_val
+                weight_lines.append(
+                    f"• Изменение относительно предыдущего замера: {'+' if delta >= 0 else ''}{delta:.1f} кг"
+                )
+            else:
+                weight_lines.append("• Изменение относительно предыдущего замера: недостаточно данных")
+        elif trend_weights:
+            latest_weight = trend_weights[0]
+            weight_lines.extend([
+                f"• Последний замер: {latest_weight.value} кг",
+                f"• Дата: {latest_weight.date.strftime('%d.%m.%Y')}",
+            ])
+        else:
+            weight_lines.append("• Нет записей по весу")
+
+        # 📊 Итог дня
+        summary_lines = ["📊 Итог дня"]
+        if calories_percent_day is None:
+            summary_lines.append("Данных по цели питания пока недостаточно для точной оценки дня.")
+        else:
+            if calories_percent_day < 60:
+                summary_lines.append("Сегодня получился очень низкий калораж.")
+            elif calories_percent_day < 85:
+                summary_lines.append("Сегодня калораж ниже целевого уровня.")
+            elif calories_percent_day <= 115:
+                summary_lines.append("По калориям день близко к плану.")
+            else:
+                summary_lines.append("Сегодня калораж выше целевого уровня.")
+
+            macro_parts = []
+            if protein_percent_day is not None:
+                macro_parts.append("белок в норме" if protein_percent_day >= 90 else "белка было меньше плана")
+            if carbs_percent_day is not None:
+                macro_parts.append("углеводы в норме" if carbs_percent_day >= 90 else "углеводов было мало")
+            if macro_parts:
+                summary_lines.append("По макросам: " + ", ".join(macro_parts) + ".")
+
+        if activity_state == "low":
+            summary_lines.append("По активности день был спокойный.")
+        elif activity_state == "light":
+            summary_lines.append("По активности — лёгкий бытовой день.")
+        else:
+            summary_lines.append("Тренировочная активность в течение дня была.")
+
+        # 🎯 Фокус на завтра
+        focus_items: list[str] = []
+        if calories_percent_day is not None and calories_percent_day < 80:
+            focus_items.append("добрать больше калорий")
+        if carbs_percent_day is not None and carbs_percent_day < 80:
+            focus_items.append("добавить источник углеводов")
+        if protein_percent_day is not None and protein_percent_day < 80:
+            focus_items.append("добавить белок в 1–2 приёма пищи")
+        if activity_state in {"low", "light"}:
+            focus_items.append("пройти хотя бы немного шагов")
+        if not focus_items:
+            focus_items = ["сохранить текущий режим питания", "оставить комфортный уровень активности"]
+        focus_items = focus_items[:3]
+        if len(focus_items) == 1:
+            focus_items.append("сохранить стабильный режим дня")
+
+        focus_lines = ["🎯 Фокус на завтра", *[f"• {item}" for item in focus_items]]
+
+        report_lines = [
+            "Вот что получилось за день:",
+            "",
+            *activity_lines,
+            "",
+            *nutrition_lines,
+            "",
+            *weight_lines,
+            "",
+            *summary_lines,
+            "",
+            *focus_lines,
+        ]
+        return "\n".join(report_lines)
     
     # 🔹 Промпт для бота-ассистента
     gender_instruction = (
