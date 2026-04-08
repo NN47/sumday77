@@ -98,6 +98,7 @@ class KbjuSettings(Base):
     carbs = Column(Float, nullable=False)
     goal = Column(String, nullable=True)  # "loss" / "maintain" / "gain"
     activity = Column(String, nullable=True)  # "low" / "medium" / "high"
+    gender = Column(String, nullable=True)  # "male" / "female"
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 

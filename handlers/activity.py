@@ -153,6 +153,7 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
 
     settings = MealRepository.get_kbju_settings(user_id)
     user_goal = settings.goal if settings else None
+    user_gender = settings.gender if settings else None
 
     workout_ai_input = {
         "date": end_date.isoformat(),
@@ -429,6 +430,14 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
 """
     
     # 🔹 Промпт для бота-ассистента
+    gender_instruction = (
+        "Пол пользователя: мужской. Используй мужской род в обращениях и формулировках."
+        if user_gender == "male"
+        else "Пол пользователя: женский. Используй женский род в обращениях и формулировках."
+        if user_gender == "female"
+        else "Пол пользователя неизвестен. Используй нейтральные формулировки без гендерных окончаний."
+    )
+
     prompt = f"""
 Ты — бот-ассистент 🤖, персональный фитнес-помощник пользователя.
 Говори дружелюбно, уверенно и по делу.
@@ -442,6 +451,7 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
 - Если есть сравнение с предыдущим периодом, обязательно упомяни это в анализе.
 - Если есть статистика по дням недели, используй её для выявления паттернов активности.
 - Если период анализа = 1 день, не используй формулировки про проценты тренировочных дней и «за период». Пиши выводы только про текущий день.
+- {gender_instruction}
 
 Всегда начинай анализ с приветствия:
 "Привет! Я на связи и уже подготовил твой отчёт {period_name.lower()}👇"

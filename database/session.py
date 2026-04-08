@@ -102,6 +102,16 @@ def init_db():
         _add_error_log_column_if_missing("context", "VARCHAR")
         _add_error_log_column_if_missing("severity", "VARCHAR")
 
+        # kbju_settings.gender
+        try:
+            kbju_columns = {col["name"] for col in inspector.get_columns("kbju_settings")}
+            if "gender" not in kbju_columns:
+                conn.execute(text("ALTER TABLE kbju_settings ADD COLUMN gender VARCHAR"))
+                conn.commit()
+                logger.info("Добавлен столбец kbju_settings.gender")
+        except Exception as e:
+            logger.warning(f"Ошибка при проверке kbju_settings.gender: {e}")
+
 
 @contextmanager
 def get_db_session():
