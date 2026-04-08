@@ -137,7 +137,7 @@ def format_water_progress_block(user_id: str) -> str:
     return f"💧 <b>Вода</b>: {daily_total:.0f}/{recommended:.0f} мл ({percent}%)\n{bar}"
 
 
-def format_today_workouts_block(user_id: str, include_date: bool = True) -> str:
+def format_today_workouts_block(user_id: str, include_date: bool = True, include_exercise_details: bool = False) -> str:
     """Форматирует блок тренировок за сегодня."""
     today = date.today()
     workouts = WorkoutRepository.get_workouts_for_day(user_id, today)
@@ -175,8 +175,31 @@ def format_today_workouts_block(user_id: str, include_date: bool = True) -> str:
     lines = [
         f"🔥 Итого за день: ~{total_calories:.0f} ккал",
         f"👣 Шаги: {steps_count:,} (~{steps_calories:.0f} ккал)".replace(",", " "),
-        f"💪 Упражнения: {exercise_entries} запись (~{exercise_calories:.0f} ккал)",
     ]
+
+    if include_exercise_details:
+        details = []
+        for w in workouts:
+            exercise = normalize_exercise_name(w.exercise)
+            if exercise == "Шаги" or "шаг" in (w.variant or "").lower():
+                continue
+            entry_calories = w.calories or calculate_workout_calories(user_id, w.exercise, w.variant, w.count)
+            if (w.variant or "").lower() in {"минуты", "мин"}:
+                entered_value = f"{w.count:g} мин"
+            else:
+                entered_value = str(int(w.count)) if float(w.count).is_integer() else f"{w.count:g}"
+                if w.variant and w.variant not in {"reps", "Повторения"}:
+                    entered_value = f"{w.variant}: {entered_value}"
+            details.append(f"• {exercise}: {entered_value} (~{entry_calories:.0f} ккал)")
+
+        if details:
+            lines.append("💪 Упражнения:")
+            lines.extend(details)
+            lines.append(f"Итого по упражнениям: {exercise_entries} запись (~{exercise_calories:.0f} ккал)")
+        else:
+            lines.append("💪 Упражнения: 0 записей (~0 ккал)")
+    else:
+        lines.append(f"💪 Упражнения: {exercise_entries} запись (~{exercise_calories:.0f} ккал)")
 
     return "\n".join(lines)
 

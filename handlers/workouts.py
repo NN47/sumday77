@@ -84,7 +84,7 @@ async def show_training_menu(message: Message, state: FSMContext):
     
     # Показываем прогресс тренировок
     from utils.progress_formatters import format_today_workouts_block
-    workouts_text = format_today_workouts_block(user_id, include_date=False)
+    workouts_text = format_today_workouts_block(user_id, include_date=False, include_exercise_details=True)
     
     push_menu_stack(message.bot, training_menu)
     await message.answer(
@@ -164,7 +164,7 @@ async def finish_exercise_without_active_state(message: Message, state: FSMConte
 
     from utils.progress_formatters import format_today_workouts_block
 
-    workouts_text = format_today_workouts_block(user_id, include_date=False)
+    workouts_text = format_today_workouts_block(user_id, include_date=False, include_exercise_details=True)
     push_menu_stack(message.bot, training_menu)
     await message.answer(
         f"✅ Тренировка завершена!\n\n{workouts_text}\n\nВыбери действие:",
@@ -598,7 +598,7 @@ async def confirm_steps(message: Message, state: FSMContext):
 
     await state.clear()
     from utils.progress_formatters import format_today_workouts_block
-    workouts_text = format_today_workouts_block(user_id, include_date=False)
+    workouts_text = format_today_workouts_block(user_id, include_date=False, include_exercise_details=True)
     push_menu_stack(message.bot, training_menu)
     await message.answer(f"✅ Шаги сохранены!\n\n{workouts_text}", reply_markup=training_menu, parse_mode="HTML")
 
@@ -783,7 +783,7 @@ async def handle_count_input(message: Message, state: FSMContext):
         await state.clear()
         from utils.progress_formatters import format_today_workouts_block
 
-        workouts_text = format_today_workouts_block(user_id, include_date=False)
+        workouts_text = format_today_workouts_block(user_id, include_date=False, include_exercise_details=True)
         push_menu_stack(message.bot, training_menu)
         await message.answer(
             f"✅ Тренировка завершена!\n\n{workouts_text}\n\nВыбери действие:",
