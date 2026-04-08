@@ -95,7 +95,13 @@ class GeminiService:
                 contents=text
             )
             return response.text
+        except genai_errors.ServerError as e:
+            logger.warning(f"Gemini временно недоступен (ServerError): {e}")
+            raise
         except Exception as e:
+            if "503" in str(e):
+                logger.warning(f"Gemini временно недоступен (503): {e}")
+                raise
             logger.error(f"Ошибка Gemini при анализе: {e}", exc_info=True)
             return "Сервис анализа временно недоступен, попробуй позже 🙏"
     
@@ -425,4 +431,3 @@ class GeminiService:
 
 # Глобальный экземпляр сервиса
 gemini_service = GeminiService()
-
