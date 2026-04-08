@@ -11,6 +11,11 @@ from database.models import User, Supplement
 
 logger = logging.getLogger(__name__)
 MSK_TZ = ZoneInfo("Europe/Moscow")
+MEAL_TYPE_PREPOSITIONAL = {
+    "завтрак": "завтраке",
+    "обед": "обеде",
+    "ужин": "ужине",
+}
 
 
 class NotificationScheduler:
@@ -46,15 +51,22 @@ class NotificationScheduler:
                 users = session.query(User).all()
                 user_ids = [user.user_id for user in users]
             
-            logger.info(f"Отправка уведомлений о {meal_type} {len(user_ids)} пользователям")
+            meal_type_prepositional = MEAL_TYPE_PREPOSITIONAL.get(meal_type, meal_type)
+            logger.info(
+                f"Отправка уведомлений о {meal_type_prepositional} "
+                f"{len(user_ids)} пользователям"
+            )
             
             # Отправляем уведомления всем пользователям
             tasks = [self.send_notification(user_id, message_text) for user_id in user_ids]
             await asyncio.gather(*tasks, return_exceptions=True)
             
-            logger.info(f"Уведомления о {meal_type} отправлены")
+            logger.info(f"Уведомления о {meal_type_prepositional} отправлены")
         except Exception as e:
-            logger.error(f"Ошибка при отправке уведомлений о {meal_type}: {e}")
+            meal_type_prepositional = MEAL_TYPE_PREPOSITIONAL.get(meal_type, meal_type)
+            logger.error(
+                f"Ошибка при отправке уведомлений о {meal_type_prepositional}: {e}"
+            )
     
     def _get_weekday_name(self, weekday: int) -> str:
         """Преобразует номер дня недели (0=Понедельник) в русское сокращение."""
@@ -77,13 +89,14 @@ class NotificationScheduler:
     
     async def schedule_daily_notification(self, target_time: time, meal_type: str, message_text: str):
         """Планирует ежедневное уведомление на указанное время."""
+        meal_type_prepositional = MEAL_TYPE_PREPOSITIONAL.get(meal_type, meal_type)
         while self.running:
             try:
                 # Вычисляем время до следующего указанного времени
                 wait_seconds = self.calculate_next_time(target_time)
                 
                 logger.info(
-                    f"Следующее уведомление о {meal_type} будет отправлено через "
+                    f"Следующее уведомление о {meal_type_prepositional} будет отправлено через "
                     f"{wait_seconds / 3600:.2f} часов (в {target_time})"
                 )
                 
@@ -97,10 +110,12 @@ class NotificationScheduler:
                 await asyncio.sleep(1)
                 
             except asyncio.CancelledError:
-                logger.info(f"Планировщик уведомлений о {meal_type} остановлен")
+                logger.info(f"Планировщик уведомлений о {meal_type_prepositional} остановлен")
                 break
             except Exception as e:
-                logger.error(f"Ошибка в планировщике уведомлений о {meal_type}: {e}")
+                logger.error(
+                    f"Ошибка в планировщике уведомлений о {meal_type_prepositional}: {e}"
+                )
                 # В случае ошибки ждём минуту перед повтором
                 await asyncio.sleep(60)
     
