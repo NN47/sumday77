@@ -9,6 +9,10 @@ from .note_repository import NoteRepository
 from .activity_analysis_repository import ActivityAnalysisRepository
 from .custom_workout_exercise_repository import CustomWorkoutExerciseRepository
 from .wellbeing_repository import WellbeingRepository
+from .user_repository import UserRepository
+from .analytics_repository import AnalyticsRepository
+from .support_repository import SupportRepository
+from .error_log_repository import ErrorLogRepository
 
 __all__ = [
     "MealRepository",
@@ -21,4 +25,8 @@ __all__ = [
     "ActivityAnalysisRepository",
     "CustomWorkoutExerciseRepository",
     "WellbeingRepository",
+    "UserRepository",
+    "AnalyticsRepository",
+    "SupportRepository",
+    "ErrorLogRepository",
 ]

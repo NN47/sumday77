@@ -57,6 +57,16 @@ def init_db():
                 conn.execute(text("ALTER TABLE users ADD COLUMN target_weight FLOAT"))
                 conn.commit()
                 logger.info("Добавлен столбец users.target_weight")
+            if "created_at" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN created_at DATETIME"))
+                conn.execute(text("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
+                conn.commit()
+                logger.info("Добавлен столбец users.created_at")
+            if "last_seen_at" not in user_columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN last_seen_at DATETIME"))
+                conn.execute(text("UPDATE users SET last_seen_at = CURRENT_TIMESTAMP WHERE last_seen_at IS NULL"))
+                conn.commit()
+                logger.info("Добавлен столбец users.last_seen_at")
         except Exception as e:
             logger.warning(f"Ошибка при проверке users.target_weight: {e}")
 

@@ -12,7 +12,9 @@ from utils.keyboards import (
     settings_menu,
 )
 from database.session import get_db_session
+from database.repositories import SupportRepository, AnalyticsRepository, ErrorLogRepository
 from states.user_states import SupportStates
+from config import ADMIN_ID
 
 logger = logging.getLogger(__name__)
 
@@ -184,9 +186,6 @@ async def handle_support_message(message: Message, state: FSMContext):
         await message.answer("Пожалуйста, введите текст сообщения для поддержки.")
         return
     
-    # ID администратора поддержки
-    SUPPORT_USER_ID = 6065083722
-    
     # Формируем сообщение для администратора
     user_info = f"👤 <b>Пользователь:</b>\n"
     user_info += f"ID: <code>{user_id}</code>\n"
@@ -202,10 +201,18 @@ async def handle_support_message(message: Message, state: FSMContext):
     try:
         # Отправляем сообщение администратору
         await message.bot.send_message(
-            chat_id=SUPPORT_USER_ID,
+            chat_id=ADMIN_ID,
             text=user_info,
             parse_mode="HTML"
         )
+        full_name = " ".join(item for item in [message.from_user.first_name, message.from_user.last_name] if item).strip() or None
+        SupportRepository.create_message(
+            user_id=user_id,
+            username=message.from_user.username,
+            full_name=full_name,
+            message_text=user_text.strip(),
+        )
+        AnalyticsRepository.track_event(user_id, "support_message_sent", section="support")
         
         # Подтверждаем пользователю
         await state.clear()
@@ -216,9 +223,16 @@ async def handle_support_message(message: Message, state: FSMContext):
             reply_markup=settings_menu,
             parse_mode="HTML",
         )
-        logger.info(f"Support message from user {user_id} sent to admin {SUPPORT_USER_ID}")
+        logger.info(f"Support message from user {user_id} sent to admin {ADMIN_ID}")
     except Exception as e:
         logger.error(f"Error sending support message: {e}")
+        ErrorLogRepository.log_error(
+            user_id=user_id,
+            error_type=type(e).__name__,
+            error_message=str(e),
+            module=__name__,
+            function_name="handle_support_message",
+        )
         await message.answer(
             "❌ Произошла ошибка при отправке сообщения. Попробуйте позже.",
             reply_markup=settings_menu,

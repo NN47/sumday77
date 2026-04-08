@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from database.repositories.note_repository import NoteRepository
+from database.repositories.analytics_repository import AnalyticsRepository
 from states.user_states import WellbeingStates
 from utils.calendar_utils import build_notes_calendar_keyboard
 from utils.keyboards import (
@@ -67,6 +68,7 @@ RATING_TEXT_TO_VALUE = {text: value for value, text in RATING_LABELS.items()}
 async def open_notes_section(message: Message, state: FSMContext):
     """Открывает раздел заметок за текущий день."""
     await state.clear()
+    AnalyticsRepository.track_event(str(message.from_user.id), "open_notes", section="notes")
     await show_notes_day(message, str(message.from_user.id), date.today())
 
 

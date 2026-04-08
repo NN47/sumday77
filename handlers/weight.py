@@ -11,7 +11,7 @@ from utils.keyboards import (
     main_menu_button,
     other_day_menu,
 )
-from database.repositories import WeightRepository
+from database.repositories import WeightRepository, AnalyticsRepository
 from states.user_states import WeightStates
 from utils.validators import parse_weight
 from utils.calendar_utils import (
@@ -249,6 +249,7 @@ async def my_weight(message: Message):
     """Показывает сводку по весу пользователя."""
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} viewed weight dashboard")
+    AnalyticsRepository.track_event(user_id, "open_weight", section="weight")
 
     weights = WeightRepository.get_weights(user_id)
 
@@ -582,6 +583,7 @@ async def handle_weight_input(message: Message, state: FSMContext):
             # Создание новой записи
             WeightRepository.save_weight(user_id, str(weight_value), entry_date)
             logger.info(f"User {user_id} saved weight: {weight_value} kg on {entry_date}")
+            AnalyticsRepository.track_event(user_id, "add_weight", section="weight")
             
             await state.clear()
             push_menu_stack(message.bot, weight_menu)

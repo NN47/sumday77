@@ -12,6 +12,7 @@ from utils.keyboards import (
     push_menu_stack,
     quick_actions_inline,
 )
+from database.repositories import AnalyticsRepository
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,7 @@ async def go_main_menu(message: Message, state: FSMContext):
     
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} navigated to main menu")
+    AnalyticsRepository.track_event(user_id, "open_main_menu", section="main")
     
     # Очищаем FSM состояние
     await state.clear()

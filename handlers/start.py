@@ -15,6 +15,7 @@ from utils.progress_formatters import (
 )
 from database.session import get_db_session
 from database.models import User
+from database.repositories import AnalyticsRepository
 from handlers.kbju_test import has_completed_kbju_test, restart_required_kbju_test
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ async def start(message: Message, state: FSMContext):
         await message.answer(_build_recommendations_text(), parse_mode="Markdown")
         return
     logger.info(f"User {user_id} started the bot")
+    AnalyticsRepository.track_event(user_id, "start", section="entry")
     is_new_user = False
     
     # Создаём или обновляем пользователя в БД

@@ -1,0 +1,67 @@
+"""Репозиторий пользователей для админ-аналитики."""
+from datetime import datetime, timedelta, date
+
+from database.models import User
+from database.session import get_db_session
+
+
+class UserRepository:
+    """Методы работы с пользователями и их активностью."""
+
+    @staticmethod
+    def touch_user(user_id: str) -> None:
+        """Создаёт пользователя при первом апдейте и обновляет last_seen_at."""
+        now = datetime.utcnow()
+        with get_db_session() as session:
+            user = session.query(User).filter(User.user_id == user_id).first()
+            if not user:
+                user = User(user_id=user_id, created_at=now, last_seen_at=now)
+                session.add(user)
+                session.flush()
+            else:
+                user.last_seen_at = now
+
+    @staticmethod
+    def count_all() -> int:
+        with get_db_session() as session:
+            return session.query(User).count()
+
+    @staticmethod
+    def count_new_today() -> int:
+        start = datetime.combine(date.today(), datetime.min.time())
+        with get_db_session() as session:
+            return session.query(User).filter(User.created_at >= start).count()
+
+    @staticmethod
+    def count_new_7d() -> int:
+        start = datetime.utcnow() - timedelta(days=7)
+        with get_db_session() as session:
+            return session.query(User).filter(User.created_at >= start).count()
+
+    @staticmethod
+    def count_active_24h() -> int:
+        start = datetime.utcnow() - timedelta(hours=24)
+        with get_db_session() as session:
+            return session.query(User).filter(User.last_seen_at >= start).count()
+
+    @staticmethod
+    def count_active_7d() -> int:
+        start = datetime.utcnow() - timedelta(days=7)
+        with get_db_session() as session:
+            return session.query(User).filter(User.last_seen_at >= start).count()
+
+    @staticmethod
+    def count_active_30d() -> int:
+        start = datetime.utcnow() - timedelta(days=30)
+        with get_db_session() as session:
+            return session.query(User).filter(User.last_seen_at >= start).count()
+
+    @staticmethod
+    def get_recent_active(limit: int = 10) -> list[User]:
+        with get_db_session() as session:
+            return (
+                session.query(User)
+                .order_by(User.last_seen_at.desc())
+                .limit(limit)
+                .all()
+            )

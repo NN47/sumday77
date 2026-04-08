@@ -19,7 +19,7 @@ from utils.keyboards import (
     kbju_edit_type_menu,
     push_menu_stack,
 )
-from database.repositories import MealRepository
+from database.repositories import MealRepository, AnalyticsRepository
 from services.nutrition_service import nutrition_service
 from services.gemini_service import gemini_service
 from utils.validators import parse_date
@@ -64,6 +64,7 @@ async def calories(message: Message, state: FSMContext):
     """Показывает меню КБЖУ."""
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} opened KBJU menu")
+    AnalyticsRepository.track_event(user_id, "open_kbju", section="kbju")
     await state.clear()  # Очищаем FSM состояние
     
     # Показываем прогресс КБЖУ

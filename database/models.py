@@ -21,7 +21,9 @@ class User(Base):
     """Модель пользователя."""
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
-    user_id = Column(String, unique=True, nullable=False)
+    user_id = Column(String, unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     target_weight = Column(Float, nullable=True)
 
 
@@ -201,3 +203,41 @@ class ActivityAnalysisEntry(Base):
     date = Column(Date, default=date.today)
     source = Column(String, nullable=False, default="manual")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UserEvent(Base):
+    """События активности пользователей."""
+    __tablename__ = "user_events"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    event_name = Column(String, nullable=False, index=True)
+    section = Column(String, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class SupportMessage(Base):
+    """Сообщения в поддержку."""
+    __tablename__ = "support_messages"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    username = Column(String, nullable=True)
+    full_name = Column(String, nullable=True)
+    message_text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    is_read = Column(Boolean, default=False, nullable=False, index=True)
+
+
+class ErrorLog(Base):
+    """Логи ошибок в БД."""
+    __tablename__ = "error_logs"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=True, index=True)
+    error_type = Column(String, nullable=False, index=True)
+    error_message = Column(Text, nullable=False)
+    module = Column(String, nullable=True, index=True)
+    function_name = Column(String, nullable=True)
+    traceback_text = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
