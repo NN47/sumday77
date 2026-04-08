@@ -444,6 +444,7 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
 {weight_summary}{comparison_summary}
 """
 
+    daily_draft = ""
     if days_count == 1:
         # 🏋️ Активность
         today_training_items = [item for item in today_workouts_by_type.values() if item["type"] != "steps" and item["value"] > 0]
@@ -584,7 +585,7 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
             "",
             *focus_lines,
         ]
-        return "\n".join(report_lines)
+        daily_draft = "\n".join(report_lines)
     
     # 🔹 Промпт для бота-ассистента
     gender_instruction = (
@@ -615,6 +616,9 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
 
 Данные пользователя за период:
 {summary}
+
+Черновик сводки за день (для ориентира по фактам; перепиши человеческим языком и добавь персонализированный анализ):
+{daily_draft if daily_draft else "н/д"}
 
 Структурированный input для блока "Тренировки" (JSON, используй как главный источник для этого блока):
 {json.dumps(workout_ai_input, ensure_ascii=False, indent=2)}
