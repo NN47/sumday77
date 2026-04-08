@@ -219,18 +219,79 @@ class GeminiService:
             
             # Парсим JSON
             try:
-                return json.loads(raw)
+                parsed = json.loads(raw)
+                return self._normalize_kbju_payload(parsed)
             except json.JSONDecodeError:
                 # Если Gemini добавил лишний текст — вырежем JSON
                 start = raw.find("{")
                 end = raw.rfind("}")
                 if start != -1 and end != -1 and end > start:
                     snippet = raw[start : end + 1]
-                    return json.loads(snippet)
+                    parsed = json.loads(snippet)
+                    return self._normalize_kbju_payload(parsed)
                 raise
         except Exception as e:
             logger.error(f"Ошибка Gemini (КБЖУ): {e}", exc_info=True)
             return None
+
+    def _normalize_kbju_payload(self, payload: dict) -> Optional[dict]:
+        """Нормализует ответ Gemini к единому формату с total и items."""
+        if not isinstance(payload, dict):
+            return None
+
+        def safe_float(value) -> float:
+            try:
+                if value is None:
+                    return 0.0
+                return float(value)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def get_num(source: dict, *keys: str) -> float:
+            for key in keys:
+                if key in source:
+                    return safe_float(source.get(key))
+            return 0.0
+
+        raw_items = payload.get("items")
+        items = raw_items if isinstance(raw_items, list) else []
+        normalized_items = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            normalized_items.append(
+                {
+                    "name": item.get("name") or item.get("title") or "продукт",
+                    "grams": get_num(item, "grams", "weight_g", "weight"),
+                    "kcal": get_num(item, "kcal", "calories"),
+                    "protein": get_num(item, "protein", "protein_g"),
+                    "fat": get_num(item, "fat", "fat_g"),
+                    "carbs": get_num(item, "carbs", "carbohydrates", "carbohydrates_g"),
+                }
+            )
+
+        raw_total = payload.get("total")
+        total_dict = raw_total if isinstance(raw_total, dict) else {}
+        total = {
+            "kcal": get_num(total_dict, "kcal", "calories"),
+            "protein": get_num(total_dict, "protein", "protein_g"),
+            "fat": get_num(total_dict, "fat", "fat_g"),
+            "carbs": get_num(total_dict, "carbs", "carbohydrates", "carbohydrates_g"),
+        }
+
+        # Если total не пришел или пустой — считаем из items
+        if not any(total.values()) and normalized_items:
+            total = {
+                "kcal": sum(i["kcal"] for i in normalized_items),
+                "protein": sum(i["protein"] for i in normalized_items),
+                "fat": sum(i["fat"] for i in normalized_items),
+                "carbs": sum(i["carbs"] for i in normalized_items),
+            }
+
+        if not normalized_items and not any(total.values()):
+            return None
+
+        return {"items": normalized_items, "total": total}
     
     def estimate_kbju_from_photo(self, image_bytes: bytes) -> Optional[dict]:
         """
