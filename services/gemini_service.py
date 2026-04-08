@@ -5,6 +5,7 @@ from typing import Optional
 from google import genai
 from google.genai import errors as genai_errors
 from config import GEMINI_API_KEY, GEMINI_API_KEY2, GEMINI_API_KEY3
+from database.repositories import GeminiRepository
 
 logger = logging.getLogger(__name__)
 
@@ -16,18 +17,45 @@ class GeminiService:
         if not GEMINI_API_KEY:
             raise RuntimeError("GEMINI_API_KEY не задан в конфигурации")
         
-        # Список ключей для переключения
-        self.api_keys = [GEMINI_API_KEY]
+        # Список ключей для переключения (имена стабильны для БД)
+        self.account_configs = [
+            {"account_name": "GEMINI_API_KEY", "api_key": GEMINI_API_KEY, "priority_order": 1}
+        ]
         if GEMINI_API_KEY2:
-            self.api_keys.append(GEMINI_API_KEY2)
+            self.account_configs.append(
+                {"account_name": "GEMINI_API_KEY2", "api_key": GEMINI_API_KEY2, "priority_order": 2}
+            )
             logger.info("✅ Резервный ключ Gemini API (GEMINI_API_KEY2) найден")
         if GEMINI_API_KEY3:
-            self.api_keys.append(GEMINI_API_KEY3)
+            self.account_configs.append(
+                {"account_name": "GEMINI_API_KEY3", "api_key": GEMINI_API_KEY3, "priority_order": 3}
+            )
             logger.info("✅ Третий резервный ключ Gemini API (GEMINI_API_KEY3) найден")
-        
-        self.current_key_index = 0
+
+        self.api_key_by_account_name = {cfg["account_name"]: cfg["api_key"] for cfg in self.account_configs}
+        self._accounts_synced = False
+
         self.model = "gemini-2.5-flash"
-        self.client = genai.Client(api_key=self.api_keys[self.current_key_index])
+        self.client = genai.Client(api_key=self.account_configs[0]["api_key"])
+
+    def _ensure_accounts_synced(self):
+        if self._accounts_synced:
+            return
+        GeminiRepository.sync_accounts(self.account_configs)
+        self._accounts_synced = True
+
+    def _build_client_for_active_account(self):
+        self._ensure_accounts_synced()
+        active_account = GeminiRepository.get_active_account()
+        if not active_account:
+            GeminiRepository.sync_accounts(self.account_configs)
+            active_account = GeminiRepository.get_active_account()
+        if not active_account:
+            raise RuntimeError("Не удалось определить активный Gemini-аккаунт")
+        api_key = self.api_key_by_account_name.get(active_account.account_name)
+        if not api_key:
+            raise RuntimeError(f"API ключ для аккаунта {active_account.account_name} не найден в окружении")
+        return genai.Client(api_key=api_key)
     
     def _is_quota_error(self, error: Exception) -> bool:
         """Проверяет, является ли ошибка ошибкой квоты/лимита."""
@@ -50,34 +78,54 @@ class GeminiService:
         return any(indicator in error_str for indicator in quota_indicators) or \
                error_type in ["ResourceExhausted", "RateLimitError", "QuotaExceeded"]
     
-    def _switch_to_next_key(self):
-        """Переключается на следующий доступный ключ."""
-        if len(self.api_keys) <= 1:
-            logger.warning("⚠️ Нет резервных ключей для переключения")
+    def _switch_to_next_account(self, current_account_id: int) -> bool:
+        """Переключается на следующий аккаунт и сохраняет активный в БД."""
+        if len(self.account_configs) <= 1:
+            logger.warning("⚠️ Нет резервных Gemini-аккаунтов для переключения")
             return False
-        
-        self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
-        self.client = genai.Client(api_key=self.api_keys[self.current_key_index])
-        logger.warning(f"🔄 Переключился на резервный ключ Gemini API (ключ #{self.current_key_index + 1})")
+        next_account = GeminiRepository.switch_to_next_account(current_account_id)
+        if not next_account:
+            return False
+        self.client = self._build_client_for_active_account()
+        logger.warning("🔄 Переключился на резервный Gemini-аккаунт: %s", next_account.account_name)
         return True
     
     def _make_request(self, func, *args, **kwargs):
         """Выполняет запрос с автоматическим переключением ключей при ошибках квоты."""
-        max_attempts = len(self.api_keys)
+        max_attempts = len(self.account_configs)
         last_error = None
         
         for attempt in range(max_attempts):
+            self._ensure_accounts_synced()
+            active_account = GeminiRepository.get_active_account()
+            if not active_account:
+                raise RuntimeError("Нет активного Gemini-аккаунта в БД")
+            self.client = self._build_client_for_active_account()
             try:
-                return func(*args, **kwargs)
+                response = func(*args, **kwargs)
+                GeminiRepository.increment_account_stats(
+                    active_account.id,
+                    status="success",
+                    model_name=self.model,
+                )
+                return response
             except Exception as e:
                 last_error = e
+                is_quota = self._is_quota_error(e)
+                status = "limit_exceeded" if is_quota else "error"
+                GeminiRepository.increment_account_stats(
+                    active_account.id,
+                    status=status,
+                    model_name=self.model,
+                    error_message=str(e),
+                )
                 
                 # Если это ошибка квоты и есть резервные ключи
-                if self._is_quota_error(e) and len(self.api_keys) > 1:
-                    logger.warning(f"⚠️ Ошибка квоты на ключе #{self.current_key_index + 1}: {e}")
+                if is_quota and len(self.account_configs) > 1:
+                    logger.warning(f"⚠️ Ошибка квоты на аккаунте {active_account.account_name}: {e}")
                     
-                    # Переключаемся на следующий ключ
-                    if self._switch_to_next_key():
+                    # Переключаемся на следующий аккаунт
+                    if self._switch_to_next_account(active_account.id):
                         continue  # Пробуем снова с новым ключом
                 
                 # Если это не ошибка квоты или нет резервных ключей - пробрасываем ошибку

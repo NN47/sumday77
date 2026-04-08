@@ -13,6 +13,7 @@ from .user_repository import UserRepository
 from .analytics_repository import AnalyticsRepository
 from .support_repository import SupportRepository
 from .error_log_repository import ErrorLogRepository
+from .gemini_repository import GeminiRepository
 
 __all__ = [
     "MealRepository",
@@ -29,4 +30,5 @@ __all__ = [
     "AnalyticsRepository",
     "SupportRepository",
     "ErrorLogRepository",
+    "GeminiRepository",
 ]
