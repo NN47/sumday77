@@ -14,6 +14,8 @@ from .models import (
     WaterEntry,
     WellbeingEntry,
     ActivityAnalysisEntry,
+    GeminiAccount,
+    GeminiRequestLog,
 )
 
 __all__ = [
@@ -34,4 +36,6 @@ __all__ = [
     "WaterEntry",
     "WellbeingEntry",
     "ActivityAnalysisEntry",
+    "GeminiAccount",
+    "GeminiRequestLog",
 ]

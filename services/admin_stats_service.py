@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from database.repositories import UserRepository, AnalyticsRepository, ErrorLogRepository
+from database.repositories import UserRepository, AnalyticsRepository, ErrorLogRepository, GeminiRepository
 
 
 NAVIGATION_EVENTS = ["open_main_menu", "open_kbju", "open_weight", "open_activity", "open_notes"]
@@ -148,3 +148,7 @@ class AdminStatsService:
             "users": rows,
             "top_users": AnalyticsRepository.get_top_users(days=7, limit=10),
         }
+
+    @staticmethod
+    def get_gemini_metrics() -> dict:
+        return GeminiRepository.get_metrics()

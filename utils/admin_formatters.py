@@ -208,3 +208,59 @@ def format_users(metrics: dict) -> str:
         for user_id, count in top_users:
             lines.append(f"• {user_id}: <b>{count}</b>")
     return "\n".join(lines)
+
+
+def format_gemini(metrics: dict) -> str:
+    lines = ["🤖 <b>Gemini / AI</b>", ""]
+
+    active = metrics.get("active_account")
+    active_name = active.account_name if active else "—"
+    lines.extend(
+        [
+            f"• Активный аккаунт: <b>{active_name}</b>",
+            f"• Запросов сегодня: <b>{metrics.get('total_requests_today', 0)}</b>",
+            f"• Запросов за всё время: <b>{metrics.get('total_requests_all_time', 0)}</b>",
+            f"• Переключений по лимиту: <b>{metrics.get('total_limit_switches', 0)}</b>",
+            "",
+            "📚 <b>Аккаунты</b>",
+        ]
+    )
+
+    accounts = metrics.get("accounts", [])
+    if not accounts:
+        lines.append("• Нет настроенных аккаунтов")
+    else:
+        for account in accounts:
+            active_mark = " ✅ active" if account.is_active else ""
+            lines.extend(
+                [
+                    f"• <b>{account.account_name}</b>{active_mark}",
+                    f"  ключ: {account.api_key_masked}",
+                    f"  total/success/error: <b>{account.total_requests}</b> / "
+                    f"<b>{account.success_requests}</b> / <b>{account.error_requests}</b>",
+                    f"  limit_switches: <b>{account.limit_switches}</b>",
+                    f"  last_request_at: {fmt_dt(account.last_request_at)}",
+                    f"  last_error_at: {fmt_dt(account.last_error_at)}",
+                    f"  last_error_message: {(account.last_error_message or '—')[:180]}",
+                ]
+            )
+
+    lines.extend(["", "🕘 <b>Последние 10 событий</b>"])
+    events = metrics.get("recent_events", [])
+    if not events:
+        lines.append("• Пока нет событий")
+    else:
+        status_map = {
+            "success": "✅ success",
+            "error": "❌ error",
+            "limit_exceeded": "🔁 limit_exceeded",
+        }
+        for event in events:
+            label = status_map.get(event["status"], event["status"])
+            details = (event.get("error_message") or "").strip()
+            suffix = f" — {details[:120]}" if details else ""
+            lines.append(
+                f"• {fmt_dt(event.get('created_at'))} — {event.get('account_name')} — {label}{suffix}"
+            )
+
+    return "\n".join(lines)

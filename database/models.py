@@ -248,3 +248,35 @@ class ErrorLog(Base):
     module = Column(String, nullable=True, index=True)
     function_name = Column(String, nullable=True)
     traceback_text = Column(Text, nullable=True)
+
+
+class GeminiAccount(Base):
+    """Статистика и состояние Gemini-аккаунтов."""
+    __tablename__ = "gemini_accounts"
+
+    id = Column(Integer, primary_key=True)
+    account_name = Column(String, nullable=False, unique=True, index=True)
+    api_key_masked = Column(String, nullable=False)
+    priority_order = Column(Integer, nullable=False, index=True)
+    is_active = Column(Boolean, default=False, nullable=False, index=True)
+    total_requests = Column(Integer, default=0, nullable=False)
+    success_requests = Column(Integer, default=0, nullable=False)
+    error_requests = Column(Integer, default=0, nullable=False)
+    limit_switches = Column(Integer, default=0, nullable=False)
+    last_request_at = Column(DateTime, nullable=True)
+    last_error_at = Column(DateTime, nullable=True)
+    last_error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class GeminiRequestLog(Base):
+    """Лог отдельных запросов к Gemini."""
+    __tablename__ = "gemini_request_logs"
+
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, nullable=False, index=True)
+    status = Column(String, nullable=False, index=True)  # success | error | limit_exceeded
+    model_name = Column(String, nullable=True, index=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
