@@ -50,25 +50,34 @@ def init_db():
         except Exception as e:
             logger.warning(f"Ошибка при проверке workouts.calories: {e}")
 
-        # users.target_weight
+        # users.target_weight / users.created_at / users.last_seen_at
         try:
             user_columns = {col["name"] for col in inspector.get_columns("users")}
-            if "target_weight" not in user_columns:
-                conn.execute(text("ALTER TABLE users ADD COLUMN target_weight FLOAT"))
-                conn.commit()
-                logger.info("Добавлен столбец users.target_weight")
-            if "created_at" not in user_columns:
-                conn.execute(text("ALTER TABLE users ADD COLUMN created_at DATETIME"))
-                conn.execute(text("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
-                conn.commit()
-                logger.info("Добавлен столбец users.created_at")
-            if "last_seen_at" not in user_columns:
-                conn.execute(text("ALTER TABLE users ADD COLUMN last_seen_at DATETIME"))
-                conn.execute(text("UPDATE users SET last_seen_at = CURRENT_TIMESTAMP WHERE last_seen_at IS NULL"))
-                conn.commit()
-                logger.info("Добавлен столбец users.last_seen_at")
         except Exception as e:
-            logger.warning(f"Ошибка при проверке users.target_weight: {e}")
+            logger.warning(f"Ошибка при чтении схемы users: {e}")
+            user_columns = set()
+
+        def _add_users_column_if_missing(column_name: str, sql_type: str, fill_now: bool = False) -> None:
+            if column_name in user_columns:
+                return
+            try:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {sql_type}"))
+                if fill_now:
+                    conn.execute(
+                        text(
+                            f"UPDATE users SET {column_name} = CURRENT_TIMESTAMP "
+                            f"WHERE {column_name} IS NULL"
+                        )
+                    )
+                conn.commit()
+                logger.info(f"Добавлен столбец users.{column_name}")
+            except Exception as e:
+                logger.warning(f"Ошибка при добавлении users.{column_name}: {e}")
+
+        _add_users_column_if_missing("target_weight", "FLOAT")
+        # DATETIME не поддерживается в PostgreSQL, поэтому используем TIMESTAMP.
+        _add_users_column_if_missing("created_at", "TIMESTAMP", fill_now=True)
+        _add_users_column_if_missing("last_seen_at", "TIMESTAMP", fill_now=True)
 
 
 @contextmanager
