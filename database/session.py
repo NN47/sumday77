@@ -80,6 +80,29 @@ def init_db():
         _add_users_column_if_missing("last_seen_at", "TIMESTAMP", fill_now=True)
 
 
+        # error_logs new schema fields
+        try:
+            error_columns = {col["name"] for col in inspector.get_columns("error_logs")}
+        except Exception as e:
+            logger.warning(f"Ошибка при чтении схемы error_logs: {e}")
+            error_columns = set()
+
+        def _add_error_log_column_if_missing(column_name: str, sql_type: str) -> None:
+            if column_name in error_columns:
+                return
+            try:
+                conn.execute(text(f"ALTER TABLE error_logs ADD COLUMN {column_name} {sql_type}"))
+                conn.commit()
+                logger.info(f"Добавлен столбец error_logs.{column_name}")
+            except Exception as e:
+                logger.warning(f"Ошибка при добавлении error_logs.{column_name}: {e}")
+
+        _add_error_log_column_if_missing("source", "VARCHAR")
+        _add_error_log_column_if_missing("message", "TEXT")
+        _add_error_log_column_if_missing("context", "VARCHAR")
+        _add_error_log_column_if_missing("severity", "VARCHAR")
+
+
 @contextmanager
 def get_db_session():
     """

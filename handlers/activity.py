@@ -2,7 +2,6 @@
 import logging
 import re
 import json
-import traceback
 from datetime import date, timedelta
 from collections import Counter
 from aiogram import Router
@@ -16,9 +15,10 @@ from utils.calendar_utils import (
     build_activity_analysis_day_actions_keyboard,
 )
 from database.repositories.activity_analysis_repository import ActivityAnalysisRepository
-from database.repositories import AnalyticsRepository, ErrorLogRepository
+from database.repositories import AnalyticsRepository
 from states.user_states import ActivityAnalysisStates
 from services.gemini_service import gemini_service
+from services.error_logging_service import log_app_error
 
 logger = logging.getLogger(__name__)
 
@@ -596,13 +596,12 @@ async def add_activity_analysis_from_calendar(callback: CallbackQuery, state: FS
         if _is_gemini_temporarily_unavailable_error(e):
             await callback.message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT)
             return
-        ErrorLogRepository.log_error(
+        log_app_error(
+            source="gemini",
+            error=e,
             user_id=user_id,
-            error_type=type(e).__name__,
-            error_message=str(e),
-            module=__name__,
-            function_name="add_activity_analysis_from_calendar",
-            traceback_text=traceback.format_exc(),
+            context="daily_analysis",
+            extra={"handler": "add_activity_analysis_from_calendar"},
         )
         await callback.message.answer("⚠️ Не удалось сгенерировать анализ дня. Попробуй позже.")
         return
@@ -698,13 +697,12 @@ async def analyze_activity_day(message: Message):
             push_menu_stack(message.bot, activity_analysis_menu)
             await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
             return
-        ErrorLogRepository.log_error(
+        log_app_error(
+            source="gemini",
+            error=e,
             user_id=user_id,
-            error_type=type(e).__name__,
-            error_message=str(e),
-            module=__name__,
-            function_name="analyze_activity_day",
-            traceback_text=traceback.format_exc(),
+            context="daily_analysis",
+            extra={"handler": "analyze_activity_day"},
         )
         await message.answer("⚠️ Не удалось сгенерировать анализ дня. Попробуй позже.")
         return
@@ -725,7 +723,7 @@ async def analyze_activity_week(message: Message):
             push_menu_stack(message.bot, activity_analysis_menu)
             await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
             return
-        logger.exception("Ошибка при генерации анализа за неделю")
+        log_app_error(source="gemini", error=e, user_id=user_id, context="weekly_analysis")
         push_menu_stack(message.bot, activity_analysis_menu)
         await message.answer("⚠️ Не удалось сгенерировать анализ недели. Попробуй позже.", reply_markup=activity_analysis_menu)
         return
@@ -746,7 +744,7 @@ async def analyze_activity_month(message: Message):
             push_menu_stack(message.bot, activity_analysis_menu)
             await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
             return
-        logger.exception("Ошибка при генерации анализа за месяц")
+        log_app_error(source="gemini", error=e, user_id=user_id, context="monthly_analysis")
         push_menu_stack(message.bot, activity_analysis_menu)
         await message.answer("⚠️ Не удалось сгенерировать анализ месяца. Попробуй позже.", reply_markup=activity_analysis_menu)
         return

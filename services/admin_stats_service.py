@@ -107,11 +107,13 @@ class AdminStatsService:
     @staticmethod
     def get_errors_metrics() -> dict:
         recent = ErrorLogRepository.get_recent(limit=1)
+        daily = AnalyticsRepository.count_daily_analysis_metrics_today()
         return {
             "today": ErrorLogRepository.count_today(),
             "week": ErrorLogRepository.count_7d(),
             "grouped": ErrorLogRepository.get_grouped_7d(),
             "last_error": recent[0] if recent else None,
+            "daily_analysis_failed": daily["daily_analysis_failed"],
         }
 
     @staticmethod

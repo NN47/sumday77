@@ -234,10 +234,16 @@ class ErrorLog(Base):
     __tablename__ = "error_logs"
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(String, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    source = Column(String, nullable=True, index=True)
     error_type = Column(String, nullable=False, index=True)
-    error_message = Column(Text, nullable=False)
+    message = Column(Text, nullable=True)
+    user_id = Column(String, nullable=True, index=True)
+    context = Column(String, nullable=True, index=True)
+    severity = Column(String, nullable=True, index=True)
+
+    # Backward-compatible поля (старый формат)
+    error_message = Column(Text, nullable=True)
     module = Column(String, nullable=True, index=True)
     function_name = Column(String, nullable=True)
     traceback_text = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

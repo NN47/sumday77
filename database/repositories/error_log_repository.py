@@ -1,4 +1,6 @@
 """Репозиторий ошибок приложения."""
+from __future__ import annotations
+
 from datetime import datetime, timedelta, date
 
 from sqlalchemy import func
@@ -12,22 +14,37 @@ class ErrorLogRepository:
 
     @staticmethod
     def log_error(
-        error_type: str,
-        error_message: str,
+        source: str | None = None,
+        error_type: str = "Exception",
+        message: str | None = None,
         user_id: str | None = None,
+        context: str | None = None,
+        severity: str | None = "error",
+        traceback_text: str | None = None,
+        extra: dict | None = None,
+        # backward compatible kwargs:
+        error_message: str | None = None,
         module: str | None = None,
         function_name: str | None = None,
-        traceback_text: str | None = None,
     ) -> None:
+        resolved_source = source or module or "app"
+        resolved_context = context or function_name
+        resolved_message = message or error_message or ""
+
         with get_db_session() as session:
             session.add(
                 ErrorLog(
-                    user_id=user_id,
+                    source=resolved_source,
                     error_type=error_type,
-                    error_message=error_message,
-                    module=module,
-                    function_name=function_name,
+                    message=resolved_message,
+                    user_id=user_id,
+                    context=resolved_context,
+                    severity=severity,
                     traceback_text=traceback_text,
+                    # old fields for compatibility
+                    error_message=resolved_message,
+                    module=module or resolved_source,
+                    function_name=function_name or resolved_context,
                 )
             )
 
@@ -49,31 +66,18 @@ class ErrorLogRepository:
             return session.query(ErrorLog).order_by(ErrorLog.created_at.desc()).limit(limit).all()
 
     @staticmethod
-    def get_recent_daily_analysis_errors(limit: int = 5) -> list[ErrorLog]:
-        with get_db_session() as session:
-            return (
-                session.query(ErrorLog)
-                .filter(
-                    ErrorLog.function_name.in_(["analyze_activity_day", "add_activity_analysis_from_calendar"])
-                )
-                .order_by(ErrorLog.created_at.desc())
-                .limit(limit)
-                .all()
-            )
-
-    @staticmethod
-    def get_grouped_7d() -> list[tuple[str, int, datetime | None]]:
+    def get_grouped_7d() -> list[tuple[str, str, int]]:
         start = datetime.utcnow() - timedelta(days=7)
         with get_db_session() as session:
             rows = (
                 session.query(
+                    func.coalesce(ErrorLog.source, ErrorLog.module, "app").label("src"),
                     ErrorLog.error_type,
                     func.count(ErrorLog.id).label("cnt"),
-                    func.max(ErrorLog.created_at).label("last_seen"),
                 )
                 .filter(ErrorLog.created_at >= start)
-                .group_by(ErrorLog.error_type)
+                .group_by("src", ErrorLog.error_type)
                 .order_by(func.count(ErrorLog.id).desc())
                 .all()
             )
-        return [(str(error_type), int(cnt), last_seen) for error_type, cnt, last_seen in rows]
+        return [(str(source), str(error_type), int(cnt)) for source, error_type, cnt in rows]

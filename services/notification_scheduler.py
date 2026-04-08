@@ -8,6 +8,7 @@ from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from database.session import get_db_session
 from database.models import User, Supplement
+from services.error_logging_service import log_app_error
 
 logger = logging.getLogger(__name__)
 MSK_TZ = ZoneInfo("Europe/Moscow")
@@ -42,7 +43,13 @@ class NotificationScheduler:
             )
             logger.info(f"Уведомление отправлено пользователю {user_id}")
         except Exception as e:
-            logger.error(f"Ошибка при отправке уведомления пользователю {user_id}: {e}")
+            log_app_error(
+                source="telegram",
+                error=e,
+                user_id=str(user_id),
+                context="send_message",
+                extra={"message_preview": message[:80]},
+            )
     
     async def send_meal_notifications(self, meal_type: str, message_text: str):
         """Отправляет уведомления о приёме пищи всем пользователям."""

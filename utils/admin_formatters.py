@@ -129,19 +129,46 @@ def format_retention(points: list) -> str:
 
 
 def format_errors(metrics: dict) -> str:
-    if metrics["week"] == 0:
+    week_errors = metrics["week"]
+    analysis_failed = metrics.get("daily_analysis_failed", 0)
+
+    if week_errors == 0 and analysis_failed == 0:
         return "⚠️ <b>Ошибки</b>\n\n✅ Ошибок нет"
+
+    if week_errors == 0 and analysis_failed > 0:
+        return (
+            "⚠️ <b>Ошибки</b>\n\n"
+            "⚠️ Есть сбои анализа, но нет записей в журнале ошибок\n"
+            f"• Сбоев анализа сегодня: <b>{analysis_failed}</b>"
+        )
 
     lines = [
         "⚠️ <b>Ошибки</b>",
         "",
         f"• Сегодня: <b>{metrics['today']}</b>",
-        f"• За 7 дней: <b>{metrics['week']}</b>",
+        f"• За 7 дней: <b>{week_errors}</b>",
         "",
-        "Группировка по типам:",
+        "Последние:",
     ]
-    for error_type, count, last_seen in metrics["grouped"]:
-        lines.append(f"• {error_type}: <b>{count}</b> (последний раз: {fmt_dt(last_seen)})")
+
+    for source, error_type, count in metrics["grouped"]:
+        lines.append(f"• {source} / {error_type} — <b>{count}</b>")
+
+    last_error = metrics.get("last_error")
+    if last_error:
+        last_message = last_error.message or last_error.error_message or "—"
+        last_source = last_error.source or last_error.module or "app"
+        lines.extend(
+            [
+                "",
+                "🕘 Последняя ошибка:",
+                (
+                    f"• {fmt_dt(last_error.created_at)} — {last_source} — "
+                    f"{last_error.error_type} — {last_message[:180]}"
+                ),
+            ]
+        )
+
     return "\n".join(lines)
 
 
