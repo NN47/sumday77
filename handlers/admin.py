@@ -1,18 +1,22 @@
 """Закрытый admin-раздел внутри Telegram-бота."""
 from __future__ import annotations
 
-from datetime import datetime
-
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import ADMIN_ID
-from database.repositories import (
-    UserRepository,
-    AnalyticsRepository,
-    SupportRepository,
-    ErrorLogRepository,
+from database.repositories import SupportRepository
+from services.admin_stats_service import AdminStatsService
+from utils.admin_formatters import (
+    format_dashboard,
+    format_today,
+    format_funnel,
+    format_retention,
+    format_errors,
+    format_recent_events,
+    format_users,
+    fmt_dt,
 )
 
 router = Router()
@@ -25,13 +29,14 @@ def _is_admin_telegram_id(user_id: int) -> bool:
 def _admin_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📊 Общая статистика", callback_data="admin:stats")],
+            [InlineKeyboardButton(text="📊 Дашборд", callback_data="admin:dashboard")],
             [InlineKeyboardButton(text="📅 Сегодня", callback_data="admin:today")],
+            [InlineKeyboardButton(text="📉 Воронка", callback_data="admin:funnel")],
+            [InlineKeyboardButton(text="🔁 Retention", callback_data="admin:retention")],
             [InlineKeyboardButton(text="🧠 Анализ дня", callback_data="admin:daily")],
-            [InlineKeyboardButton(text="⚠️ Ошибки", callback_data="admin:errors")],
             [InlineKeyboardButton(text="👤 Пользователи", callback_data="admin:users")],
-            [InlineKeyboardButton(text="💬 Поддержка", callback_data="admin:support")],
-            [InlineKeyboardButton(text="🔍 Последние события", callback_data="admin:events")],
+            [InlineKeyboardButton(text="⚠️ Ошибки", callback_data="admin:errors")],
+            [InlineKeyboardButton(text="🕘 Последние события", callback_data="admin:events")],
             [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin:refresh")],
         ]
     )
@@ -42,14 +47,6 @@ def _back_kb(extra: list[InlineKeyboardButton] | None = None) -> InlineKeyboardM
     if extra:
         row.extend(extra)
     return InlineKeyboardMarkup(inline_keyboard=[row])
-
-
-def _fmt_dt(value) -> str:
-    if not value:
-        return "—"
-    if isinstance(value, datetime):
-        return value.strftime("%d.%m %H:%M")
-    return str(value)
 
 
 async def _edit_or_answer(message: Message, text: str, reply_markup: InlineKeyboardMarkup) -> None:
@@ -79,93 +76,47 @@ async def admin_callbacks(callback: CallbackQuery):
         await _edit_or_answer(callback.message, "🔐 Админ раздел", _admin_menu_kb())
         return
 
-    if action == "stats":
-        text = (
-            "📊 Общая статистика\n\n"
-            f"• Всего пользователей: <b>{UserRepository.count_all()}</b>\n"
-            f"• Активные 24ч: <b>{UserRepository.count_active_24h()}</b>\n"
-            f"• Активные 7д: <b>{UserRepository.count_active_7d()}</b>\n"
-            f"• Активные 30д: <b>{UserRepository.count_active_30d()}</b>\n\n"
-            f"• Новые сегодня: <b>{UserRepository.count_new_today()}</b>\n"
-            f"• Новые 7д: <b>{UserRepository.count_new_7d()}</b>"
-        )
+    if action == "dashboard":
+        text = format_dashboard(AdminStatsService.get_dashboard_metrics())
         await _edit_or_answer(callback.message, text, _back_kb())
         return
 
     if action == "today":
-        events = AnalyticsRepository.count_events_today_bulk([
-            "open_kbju", "add_meal", "open_weight", "add_weight", "open_activity", "add_steps", "add_workout",
-            "open_notes", "request_daily_analysis",
-        ])
-        text = (
-            "📅 Сегодня\n\n"
-            f"• Активные сегодня: <b>{UserRepository.count_active_24h()}</b>\n\n"
-            f"open_kbju: <b>{events['open_kbju']}</b>\n"
-            f"add_meal: <b>{events['add_meal']}</b>\n"
-            f"open_weight: <b>{events['open_weight']}</b>\n"
-            f"add_weight: <b>{events['add_weight']}</b>\n"
-            f"open_activity: <b>{events['open_activity']}</b>\n"
-            f"add_steps: <b>{events['add_steps']}</b>\n"
-            f"add_workout: <b>{events['add_workout']}</b>\n"
-            f"open_notes: <b>{events['open_notes']}</b>\n"
-            f"request_daily_analysis: <b>{events['request_daily_analysis']}</b>"
-        )
+        text = format_today(AdminStatsService.get_today_metrics())
+        await _edit_or_answer(callback.message, text, _back_kb())
+        return
+
+    if action == "funnel":
+        text = format_funnel(AdminStatsService.get_funnel_metrics())
+        await _edit_or_answer(callback.message, text, _back_kb())
+        return
+
+    if action == "retention":
+        text = format_retention(AdminStatsService.get_retention_metrics())
         await _edit_or_answer(callback.message, text, _back_kb())
         return
 
     if action == "daily":
-        started = AnalyticsRepository.count_events_period("daily_analysis_started", 7)
-        sent = AnalyticsRepository.count_events_period("daily_analysis_sent", 7)
-        failed = AnalyticsRepository.count_events_period("daily_analysis_failed", 7)
-        total = sent + failed
-        rate = (sent * 100 / total) if total else 0
-        recent_errors = ErrorLogRepository.get_recent_daily_analysis_errors(limit=5)
+        dashboard = AdminStatsService.get_dashboard_metrics()
         lines = [
-            "🧠 Анализ дня (7д)\n",
-            f"started: <b>{started}</b>",
-            f"sent: <b>{sent}</b>",
-            f"failed: <b>{failed}</b>",
-            f"success rate: <b>{rate:.1f}%</b>",
-            "\nПоследние ошибки:",
+            "🧠 <b>Анализ дня (сегодня)</b>",
+            "",
+            f"• started: <b>{dashboard['daily_analysis_started']}</b>",
+            f"• sent: <b>{dashboard['daily_analysis_sent']}</b>",
+            f"• failed: <b>{dashboard['daily_analysis_failed']}</b>",
+            f"• success rate: <b>{dashboard['daily_analysis_success_rate']:.1f}%</b>",
         ]
-        if recent_errors:
-            for item in recent_errors:
-                lines.append(f"• {_fmt_dt(item.created_at)} | {item.user_id or '-'} | {item.error_type}")
-        else:
-            lines.append("• Нет записей")
         await _edit_or_answer(callback.message, "\n".join(lines), _back_kb())
         return
 
     if action == "errors":
-        recent = ErrorLogRepository.get_recent(limit=10)
-        lines = [
-            "⚠️ Ошибки\n",
-            f"• today: <b>{ErrorLogRepository.count_today()}</b>",
-            f"• 7d: <b>{ErrorLogRepository.count_7d()}</b>",
-            "\nПоследние 10:",
-        ]
-        for item in recent:
-            lines.append(
-                f"• {_fmt_dt(item.created_at)} | uid={item.user_id or '-'} | {item.error_type} | {item.module or '-'}"
-            )
-        await _edit_or_answer(callback.message, "\n".join(lines), _back_kb())
+        text = format_errors(AdminStatsService.get_errors_metrics())
+        await _edit_or_answer(callback.message, text, _back_kb())
         return
 
     if action == "users":
-        recent = UserRepository.get_recent_active(limit=10)
-        top = AnalyticsRepository.get_top_users(days=7, limit=10)
-        lines = [
-            "👤 Пользователи\n",
-            f"• new today: <b>{UserRepository.count_new_today()}</b>",
-            f"• new 7d: <b>{UserRepository.count_new_7d()}</b>",
-            "\nПоследние активные:",
-        ]
-        for item in recent:
-            lines.append(f"• {item.user_id} | {_fmt_dt(item.last_seen_at)}")
-        lines.append("\nTop 10 по событиям (7д):")
-        for user_id, cnt in top:
-            lines.append(f"• {user_id}: <b>{cnt}</b>")
-        await _edit_or_answer(callback.message, "\n".join(lines), _back_kb())
+        text = format_users(AdminStatsService.get_users_metrics(limit=15))
+        await _edit_or_answer(callback.message, text, _back_kb())
         return
 
     if action == "support":
@@ -178,7 +129,7 @@ async def admin_callbacks(callback: CallbackQuery):
         ]
         for item in recent:
             text_short = (item.message_text or "").replace("\n", " ")[:70]
-            lines.append(f"• [{item.id}] {_fmt_dt(item.created_at)} | {item.user_id} | @{item.username or '-'} | {text_short}")
+            lines.append(f"• [{item.id}] {fmt_dt(item.created_at)} | {item.user_id} | @{item.username or '-'} | {text_short}")
         extra = [InlineKeyboardButton(text="Mark as read", callback_data="admin:support_mark")]
         await _edit_or_answer(callback.message, "\n".join(lines), _back_kb(extra=extra))
         return
@@ -192,11 +143,8 @@ async def admin_callbacks(callback: CallbackQuery):
         return
 
     if action == "events":
-        recent = AnalyticsRepository.get_recent_events(limit=20)
-        lines = ["🔍 Последние события\n"]
-        for item in recent:
-            lines.append(f"• {_fmt_dt(item.created_at)} | {item.user_id} | {item.event_name}")
-        await _edit_or_answer(callback.message, "\n".join(lines), _back_kb())
+        text = format_recent_events(AdminStatsService.get_latest_events(limit=20))
+        await _edit_or_answer(callback.message, text, _back_kb())
 
 
 def register_admin_handlers(dp):

@@ -1,6 +1,8 @@
 """Репозиторий ошибок приложения."""
 from datetime import datetime, timedelta, date
 
+from sqlalchemy import func
+
 from database.models import ErrorLog
 from database.session import get_db_session
 
@@ -58,3 +60,20 @@ class ErrorLogRepository:
                 .limit(limit)
                 .all()
             )
+
+    @staticmethod
+    def get_grouped_7d() -> list[tuple[str, int, datetime | None]]:
+        start = datetime.utcnow() - timedelta(days=7)
+        with get_db_session() as session:
+            rows = (
+                session.query(
+                    ErrorLog.error_type,
+                    func.count(ErrorLog.id).label("cnt"),
+                    func.max(ErrorLog.created_at).label("last_seen"),
+                )
+                .filter(ErrorLog.created_at >= start)
+                .group_by(ErrorLog.error_type)
+                .order_by(func.count(ErrorLog.id).desc())
+                .all()
+            )
+        return [(str(error_type), int(cnt), last_seen) for error_type, cnt, last_seen in rows]
