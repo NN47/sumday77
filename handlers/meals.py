@@ -4,7 +4,7 @@ import json
 import re
 from datetime import date
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
 from typing import Optional
 from aiogram.fsm.context import FSMContext
@@ -1136,6 +1136,180 @@ async def show_day_meals(message: Message, user_id: str, target_date: date):
     await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
 
+def _truncate_product_name(name: str, limit: int = 28) -> str:
+    """Аккуратно обрезает длинные названия для inline-кнопок."""
+    clean_name = (name or "продукт").strip()
+    if len(clean_name) <= limit:
+        return clean_name
+    return f"{clean_name[:limit - 1].rstrip()}…"
+
+
+def _build_weight_products_keyboard(products: list[dict]) -> InlineKeyboardMarkup:
+    """Клавиатура выбора продукта для редактирования веса."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for idx, product in enumerate(products, start=1):
+        name = _truncate_product_name(product.get("name") or "продукт")
+        grams = float(product.get("grams") or 0)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{idx}. {name} — {grams:.0f} г",
+                    callback_data=f"meal_wsel:{idx - 1}",
+                )
+            ]
+        )
+
+    rows.append(
+        [
+            InlineKeyboardButton(text="⬅️ Назад", callback_data="meal_wback_edit"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="meal_wcancel"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _build_weight_editor_keyboard(product_idx: int) -> InlineKeyboardMarkup:
+    """Клавиатура изменения веса одного продукта."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="−50 г", callback_data=f"meal_wchg:{product_idx}:-50"),
+                InlineKeyboardButton(text="−10 г", callback_data=f"meal_wchg:{product_idx}:-10"),
+                InlineKeyboardButton(text="−1 г", callback_data=f"meal_wchg:{product_idx}:-1"),
+            ],
+            [
+                InlineKeyboardButton(text="+1 г", callback_data=f"meal_wchg:{product_idx}:1"),
+                InlineKeyboardButton(text="+10 г", callback_data=f"meal_wchg:{product_idx}:10"),
+                InlineKeyboardButton(text="+50 г", callback_data=f"meal_wchg:{product_idx}:50"),
+            ],
+            [
+                InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data=f"meal_wmanual:{product_idx}"),
+            ],
+            [
+                InlineKeyboardButton(text="✅ Сохранить", callback_data=f"meal_wsave:{product_idx}"),
+                InlineKeyboardButton(text="🗑 Удалить", callback_data=f"meal_wdelask:{product_idx}"),
+            ],
+            [
+                InlineKeyboardButton(text="⬅️ К списку продуктов", callback_data="meal_wback_list"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="meal_wcancel"),
+            ],
+        ]
+    )
+
+
+def _build_weight_delete_confirm_keyboard(product_idx: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"meal_wdel:{product_idx}")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"meal_wdelback:{product_idx}")],
+        ]
+    )
+
+
+def _extract_product_macros(product: dict) -> tuple[float, float, float, float]:
+    """Возвращает калории/белки/жиры/углеводы из любого поддерживаемого формата."""
+    calories = float(product.get("kcal") or product.get("calories") or product.get("_calories") or 0)
+    protein = float(product.get("protein") or product.get("protein_g") or product.get("_protein_g") or 0)
+    fat = float(product.get("fat") or product.get("fat_total_g") or product.get("_fat_total_g") or 0)
+    carbs = float(product.get("carbs") or product.get("carbohydrates_total_g") or product.get("_carbohydrates_total_g") or 0)
+    return calories, protein, fat, carbs
+
+
+def _ensure_per_100g(product: dict) -> tuple[float, float, float, float]:
+    """Гарантирует наличие КБЖУ на 100 г для пересчётов."""
+    calories_per_100g = float(product.get("calories_per_100g") or 0)
+    protein_per_100g = float(product.get("protein_per_100g") or 0)
+    fat_per_100g = float(product.get("fat_per_100g") or 0)
+    carbs_per_100g = float(product.get("carbs_per_100g") or 0)
+
+    if calories_per_100g or protein_per_100g or fat_per_100g or carbs_per_100g:
+        return calories_per_100g, protein_per_100g, fat_per_100g, carbs_per_100g
+
+    grams = float(product.get("grams") or 0)
+    if grams <= 0:
+        return 0, 0, 0, 0
+
+    calories, protein, fat, carbs = _extract_product_macros(product)
+    return (
+        (calories / grams) * 100 if calories else 0,
+        (protein / grams) * 100 if protein else 0,
+        (fat / grams) * 100 if fat else 0,
+        (carbs / grams) * 100 if carbs else 0,
+    )
+
+
+def _apply_product_weight(product: dict, new_weight: float) -> bool:
+    """Обновляет вес и пересчитывает КБЖУ продукта. Возвращает False, если данных недостаточно."""
+    calories_per_100g, protein_per_100g, fat_per_100g, carbs_per_100g = _ensure_per_100g(product)
+    if not calories_per_100g and not protein_per_100g and not fat_per_100g and not carbs_per_100g:
+        return False
+
+    new_calories = (calories_per_100g * new_weight) / 100 if calories_per_100g else 0
+    new_protein = (protein_per_100g * new_weight) / 100 if protein_per_100g else 0
+    new_fat = (fat_per_100g * new_weight) / 100 if fat_per_100g else 0
+    new_carbs = (carbs_per_100g * new_weight) / 100 if carbs_per_100g else 0
+
+    product["grams"] = new_weight
+    product["kcal"] = new_calories
+    product["protein"] = new_protein
+    product["fat"] = new_fat
+    product["carbs"] = new_carbs
+    product["calories"] = new_calories
+    product["protein_g"] = new_protein
+    product["fat_total_g"] = new_fat
+    product["carbohydrates_total_g"] = new_carbs
+    product["calories_per_100g"] = calories_per_100g
+    product["protein_per_100g"] = protein_per_100g
+    product["fat_per_100g"] = fat_per_100g
+    product["carbs_per_100g"] = carbs_per_100g
+    return True
+
+
+def _build_meal_update_payload(products: list[dict]) -> tuple[dict, str]:
+    """Формирует суммарные КБЖУ и api_details для сохранения приёма пищи."""
+    totals = {
+        "calories": 0.0,
+        "protein_g": 0.0,
+        "fat_total_g": 0.0,
+        "carbohydrates_total_g": 0.0,
+    }
+    api_details_lines = []
+
+    for product in products:
+        name = product.get("name", "продукт")
+        grams = float(product.get("grams", 0))
+        calories, protein, fat, carbs = _extract_product_macros(product)
+
+        totals["calories"] += calories
+        totals["protein_g"] += protein
+        totals["fat_total_g"] += fat
+        totals["carbohydrates_total_g"] += carbs
+
+        api_details_lines.append(
+            f"• {name} ({grams:.0f} г) — {calories:.0f} ккал "
+            f"(Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f})"
+        )
+
+    return totals, "\n".join(api_details_lines) if api_details_lines else None
+
+
+def _render_weight_editor_text(product: dict, draft_weight: Optional[float] = None) -> str:
+    """Текст экрана изменения веса конкретного продукта."""
+    name = product.get("name") or "продукт"
+    current_weight = float(product.get("grams") or 0)
+    lines = [
+        "✏️ Изменение веса продукта",
+        "",
+        f"Продукт: {name}",
+        f"Текущий вес: {current_weight:.0f} г",
+    ]
+    if draft_weight is not None and round(draft_weight, 2) != round(current_weight, 2):
+        lines.append(f"Новый вес: {draft_weight:.0f} г")
+
+    lines.extend(["", "Выбери действие:"])
+    return "\n".join(lines)
+
+
 @router.callback_query(lambda c: c.data.startswith("meal_cal_add:"))
 async def add_meal_from_calendar(callback: CallbackQuery, state: FSMContext):
     """Добавляет приём пищи из календаря."""
@@ -1315,23 +1489,13 @@ async def handle_edit_type_choice(message: Message, state: FSMContext):
         return
     
     if text == "⚖️ Изменить вес продукта":
-        # Показываем пронумерованный список продуктов
         await state.set_state(MealEntryStates.editing_meal_weight)
-        
-        edit_lines = ["✏️ Изменение веса продукта\n\nТекущий состав:"]
-        for i, p in enumerate(saved_products, 1):
-            name = p.get("name") or "продукт"
-            grams = p.get("grams", 0)
-            edit_lines.append(f"{i}. {name}, {grams:.0f} г")
-        
-        edit_lines.append("\nВведи номер и новый вес. Можно несколько через запятую или с новой строки:")
-        edit_lines.append("номер вес")
-        edit_lines.append("\nПримеры:")
-        edit_lines.append("1 200")
-        edit_lines.append("1 200, 3 80, 4 110")
-        
-        push_menu_stack(message.bot, kbju_after_meal_menu)
-        await message.answer("\n".join(edit_lines), reply_markup=kbju_after_meal_menu)
+        await state.update_data(weight_drafts={}, editing_product_idx=None)
+
+        await message.answer(
+            "⚖️ Выбери продукт, вес которого хочешь изменить:",
+            reply_markup=_build_weight_products_keyboard(saved_products),
+        )
         
     elif text == "📝 Изменить состав продуктов":
         # Переходим к редактированию состава через ИИ
@@ -1355,188 +1519,304 @@ async def handle_edit_type_choice(message: Message, state: FSMContext):
 
 @router.message(MealEntryStates.editing_meal_weight)
 async def handle_meal_weight_edit(message: Message, state: FSMContext):
-    """Обрабатывает изменение веса продукта."""
-    user_id = str(message.from_user.id)
-    text = message.text.strip()
-    
-    # Проверяем, не является ли это кнопкой меню
-    menu_buttons = ["⬅️ Назад", "📊 Дневной отчёт", "➕ Внести ещё приём", "✏️ Редактировать"]
-    if text in menu_buttons or text in MAIN_MENU_BUTTON_ALIASES:
-        await state.clear()
-        if text == "⬅️ Назад":
-            from handlers.common import go_back
-            await go_back(message, state)
-        elif text in MAIN_MENU_BUTTON_ALIASES:
-            from handlers.common import go_main_menu
-            await go_main_menu(message, state)
-        else:
-            await message.answer("Редактирование отменено.")
+    """Обрабатывает сообщения в режиме изменения веса."""
+    text = (message.text or "").strip()
+    if text in {"⬅️ Назад", "❌ Отмена"}:
+        await state.set_state(MealEntryStates.choosing_edit_type)
+        push_menu_stack(message.bot, kbju_edit_type_menu)
+        await message.answer(
+            "✏️ Редактирование приёма пищи\n\nВыбери, что хочешь изменить:",
+            reply_markup=kbju_edit_type_menu,
+        )
         return
-    
+
+    await message.answer("Используй кнопки ниже для изменения веса продукта 👇")
+
+
+@router.callback_query(lambda c: c.data == "meal_wback_edit")
+async def meal_weight_back_to_edit_type(callback: CallbackQuery, state: FSMContext):
+    """Возврат к выбору типа редактирования."""
+    await callback.answer()
+    await state.set_state(MealEntryStates.choosing_edit_type)
+    await callback.message.answer(
+        "✏️ Редактирование приёма пищи\n\nВыбери, что хочешь изменить:",
+        reply_markup=kbju_edit_type_menu,
+    )
+
+
+@router.callback_query(lambda c: c.data == "meal_wcancel")
+async def meal_weight_cancel(callback: CallbackQuery, state: FSMContext):
+    """Отмена редактирования веса."""
+    await callback.answer("Редактирование отменено")
+    await state.clear()
+    await callback.message.answer("Ок, отменил изменение веса 👌", reply_markup=kbju_after_meal_menu)
+
+
+@router.callback_query(lambda c: c.data == "meal_wback_list")
+async def meal_weight_back_to_products(callback: CallbackQuery, state: FSMContext):
+    """Возврат к списку продуктов."""
+    await callback.answer()
+    data = await state.get_data()
+    saved_products = data.get("saved_products", [])
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    try:
+        await callback.message.edit_text(
+            "⚖️ Выбери продукт, вес которого хочешь изменить:",
+            reply_markup=_build_weight_products_keyboard(saved_products),
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            "⚖️ Выбери продукт, вес которого хочешь изменить:",
+            reply_markup=_build_weight_products_keyboard(saved_products),
+        )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_wsel:"))
+async def meal_weight_select_product(callback: CallbackQuery, state: FSMContext):
+    """Открывает экран изменения веса выбранного продукта."""
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    saved_products = data.get("saved_products", [])
+    drafts = data.get("weight_drafts", {})
+
+    if product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не нашёл продукт", show_alert=True)
+        return
+
+    product = saved_products[product_idx]
+    draft_weight = drafts.get(str(product_idx))
+
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    await state.update_data(editing_product_idx=product_idx)
+
+    try:
+        await callback.message.edit_text(
+            _render_weight_editor_text(product, draft_weight=draft_weight),
+            reply_markup=_build_weight_editor_keyboard(product_idx),
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            _render_weight_editor_text(product, draft_weight=draft_weight),
+            reply_markup=_build_weight_editor_keyboard(product_idx),
+        )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_wchg:"))
+async def meal_weight_change_draft(callback: CallbackQuery, state: FSMContext):
+    """Меняет временный вес продукта кнопками +/−."""
+    _, raw_idx, raw_delta = callback.data.split(":")
+    product_idx = int(raw_idx)
+    delta = int(raw_delta)
+
+    data = await state.get_data()
+    saved_products = data.get("saved_products", [])
+    drafts = data.get("weight_drafts", {})
+    if product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не нашёл продукт", show_alert=True)
+        return
+
+    product = saved_products[product_idx]
+    base_weight = float(drafts.get(str(product_idx), product.get("grams", 0)))
+    new_weight = base_weight + delta
+    if new_weight < 1:
+        await callback.answer("Вес не может быть меньше 1 г")
+        return
+
+    drafts[str(product_idx)] = int(new_weight)
+    await state.update_data(weight_drafts=drafts, editing_product_idx=product_idx)
+    await callback.answer()
+
+    await callback.message.edit_text(
+        _render_weight_editor_text(product, draft_weight=new_weight),
+        reply_markup=_build_weight_editor_keyboard(product_idx),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_wmanual:"))
+async def meal_weight_manual_input_start(callback: CallbackQuery, state: FSMContext):
+    """Запрашивает ручной ввод веса для конкретного продукта."""
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    saved_products = data.get("saved_products", [])
+    if product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не нашёл продукт", show_alert=True)
+        return
+
+    product_name = saved_products[product_idx].get("name") or "продукт"
+    await state.set_state(MealEntryStates.editing_meal_weight_manual_input)
+    await state.update_data(editing_product_idx=product_idx)
+    await callback.message.answer(
+        f'Введи новый вес для продукта "{product_name}" в граммах:'
+    )
+
+
+@router.message(MealEntryStates.editing_meal_weight_manual_input)
+async def meal_weight_manual_input_value(message: Message, state: FSMContext):
+    """Обрабатывает ручной ввод нового веса."""
+    raw_value = (message.text or "").strip().replace(",", ".")
+    if not raw_value.isdigit():
+        await message.answer("Пожалуйста, введи вес числом в граммах, например: 180")
+        return
+
+    new_weight = int(raw_value)
+    if new_weight < 1:
+        await message.answer("Вес должен быть не меньше 1 г.")
+        return
+
+    data = await state.get_data()
+    product_idx = data.get("editing_product_idx")
+    saved_products = data.get("saved_products", [])
+    drafts = data.get("weight_drafts", {})
+    if product_idx is None or product_idx < 0 or product_idx >= len(saved_products):
+        await message.answer("❌ Не удалось найти продукт для редактирования.")
+        await state.set_state(MealEntryStates.editing_meal_weight)
+        return
+
+    drafts[str(product_idx)] = new_weight
+    product = saved_products[product_idx]
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    await state.update_data(weight_drafts=drafts)
+
+    await message.answer(
+        _render_weight_editor_text(product, draft_weight=new_weight),
+        reply_markup=_build_weight_editor_keyboard(product_idx),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_wsave:"))
+async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет новый вес выбранного продукта и пересчитывает КБЖУ."""
+    product_idx = int(callback.data.split(":")[1])
+    user_id = str(callback.from_user.id)
     data = await state.get_data()
     meal_id = data.get("meal_id")
     target_date_str = data.get("target_date", date.today().isoformat())
     saved_products = data.get("saved_products", [])
-    
-    if not meal_id or not saved_products:
-        await message.answer("❌ Не удалось найти данные для редактирования.")
-        await state.clear()
+    drafts = data.get("weight_drafts", {})
+
+    if not meal_id or product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не удалось сохранить", show_alert=True)
         return
-    
-    # Парсим ввод: "номер вес" или несколько пар через запятую/новую строку
-    try:
-        raw_updates = [part.strip() for part in text.replace("\n", ",").split(",") if part.strip()]
-        if not raw_updates:
-            await message.answer(
-                "❌ Неверный формат. Введи номер продукта и новый вес.\n"
-                "Примеры: 1 200 или 1 200, 3 80, 4 110"
-            )
+
+    product = saved_products[product_idx]
+    draft_weight = float(drafts.get(str(product_idx), product.get("grams", 0)))
+    if draft_weight < 1:
+        await callback.answer("Вес не может быть меньше 1 г", show_alert=True)
+        return
+
+    if not _apply_product_weight(product, draft_weight):
+        await callback.answer("Не удалось пересчитать КБЖУ", show_alert=True)
+        return
+
+    totals, api_details = _build_meal_update_payload(saved_products)
+    meal = MealRepository.get_meal_by_id(meal_id, user_id)
+    raw_query = meal.raw_query if meal and hasattr(meal, "raw_query") else None
+
+    success = MealRepository.update_meal(
+        meal_id=meal_id,
+        user_id=user_id,
+        description=raw_query,
+        calories=totals["calories"],
+        protein=totals["protein_g"],
+        fat=totals["fat_total_g"],
+        carbs=totals["carbohydrates_total_g"],
+        products_json=json.dumps(saved_products),
+        api_details=api_details,
+    )
+    if not success:
+        await callback.answer("Не удалось обновить запись", show_alert=True)
+        return
+
+    drafts.pop(str(product_idx), None)
+    await state.update_data(saved_products=saved_products, weight_drafts=drafts)
+    await callback.answer("✅ Вес продукта обновлён")
+    await callback.message.edit_text(
+        "⚖️ Выбери продукт, вес которого хочешь изменить:",
+        reply_markup=_build_weight_products_keyboard(saved_products),
+    )
+
+    if isinstance(target_date_str, str):
+        try:
+            target_date = date.fromisoformat(target_date_str)
+        except ValueError:
+            target_date = date.today()
+    else:
+        target_date = date.today()
+    await show_day_meals(callback.message, user_id, target_date)
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_wdelask:"))
+async def meal_weight_delete_confirm_with_state(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    saved_products = data.get("saved_products", [])
+    if product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не нашёл продукт", show_alert=True)
+        return
+
+    product_name = saved_products[product_idx].get("name") or "продукт"
+    await callback.message.edit_text(
+        f'Удалить продукт "{product_name}" из этого приёма пищи?',
+        reply_markup=_build_weight_delete_confirm_keyboard(product_idx),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_wdelback:"))
+async def meal_weight_delete_back(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    saved_products = data.get("saved_products", [])
+    drafts = data.get("weight_drafts", {})
+    if product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не нашёл продукт", show_alert=True)
+        return
+
+    product = saved_products[product_idx]
+    draft_weight = drafts.get(str(product_idx))
+    await callback.message.edit_text(
+        _render_weight_editor_text(product, draft_weight=draft_weight),
+        reply_markup=_build_weight_editor_keyboard(product_idx),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_wdel:"))
+async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
+    """Удаляет продукт из приёма пищи после подтверждения."""
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    user_id = str(callback.from_user.id)
+    data = await state.get_data()
+    meal_id = data.get("meal_id")
+    target_date_str = data.get("target_date", date.today().isoformat())
+    saved_products = data.get("saved_products", [])
+    drafts = data.get("weight_drafts", {})
+
+    if not meal_id or product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не удалось удалить продукт", show_alert=True)
+        return
+
+    saved_products.pop(product_idx)
+    drafts = {
+        str(int(idx) - 1 if int(idx) > product_idx else int(idx)): value
+        for idx, value in drafts.items()
+        if int(idx) != product_idx
+    }
+
+    if not saved_products:
+        success = MealRepository.delete_meal(meal_id, user_id)
+        if not success:
+            await callback.answer("Не удалось обновить приём пищи", show_alert=True)
             return
-        parsed_updates = []
-        for update in raw_updates:
-            parts = update.split()
-            if len(parts) != 2:
-                raise ValueError(f"Invalid update format: {update}")
-
-            product_num = int(parts[0])
-            new_weight = float(parts[1].replace(",", "."))
-
-            if product_num < 1 or product_num > len(saved_products):
-                await message.answer(
-                    f"❌ Неверный номер продукта. Введи число от 1 до {len(saved_products)}."
-                )
-                return
-
-            if new_weight <= 0:
-                await message.answer("❌ Вес должен быть больше нуля.")
-                return
-
-            parsed_updates.append((product_num, new_weight))
-
-        # Последнее изменение для одного и того же номера имеет приоритет
-        updates_by_product = {product_num: new_weight for product_num, new_weight in parsed_updates}
-
-        for product_num, new_weight in updates_by_product.items():
-            # Получаем продукт для редактирования
-            product = saved_products[product_num - 1]
-
-            logger.debug(f"Editing product: {product}")
-
-            # Получаем КБЖУ на 100г (проверяем разные форматы данных)
-            calories_per_100g = product.get("calories_per_100g")
-            protein_per_100g = product.get("protein_per_100g")
-            fat_per_100g = product.get("fat_per_100g")
-            carbs_per_100g = product.get("carbs_per_100g")
-
-            # Если нет значений на 100г, вычисляем из сохраненных данных
-            if not calories_per_100g or calories_per_100g == 0:
-                orig_grams = product.get("grams", 0)
-                if orig_grams > 0:
-                    # Поддерживаем разные форматы: Gemini (kcal, protein, fat, carbs) и CalorieNinjas (calories, protein_g, fat_total_g, carbohydrates_total_g)
-                    orig_calories = product.get("kcal") or product.get("calories") or product.get("_calories") or 0
-                    orig_protein = product.get("protein") or product.get("protein_g") or product.get("_protein_g") or 0
-                    orig_fat = product.get("fat") or product.get("fat_total_g") or product.get("_fat_total_g") or 0
-                    orig_carbs = product.get("carbs") or product.get("carbohydrates_total_g") or product.get("_carbohydrates_total_g") or 0
-
-                    logger.debug(f"Original values: grams={orig_grams}, kcal={orig_calories}, protein={orig_protein}, fat={orig_fat}, carbs={orig_carbs}")
-
-                    # Преобразуем в числа
-                    try:
-                        orig_calories = float(orig_calories) if orig_calories else 0
-                        orig_protein = float(orig_protein) if orig_protein else 0
-                        orig_fat = float(orig_fat) if orig_fat else 0
-                        orig_carbs = float(orig_carbs) if orig_carbs else 0
-                    except (TypeError, ValueError) as e:
-                        logger.error(f"Error converting values to float: {e}, product={product}")
-                        orig_calories = orig_protein = orig_fat = orig_carbs = 0
-
-                    # Вычисляем КБЖУ на 100г, если есть хотя бы калории
-                    if orig_calories > 0:
-                        calories_per_100g = (orig_calories / orig_grams) * 100
-                        protein_per_100g = (orig_protein / orig_grams) * 100
-                        fat_per_100g = (orig_fat / orig_grams) * 100
-                        carbs_per_100g = (orig_carbs / orig_grams) * 100
-                        logger.debug(f"Calculated per 100g: kcal={calories_per_100g}, protein={protein_per_100g}, fat={fat_per_100g}, carbs={carbs_per_100g}")
-                    else:
-                        # Если калории нулевые, но есть другие данные, все равно вычисляем
-                        if orig_grams > 0:
-                            calories_per_100g = 0
-                            protein_per_100g = (orig_protein / orig_grams) * 100 if orig_protein else 0
-                            fat_per_100g = (orig_fat / orig_grams) * 100 if orig_fat else 0
-                            carbs_per_100g = (orig_carbs / orig_grams) * 100 if orig_carbs else 0
-                        else:
-                            logger.warning(f"Product {product.get('name')} has zero grams, cannot calculate per 100g")
-
-            # Проверяем, что мы получили валидные значения
-            if not calories_per_100g and not protein_per_100g and not fat_per_100g and not carbs_per_100g:
-                logger.error(f"Cannot calculate KBJU per 100g for product: {product}")
-                await message.answer(
-                    "❌ Не удалось определить КБЖУ для одного из продуктов.\n"
-                    "Попробуй использовать вариант «Изменить состав продуктов»."
-                )
-                return
-
-            # Пересчитываем КБЖУ для нового веса
-            new_calories = (calories_per_100g * new_weight) / 100 if calories_per_100g else 0
-            new_protein = (protein_per_100g * new_weight) / 100 if protein_per_100g else 0
-            new_fat = (fat_per_100g * new_weight) / 100 if fat_per_100g else 0
-            new_carbs = (carbs_per_100g * new_weight) / 100 if carbs_per_100g else 0
-
-            # Обновляем продукт (сохраняем в обоих форматах для совместимости)
-            product["grams"] = new_weight
-            # Обновляем в формате Gemini
-            product["kcal"] = new_calories
-            product["protein"] = new_protein
-            product["fat"] = new_fat
-            product["carbs"] = new_carbs
-            # Обновляем в формате CalorieNinjas
-            product["calories"] = new_calories
-            product["protein_g"] = new_protein
-            product["fat_total_g"] = new_fat
-            product["carbohydrates_total_g"] = new_carbs
-            # Сохраняем значения на 100г для будущих пересчетов
-            product["calories_per_100g"] = calories_per_100g
-            product["protein_per_100g"] = protein_per_100g
-            product["fat_per_100g"] = fat_per_100g
-            product["carbs_per_100g"] = carbs_per_100g
-        
-        # Суммируем КБЖУ всех продуктов (проверяем разные форматы)
-        totals = {
-            "calories": 0,
-            "protein_g": 0,
-            "fat_total_g": 0,
-            "carbohydrates_total_g": 0,
-        }
-        
-        for p in saved_products:
-            # Поддерживаем разные форматы
-            totals["calories"] += float(p.get("kcal") or p.get("calories") or p.get("_calories") or 0)
-            totals["protein_g"] += float(p.get("protein") or p.get("protein_g") or p.get("_protein_g") or 0)
-            totals["fat_total_g"] += float(p.get("fat") or p.get("fat_total_g") or p.get("_fat_total_g") or 0)
-            totals["carbohydrates_total_g"] += float(p.get("carbs") or p.get("carbohydrates_total_g") or p.get("_carbohydrates_total_g") or 0)
-        
-        # Формируем api_details (поддерживаем разные форматы)
-        api_details_lines = []
-        for p in saved_products:
-            name = p.get('name', 'продукт')
-            grams = float(p.get('grams', 0))
-            # Получаем КБЖУ в любом формате
-            cal = float(p.get('kcal') or p.get('calories') or p.get('_calories') or 0)
-            prot = float(p.get('protein') or p.get('protein_g') or p.get('_protein_g') or 0)
-            fat = float(p.get('fat') or p.get('fat_total_g') or p.get('_fat_total_g') or 0)
-            carbs = float(p.get('carbs') or p.get('carbohydrates_total_g') or p.get('_carbohydrates_total_g') or 0)
-            
-            api_details_lines.append(
-                f"• {name} ({grams:.0f} г) — {cal:.0f} ккал "
-                f"(Б {prot:.1f} / Ж {fat:.1f} / У {carbs:.1f})"
-            )
-        api_details = "\n".join(api_details_lines) if api_details_lines else None
-        
-        # Получаем meal для сохранения raw_query
+        await state.clear()
+        await callback.message.answer("Приём пищи теперь пуст. Запись удалена.")
+    else:
+        totals, api_details = _build_meal_update_payload(saved_products)
         meal = MealRepository.get_meal_by_id(meal_id, user_id)
-        raw_query = meal.raw_query if meal and hasattr(meal, 'raw_query') else None
-        
-        # Обновляем запись
+        raw_query = meal.raw_query if meal and hasattr(meal, "raw_query") else None
         success = MealRepository.update_meal(
             meal_id=meal_id,
             user_id=user_id,
@@ -1548,36 +1828,25 @@ async def handle_meal_weight_edit(message: Message, state: FSMContext):
             products_json=json.dumps(saved_products),
             api_details=api_details,
         )
-        
         if not success:
-            await message.answer("❌ Не удалось обновить запись.")
-            await state.clear()
+            await callback.answer("Не удалось обновить запись", show_alert=True)
             return
-        
-        await state.clear()
-        
-        # Показываем обновлённый день
-        if isinstance(target_date_str, str):
-            try:
-                target_date = date.fromisoformat(target_date_str)
-            except ValueError:
-                target_date = date.today()
-        else:
-            target_date = date.today()
-        
-        updated_count = len(updates_by_product)
-        if updated_count == 1:
-            await message.answer("✅ Вес продукта обновлён! КБЖУ пересчитано.")
-        else:
-            await message.answer(f"✅ Обновлён вес {updated_count} продуктов! КБЖУ пересчитано.")
-        await show_day_meals(message, user_id, target_date)
-        
-    except (ValueError, IndexError) as e:
-        logger.error(f"Error parsing weight edit input: {e}")
-        await message.answer(
-            "❌ Неверный формат. Введи номер продукта и новый вес.\n"
-            "Примеры: 1 200 или 1 200, 3 80, 4 110"
+
+        await state.update_data(saved_products=saved_products, weight_drafts=drafts)
+        await callback.message.edit_text(
+            "⚖️ Выбери продукт, вес которого хочешь изменить:",
+            reply_markup=_build_weight_products_keyboard(saved_products),
         )
+        await callback.message.answer("✅ Продукт удалён")
+
+    if isinstance(target_date_str, str):
+        try:
+            target_date = date.fromisoformat(target_date_str)
+        except ValueError:
+            target_date = date.today()
+    else:
+        target_date = date.today()
+    await show_day_meals(callback.message, user_id, target_date)
 
 
 @router.message(MealEntryStates.editing_meal_composition)
