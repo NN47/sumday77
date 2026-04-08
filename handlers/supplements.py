@@ -107,6 +107,7 @@ async def supplements_list_view(message: Message, state: FSMContext):
         return
     
     await state.set_state(SupplementStates.viewing_history)
+    await state.update_data(viewing_index=None, viewing_supplement_id=None)
     push_menu_stack(message.bot, supplements_view_menu(supplements_list))
     await message.answer(
         "Выбери добавку для просмотра:",
@@ -511,6 +512,21 @@ async def choose_supplement_for_view(message: Message, state: FSMContext):
     )
     await show_supplement_details(message, selected_supplement, target_index)
     await state.set_state(SupplementStates.viewing_history)  # Сохраняем состояние просмотра
+
+
+@router.message(SupplementStates.viewing_history, lambda m: m.text == "⬅️ Назад")
+async def handle_viewing_history_back(message: Message, state: FSMContext):
+    """Обрабатывает кнопку "Назад" в режиме просмотра добавок."""
+    data = await state.get_data()
+    is_opened_details = data.get("viewing_index") is not None or data.get("viewing_supplement_id") is not None
+
+    if is_opened_details:
+        await state.update_data(viewing_index=None, viewing_supplement_id=None)
+        await supplements_list_view(message, state)
+        return
+
+    await state.clear()
+    await supplements(message)
 
 
 @router.message(lambda m: m.text == "✏️ Редактировать добавку")
