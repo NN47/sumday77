@@ -138,7 +138,7 @@ class GeminiService:
         """Анализирует текст через Gemini."""
         try:
             response = self._make_request(
-                self.client.models.generate_content,
+                lambda **request_kwargs: self.client.models.generate_content(**request_kwargs),
                 model=self.model,
                 contents=text
             )
@@ -210,7 +210,7 @@ class GeminiService:
 """
         try:
             response = self._make_request(
-                self.client.models.generate_content,
+                lambda **request_kwargs: self.client.models.generate_content(**request_kwargs),
                 model=self.model,
                 contents=prompt,
             )
@@ -360,7 +360,7 @@ class GeminiService:
                 mime_type = "image/webp"
             
             response = self._make_request(
-                self.client.models.generate_content,
+                lambda **request_kwargs: self.client.models.generate_content(**request_kwargs),
                 model=self.model,
                 contents=[
                     types.Part.from_bytes(
@@ -444,7 +444,7 @@ class GeminiService:
                 mime_type = "image/webp"
             
             response = self._make_request(
-                self.client.models.generate_content,
+                lambda **request_kwargs: self.client.models.generate_content(**request_kwargs),
                 model=self.model,
                 contents=[
                     types.Part.from_bytes(
@@ -505,7 +505,7 @@ class GeminiService:
                 mime_type = "image/webp"
             
             response = self._make_request(
-                self.client.models.generate_content,
+                lambda **request_kwargs: self.client.models.generate_content(**request_kwargs),
                 model=self.model,
                 contents=[
                     types.Part.from_bytes(
