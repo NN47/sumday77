@@ -211,6 +211,40 @@ def format_users(metrics: dict) -> str:
 
 
 def format_gemini(metrics: dict) -> str:
+    def translate_status(status: str | None) -> str:
+        status_translations = {
+            "active": "🟢 Активен",
+            "cooldown": "🟡 Ожидание",
+            "rate_limited": "🔴 Ошибка",
+            "auth_failed": "🔴 Ошибка",
+            "unknown": "🔴 Ошибка",
+            "temporary": "🔴 Ошибка",
+            "quota": "🔴 Ошибка",
+            "auth": "🔴 Ошибка",
+            "disabled": "⚫ Отключен",
+        }
+        return status_translations.get(status or "", "🔴 Ошибка")
+
+    def translate_error_type(error_type: str | None) -> str:
+        error_type_translations = {
+            "temporary": "Временная ошибка",
+            "quota": "Превышен лимит",
+            "auth": "Ошибка авторизации",
+            "unknown": "Неизвестная ошибка",
+        }
+        return error_type_translations.get(error_type or "", error_type or "—")
+
+    def translate_event(event: str | None) -> str:
+        event_translations = {
+            "request_success": "Успешный запрос",
+            "retry_temporary_error": "Повтор запроса (временная ошибка)",
+            "key_put_on_cooldown": "Ключ временно отключен",
+            "switch_due_to_temporary_failure": "Переключение из-за временной ошибки",
+            "switch_due_to_quota": "Переключение из-за лимита",
+            "switch_due_to_auth_error": "Переключение из-за ошибки авторизации",
+        }
+        return event_translations.get(event or "", event or "Событие")
+
     lines = ["🤖 <b>Gemini / AI</b>", ""]
 
     active = metrics.get("active_account")
@@ -222,7 +256,7 @@ def format_gemini(metrics: dict) -> str:
             f"• Запросов за всё время: <b>{metrics.get('total_requests_all_time', 0)}</b>",
             f"• Переключений по лимиту: <b>{metrics.get('total_limit_switches', 0)}</b>",
             f"• Временных переключений: <b>{metrics.get('total_temporary_failovers', 0)}</b>",
-            f"• Последняя причина переключения: <b>{metrics.get('last_switch_reason', '—')}</b>",
+            f"• Последняя причина переключения: <b>{translate_event(metrics.get('last_switch_reason'))}</b>",
             "",
             "📚 <b>Аккаунты</b>",
         ]
@@ -233,31 +267,24 @@ def format_gemini(metrics: dict) -> str:
         lines.append("• Нет настроенных аккаунтов")
     else:
         for account in accounts:
-            status_emoji = {
-                "active": "✅",
-                "cooldown": "🟡",
-                "rate_limited": "🔴",
-                "auth_failed": "⛔",
-                "disabled": "⛔",
-            }.get(account.status, "⚪")
-            active_mark = " ✅ active" if account.is_active else ""
+            active_mark = " ✅" if account.is_active else ""
             lines.extend(
                 [
-                    f"• <b>{account.account_name}</b> {status_emoji} {account.status}{active_mark}",
+                    f"• <b>{account.account_name}</b> {translate_status(account.status)}{active_mark}",
                     f"  ключ: {account.api_key_masked}",
-                    f"  total/success/error: <b>{account.total_requests}</b> / "
+                    f"  Всего запросов/Успешных/Ошибок: <b>{account.total_requests}</b> / "
                     f"<b>{account.success_requests}</b> / <b>{account.error_requests}</b>",
-                    f"  temporary/quota/auth/unknown: <b>{account.temporary_errors_count}</b> / "
+                    f"  Временные/Лимиты/Авторизация/Неизвестные: <b>{account.temporary_errors_count}</b> / "
                     f"<b>{account.quota_errors_count}</b> / <b>{account.auth_errors_count}</b> / "
                     f"<b>{account.unknown_errors_count}</b>",
                     f"  limit_switches: <b>{account.limit_switches}</b>, "
                     f"temporary_failover: <b>{account.temporary_failover_count}</b>",
-                    f"  last_request_at: {fmt_dt(account.last_request_at)}",
-                    f"  last_error_at: {fmt_dt(account.last_error_at)}",
-                    f"  last_error_type: {account.last_error_type or '—'}",
-                    f"  cooldown_until: {fmt_dt(account.temporary_unavailable_until)}",
-                    f"  rate_limited_until: {fmt_dt(account.rate_limited_until)}",
-                    f"  disabled_reason: {account.disabled_reason or '—'}",
+                    f"  Последний запрос: {fmt_dt(account.last_request_at)}",
+                    f"  Последняя ошибка: {fmt_dt(account.last_error_at)}",
+                    f"  Тип ошибки: {translate_error_type(account.last_error_type)}",
+                    f"  Ожидание до: {fmt_dt(account.temporary_unavailable_until)}",
+                    f"  Ограничение API до: {fmt_dt(account.rate_limited_until)}",
+                    f"  Причина отключения: {account.disabled_reason or '—'}",
                     f"  last_error_message: {(account.last_error_message or '—')[:180]}",
                 ]
             )
@@ -268,7 +295,7 @@ def format_gemini(metrics: dict) -> str:
         lines.append("• Пока нет событий")
     else:
         for event in events:
-            label = event.get("event_type") or event.get("status") or "event"
+            label = translate_event(event.get("event_type") or event.get("status"))
             details = (event.get("error_message") or "").strip()
             suffix = f" — {details[:120]}" if details else ""
             lines.append(
