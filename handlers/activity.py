@@ -7,7 +7,6 @@ from collections import Counter
 from aiogram import Router
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
-from google.genai import errors as genai_errors
 from utils.keyboards import activity_analysis_menu, push_menu_stack
 from utils.emoji_map import EMOJI_MAP
 from utils.calendar_utils import (
@@ -17,7 +16,7 @@ from utils.calendar_utils import (
 from database.repositories.activity_analysis_repository import ActivityAnalysisRepository
 from database.repositories import AnalyticsRepository
 from states.user_states import ActivityAnalysisStates
-from services.gemini_service import gemini_service
+from services.gemini_service import gemini_service, GeminiServiceTemporaryUnavailableError
 from services.error_logging_service import log_app_error
 
 logger = logging.getLogger(__name__)
@@ -34,7 +33,7 @@ AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT = (
 
 def _is_gemini_temporarily_unavailable_error(error: Exception) -> bool:
     """Проверяет, связана ли ошибка с временной недоступностью Gemini (ServerError/503)."""
-    return isinstance(error, genai_errors.ServerError) or "503" in str(error)
+    return isinstance(error, GeminiServiceTemporaryUnavailableError) or "503" in str(error)
 
 
 def _normalize_workout_type(exercise: str, variant: str | None = None) -> str:

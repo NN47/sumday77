@@ -264,6 +264,16 @@ class GeminiAccount(Base):
     success_requests = Column(Integer, default=0, nullable=False)
     error_requests = Column(Integer, default=0, nullable=False)
     limit_switches = Column(Integer, default=0, nullable=False)
+    temporary_failover_count = Column(Integer, default=0, nullable=False)
+    temporary_errors_count = Column(Integer, default=0, nullable=False)
+    quota_errors_count = Column(Integer, default=0, nullable=False)
+    auth_errors_count = Column(Integer, default=0, nullable=False)
+    unknown_errors_count = Column(Integer, default=0, nullable=False)
+    status = Column(String, default="active", nullable=False, index=True)
+    disabled_reason = Column(String, nullable=True)
+    rate_limited_until = Column(DateTime, nullable=True)
+    temporary_unavailable_until = Column(DateTime, nullable=True)
+    last_error_type = Column(String, nullable=True, index=True)
     last_request_at = Column(DateTime, nullable=True)
     last_error_at = Column(DateTime, nullable=True)
     last_error_message = Column(Text, nullable=True)
@@ -277,7 +287,9 @@ class GeminiRequestLog(Base):
 
     id = Column(Integer, primary_key=True)
     account_id = Column(Integer, nullable=False, index=True)
-    status = Column(String, nullable=False, index=True)  # success | error | limit_exceeded
+    status = Column(String, nullable=False, index=True)  # request_success | error categories | switch events
+    event_type = Column(String, nullable=True, index=True)
+    reason = Column(String, nullable=True, index=True)
     model_name = Column(String, nullable=True, index=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

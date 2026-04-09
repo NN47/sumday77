@@ -22,7 +22,12 @@ from utils.keyboards import (
 )
 from database.repositories import MealRepository, AnalyticsRepository
 from services.nutrition_service import nutrition_service
-from services.gemini_service import gemini_service
+from services.gemini_service import (
+    gemini_service,
+    GeminiServiceTemporaryUnavailableError,
+    GeminiServiceQuotaError,
+    GeminiServiceAuthError,
+)
 from utils.validators import parse_date
 from utils.telegram_text import split_telegram_message
 from datetime import datetime
@@ -46,6 +51,23 @@ ADD_METHOD_TEXTS = {
     "label": "📋 Анализ этикетки",
     "barcode": "📷 Скан штрих-кода",
 }
+
+AI_TEMPORARY_UNAVAILABLE_TEXT = "🤖 Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
+AI_QUOTA_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за лимита запросов."
+AI_CONFIG_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за ошибки настройки."
+
+
+async def _send_ai_error_message(message: Message, error: Exception) -> None:
+    if isinstance(error, GeminiServiceTemporaryUnavailableError):
+        await message.answer(AI_TEMPORARY_UNAVAILABLE_TEXT)
+        return
+    if isinstance(error, GeminiServiceQuotaError):
+        await message.answer(AI_QUOTA_UNAVAILABLE_TEXT)
+        return
+    if isinstance(error, GeminiServiceAuthError):
+        await message.answer(AI_CONFIG_UNAVAILABLE_TEXT)
+        return
+    await message.answer("⚠️ Не удалось получить ответ AI. Попробуй ещё раз позже.")
 
 
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
@@ -480,7 +502,11 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
     await message.answer("🤖 Считаю КБЖУ с помощью ИИ, секунду...")
     
     # Получаем КБЖУ через Gemini
-    kbju_data = gemini_service.estimate_kbju(user_text)
+    try:
+        kbju_data = gemini_service.estimate_kbju(user_text)
+    except Exception as e:
+        await _send_ai_error_message(message, e)
+        return
     
     if not kbju_data or "total" not in kbju_data:
         await message.answer(
@@ -635,7 +661,11 @@ async def handle_photo_input(message: Message, state: FSMContext):
     image_data = image_bytes.read()
     
     # Анализируем через Gemini
-    kbju_data = gemini_service.estimate_kbju_from_photo(image_data)
+    try:
+        kbju_data = gemini_service.estimate_kbju_from_photo(image_data)
+    except Exception as e:
+        await _send_ai_error_message(message, e)
+        return
     
     if not kbju_data or "total" not in kbju_data:
         await message.answer(
@@ -749,7 +779,11 @@ async def handle_label_photo(message: Message, state: FSMContext):
     image_data = image_bytes.read()
     
     # Анализируем через Gemini
-    label_data = gemini_service.extract_kbju_from_label(image_data)
+    try:
+        label_data = gemini_service.extract_kbju_from_label(image_data)
+    except Exception as e:
+        await _send_ai_error_message(message, e)
+        return
     
     if not label_data or "kbju_per_100g" not in label_data:
         await message.answer(
@@ -856,7 +890,11 @@ async def handle_barcode_photo(message: Message, state: FSMContext):
     image_data = image_bytes.read()
     
     # Распознаём штрих-код
-    barcode = gemini_service.scan_barcode(image_data)
+    try:
+        barcode = gemini_service.scan_barcode(image_data)
+    except Exception as e:
+        await _send_ai_error_message(message, e)
+        return
     
     if not barcode:
         await message.answer(
@@ -2102,7 +2140,11 @@ async def handle_meal_composition_edit(message: Message, state: FSMContext):
     await message.answer("🤖 Считаю КБЖУ с помощью ИИ, секунду...")
     
     # Получаем КБЖУ через Gemini (как в "ввести прием пищи")
-    kbju_data = gemini_service.estimate_kbju(user_text)
+    try:
+        kbju_data = gemini_service.estimate_kbju(user_text)
+    except Exception as e:
+        await _send_ai_error_message(message, e)
+        return
     
     if not kbju_data or "total" not in kbju_data:
         await message.answer(

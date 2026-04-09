@@ -1,7 +1,7 @@
 """Репозиторий статистики и состояния Gemini-аккаунтов."""
 from __future__ import annotations
 
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from sqlalchemy import func
 
@@ -11,6 +11,12 @@ from database.session import get_db_session
 
 class GeminiRepository:
     """Централизованное хранение состояния и статистики Gemini."""
+
+    STATUS_ACTIVE = "active"
+    STATUS_COOLDOWN = "cooldown"
+    STATUS_RATE_LIMITED = "rate_limited"
+    STATUS_AUTH_FAILED = "auth_failed"
+    STATUS_DISABLED = "disabled"
 
     @staticmethod
     def mask_api_key(api_key: str) -> str:
@@ -37,6 +43,8 @@ class GeminiRepository:
                     account = existing[name]
                     account.api_key_masked = masked
                     account.priority_order = priority_order
+                    if not account.status:
+                        account.status = GeminiRepository.STATUS_ACTIVE
                     account.updated_at = datetime.utcnow()
                 else:
                     session.add(
@@ -45,6 +53,7 @@ class GeminiRepository:
                             api_key_masked=masked,
                             priority_order=priority_order,
                             is_active=False,
+                            status=GeminiRepository.STATUS_ACTIVE,
                         )
                     )
 
@@ -59,6 +68,31 @@ class GeminiRepository:
                 ordered[0].updated_at = datetime.utcnow()
 
     @staticmethod
+    def _is_available(account: GeminiAccount, now: datetime | None = None) -> bool:
+        now = now or datetime.utcnow()
+        if account.status in {GeminiRepository.STATUS_AUTH_FAILED, GeminiRepository.STATUS_DISABLED}:
+            return False
+        if account.status == GeminiRepository.STATUS_COOLDOWN and account.temporary_unavailable_until:
+            return account.temporary_unavailable_until <= now
+        if account.status == GeminiRepository.STATUS_RATE_LIMITED and account.rate_limited_until:
+            return account.rate_limited_until <= now
+        return True
+
+    @staticmethod
+    def _activate_account(session, account_id: int) -> GeminiAccount | None:
+        account = session.query(GeminiAccount).filter(GeminiAccount.id == account_id).first()
+        if not account:
+            return None
+
+        for candidate in session.query(GeminiAccount).all():
+            candidate.is_active = candidate.id == account_id
+            candidate.updated_at = datetime.utcnow()
+
+        if account.status in {GeminiRepository.STATUS_COOLDOWN, GeminiRepository.STATUS_RATE_LIMITED}:
+            account.status = GeminiRepository.STATUS_ACTIVE
+        return account
+
+    @staticmethod
     def get_accounts() -> list[GeminiAccount]:
         with get_db_session() as session:
             return (
@@ -70,15 +104,65 @@ class GeminiRepository:
     @staticmethod
     def get_active_account() -> GeminiAccount | None:
         with get_db_session() as session:
-            return (
+            active = (
                 session.query(GeminiAccount)
                 .filter(GeminiAccount.is_active.is_(True))
                 .order_by(GeminiAccount.priority_order.asc())
                 .first()
             )
+            if not active:
+                return None
+            if GeminiRepository._is_available(active):
+                if active.status in {GeminiRepository.STATUS_COOLDOWN, GeminiRepository.STATUS_RATE_LIMITED}:
+                    active.status = GeminiRepository.STATUS_ACTIVE
+                    active.updated_at = datetime.utcnow()
+                return active
+            return None
 
     @staticmethod
-    def switch_to_next_account(current_account_id: int) -> GeminiAccount | None:
+    def select_next_available_account(
+        *,
+        current_account_id: int | None = None,
+        excluded_account_ids: set[int] | None = None,
+    ) -> GeminiAccount | None:
+        excluded = excluded_account_ids or set()
+        now = datetime.utcnow()
+
+        with get_db_session() as session:
+            accounts = (
+                session.query(GeminiAccount)
+                .order_by(GeminiAccount.priority_order.asc(), GeminiAccount.id.asc())
+                .all()
+            )
+            if not accounts:
+                return None
+
+            start_index = 0
+            if current_account_id is not None:
+                for index, account in enumerate(accounts):
+                    if account.id == current_account_id:
+                        start_index = index
+                        break
+
+            ordered_candidates = accounts[start_index:] + accounts[:start_index]
+            for candidate in ordered_candidates:
+                if candidate.id in excluded:
+                    continue
+                if GeminiRepository._is_available(candidate, now=now):
+                    if candidate.status in {GeminiRepository.STATUS_COOLDOWN, GeminiRepository.STATUS_RATE_LIMITED}:
+                        candidate.status = GeminiRepository.STATUS_ACTIVE
+                    return GeminiRepository._activate_account(session, candidate.id)
+            return None
+
+    @staticmethod
+    def switch_to_next_available_account(
+        current_account_id: int,
+        *,
+        reason: str,
+        model_name: str,
+        error_message: str | None = None,
+        excluded_account_ids: set[int] | None = None,
+    ) -> GeminiAccount | None:
         with get_db_session() as session:
             accounts = (
                 session.query(GeminiAccount)
@@ -94,24 +178,36 @@ class GeminiRepository:
                     current_index = index
                     break
 
-            next_index = (current_index + 1) % len(accounts)
-            next_account = accounts[next_index]
+            now = datetime.utcnow()
+            excluded = excluded_account_ids or set()
+            ordered_candidates = accounts[current_index + 1 :] + accounts[: current_index + 1]
 
-            for account in accounts:
-                account.is_active = account.id == next_account.id
-                account.updated_at = datetime.utcnow()
+            for candidate in ordered_candidates:
+                if candidate.id in excluded:
+                    continue
+                if not GeminiRepository._is_available(candidate, now=now):
+                    continue
 
-            return next_account
+                for account in accounts:
+                    account.is_active = account.id == candidate.id
+                    account.updated_at = now
+
+                session.add(
+                    GeminiRequestLog(
+                        account_id=candidate.id,
+                        status=reason,
+                        event_type=reason,
+                        reason=reason,
+                        model_name=model_name,
+                        error_message=(error_message or "")[:1000] if error_message else None,
+                    )
+                )
+                return candidate
+
+            return None
 
     @staticmethod
-    def increment_account_stats(
-        account_id: int,
-        *,
-        status: str,
-        model_name: str,
-        error_message: str | None = None,
-    ) -> None:
-        """Обновляет счётчики аккаунта и добавляет запись в лог запроса."""
+    def record_request_success(account_id: int, *, model_name: str) -> None:
         with get_db_session() as session:
             account = session.query(GeminiAccount).filter(GeminiAccount.id == account_id).first()
             if not account:
@@ -119,26 +215,143 @@ class GeminiRepository:
 
             now = datetime.utcnow()
             account.total_requests = int(account.total_requests or 0) + 1
+            account.success_requests = int(account.success_requests or 0) + 1
             account.last_request_at = now
             account.updated_at = now
+            if account.status in {GeminiRepository.STATUS_COOLDOWN, GeminiRepository.STATUS_RATE_LIMITED}:
+                account.status = GeminiRepository.STATUS_ACTIVE
 
-            if status == "success":
-                account.success_requests = int(account.success_requests or 0) + 1
+            session.add(
+                GeminiRequestLog(
+                    account_id=account.id,
+                    status="request_success",
+                    event_type="request_success",
+                    reason="success",
+                    model_name=model_name,
+                )
+            )
+
+    @staticmethod
+    def record_key_error(
+        account_id: int,
+        *,
+        error_type: str,
+        model_name: str,
+        error_message: str,
+    ) -> None:
+        with get_db_session() as session:
+            account = session.query(GeminiAccount).filter(GeminiAccount.id == account_id).first()
+            if not account:
+                return
+
+            now = datetime.utcnow()
+            account.total_requests = int(account.total_requests or 0) + 1
+            account.error_requests = int(account.error_requests or 0) + 1
+            account.last_request_at = now
+            account.last_error_at = now
+            account.last_error_message = (error_message or "")[:1000]
+            account.last_error_type = error_type
+            account.updated_at = now
+
+            if error_type == "temporary":
+                account.temporary_errors_count = int(account.temporary_errors_count or 0) + 1
+                status = "retry_temporary_error"
+            elif error_type == "quota":
+                account.quota_errors_count = int(account.quota_errors_count or 0) + 1
+                status = "quota_error"
+            elif error_type == "auth":
+                account.auth_errors_count = int(account.auth_errors_count or 0) + 1
+                status = "auth_error"
             else:
-                account.error_requests = int(account.error_requests or 0) + 1
-                account.last_error_at = now
-                account.last_error_message = (error_message or "")[:1000]
-                if status == "limit_exceeded":
-                    account.limit_switches = int(account.limit_switches or 0) + 1
+                account.unknown_errors_count = int(account.unknown_errors_count or 0) + 1
+                status = "unknown_error"
 
             session.add(
                 GeminiRequestLog(
                     account_id=account.id,
                     status=status,
+                    event_type=status,
+                    reason=error_type,
                     model_name=model_name,
-                    error_message=(error_message or "")[:1000] if error_message else None,
+                    error_message=(error_message or "")[:1000],
                 )
             )
+
+    @staticmethod
+    def mark_key_temporary_unavailable(account_id: int, *, cooldown_seconds: int, reason: str) -> None:
+        with get_db_session() as session:
+            account = session.query(GeminiAccount).filter(GeminiAccount.id == account_id).first()
+            if not account:
+                return
+
+            until = datetime.utcnow() + timedelta(seconds=max(cooldown_seconds, 1))
+            account.status = GeminiRepository.STATUS_COOLDOWN
+            account.temporary_unavailable_until = until
+            account.updated_at = datetime.utcnow()
+
+            session.add(
+                GeminiRequestLog(
+                    account_id=account.id,
+                    status="key_put_on_cooldown",
+                    event_type="key_put_on_cooldown",
+                    reason="temporary",
+                    error_message=reason[:1000],
+                )
+            )
+
+    @staticmethod
+    def mark_key_rate_limited(account_id: int, *, cooldown_seconds: int, reason: str) -> None:
+        with get_db_session() as session:
+            account = session.query(GeminiAccount).filter(GeminiAccount.id == account_id).first()
+            if not account:
+                return
+
+            until = datetime.utcnow() + timedelta(seconds=max(cooldown_seconds, 1))
+            account.status = GeminiRepository.STATUS_RATE_LIMITED
+            account.rate_limited_until = until
+            account.limit_switches = int(account.limit_switches or 0) + 1
+            account.updated_at = datetime.utcnow()
+
+            session.add(
+                GeminiRequestLog(
+                    account_id=account.id,
+                    status="key_rate_limited",
+                    event_type="key_rate_limited",
+                    reason="quota",
+                    error_message=reason[:1000],
+                )
+            )
+
+    @staticmethod
+    def mark_key_auth_failed(account_id: int, *, reason: str) -> None:
+        with get_db_session() as session:
+            account = session.query(GeminiAccount).filter(GeminiAccount.id == account_id).first()
+            if not account:
+                return
+
+            account.status = GeminiRepository.STATUS_AUTH_FAILED
+            account.disabled_reason = reason[:500]
+            account.is_active = False
+            account.updated_at = datetime.utcnow()
+
+            session.add(
+                GeminiRequestLog(
+                    account_id=account.id,
+                    status="key_disabled_auth_error",
+                    event_type="key_disabled_auth_error",
+                    reason="auth",
+                    error_message=reason[:1000],
+                )
+            )
+
+    @staticmethod
+    def increment_temporary_failover(account_id: int) -> None:
+        with get_db_session() as session:
+            account = session.query(GeminiAccount).filter(GeminiAccount.id == account_id).first()
+            if not account:
+                return
+            account.temporary_failover_count = int(account.temporary_failover_count or 0) + 1
+            account.updated_at = datetime.utcnow()
 
     @staticmethod
     def get_metrics() -> dict:
@@ -152,6 +365,7 @@ class GeminiRepository:
             )
             total_requests_all_time = int(sum(int(acc.total_requests or 0) for acc in accounts))
             total_limit_switches = int(sum(int(acc.limit_switches or 0) for acc in accounts))
+            total_temporary_failovers = int(sum(int(acc.temporary_failover_count or 0) for acc in accounts))
             active = next((acc for acc in accounts if acc.is_active), None)
 
             total_requests_today = (
@@ -168,17 +382,35 @@ class GeminiRepository:
                 .limit(10)
                 .all()
             )
+            last_switch_event = (
+                session.query(GeminiRequestLog)
+                .filter(
+                    GeminiRequestLog.event_type.in_(
+                        [
+                            "switch_due_to_quota",
+                            "switch_due_to_temporary_failure",
+                            "switch_due_to_auth_error",
+                        ]
+                    )
+                )
+                .order_by(GeminiRequestLog.created_at.desc())
+                .first()
+            )
 
         return {
             "active_account": active,
             "total_requests_today": int(total_requests_today),
             "total_requests_all_time": total_requests_all_time,
             "total_limit_switches": total_limit_switches,
+            "total_temporary_failovers": total_temporary_failovers,
+            "last_switch_reason": (last_switch_event.event_type if last_switch_event else "—"),
             "accounts": accounts,
             "recent_events": [
                 {
                     "account_name": account_name,
                     "status": log.status,
+                    "event_type": log.event_type,
+                    "reason": log.reason,
                     "model_name": log.model_name,
                     "error_message": log.error_message,
                     "created_at": log.created_at,
