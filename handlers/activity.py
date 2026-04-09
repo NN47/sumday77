@@ -78,7 +78,7 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
     from database.repositories import (
         WorkoutRepository, MealRepository, WeightRepository,
         WaterRepository, SupplementRepository, ProcedureRepository,
-        WellbeingRepository
+        WellbeingRepository, NoteRepository
     )
     from utils.workout_utils import calculate_workout_calories
     from utils.formatters import format_count_with_unit, get_kbju_goal_label
@@ -355,6 +355,37 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
         wellbeing_summary = "\n" + " ".join(wellbeing_parts)
     else:
         wellbeing_summary = "\nСамочувствие: записей за период нет."
+
+    # 🔹 Заметки дня за период
+    note_entries = []
+    current_date = start_date
+    while current_date <= end_date:
+        note = NoteRepository.get_note_for_date(user_id, current_date)
+        if note:
+            note_entries.append(note)
+        current_date += timedelta(days=1)
+
+    notes_summary = "\nЗаметки дня: записей за период нет."
+    note_day_entry = next((note for note in note_entries if note.date == end_date), None)
+    if note_entries:
+        avg_note_rating = sum(int(note.day_rating or 0) for note in note_entries) / len(note_entries)
+        factors_counter = Counter(
+            factor for note in note_entries for factor in (note.factors or [])
+        )
+        top_factors = ", ".join(
+            f"{factor} — {count}" for factor, count in factors_counter.most_common(3)
+        )
+        notes_parts = [
+            f"Заметок: {len(note_entries)} из {days_count} дней.",
+            f"Средняя оценка дня: {avg_note_rating:.1f}/5.",
+        ]
+        if top_factors:
+            notes_parts.append(f"Частые факторы: {top_factors}.")
+        if note_day_entry and note_day_entry.text:
+            notes_parts.append(
+                f"Комментарий за {end_date.strftime('%d.%m')}: {note_day_entry.text}."
+            )
+        notes_summary = "\n" + " ".join(notes_parts)
     
     # 🔹 Вес и история веса
     weights = WeightRepository.get_weights_for_date_range(user_id, start_date, end_date)
@@ -437,7 +468,7 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
 {meals_summary}
 
 Норма / цель КБЖУ:
-{kbju_goal_summary}{water_summary}{supplement_summary}{procedure_summary}{wellbeing_summary}
+{kbju_goal_summary}{water_summary}{supplement_summary}{procedure_summary}{wellbeing_summary}{notes_summary}
 
 Вес:
 {weight_summary}{comparison_summary}
@@ -571,6 +602,19 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
 
         focus_lines = ["🎯 Фокус на завтра", *[f"• {item}" for item in focus_items]]
 
+        # 📝 Заметки дня
+        notes_lines = ["📝 Заметки дня"]
+        if note_day_entry:
+            notes_lines.append(
+                f"• Оценка дня: {int(note_day_entry.day_rating or 0)}/5"
+            )
+            if note_day_entry.factors:
+                notes_lines.append(f"• Факторы: {', '.join(note_day_entry.factors)}")
+            if note_day_entry.text:
+                notes_lines.append(f"• Комментарий: {note_day_entry.text}")
+        else:
+            notes_lines.append("• Заметка за сегодня не заполнена")
+
         report_lines = [
             "Вот что получилось за день:",
             "",
@@ -583,6 +627,8 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
             *summary_lines,
             "",
             *focus_lines,
+            "",
+            *notes_lines,
         ]
         daily_draft = "\n".join(report_lines)
     
@@ -654,6 +700,7 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
 
 Пиши структурированно, но компактно. Используй <b>жирный шрифт</b> для выделения важных цифр, фактов и процентов выполнения целей.
 Учитывай блок самочувствия и отражай его выводы в "Общий прогресс и мотивация" (или там, где это уместно).
+Учитывай блок заметок дня (оценка, факторы, комментарий) и отражай это в рекомендациях.
 В блоке "Общий прогресс и мотивация" дай конкретные рекомендации на основе данных: что улучшить, что работает хорошо, на что обратить внимание.
 
 Рекомендации делай в стиле кнопки "🔥 Философия Sumday77", учитывай её принципы, но не вставляй текст или списки из неё дословно.
