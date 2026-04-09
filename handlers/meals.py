@@ -1,4 +1,5 @@
 """Обработчики для КБЖУ и питания."""
+import asyncio
 import logging
 import json
 import re
@@ -55,6 +56,7 @@ ADD_METHOD_TEXTS = {
 AI_TEMPORARY_UNAVAILABLE_TEXT = "🤖 Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
 AI_QUOTA_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за лимита запросов."
 AI_CONFIG_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за ошибки настройки."
+AI_TIMEOUT_UNAVAILABLE_TEXT = "⏱️ AI отвечает слишком долго. Попробуй ещё раз чуть позже."
 
 
 def _get_food_diary_message_store(bot) -> dict:
@@ -229,6 +231,16 @@ async def _send_ai_error_message(message: Message, error: Exception) -> None:
         await message.answer(AI_CONFIG_UNAVAILABLE_TEXT)
         return
     await message.answer("⚠️ Не удалось получить ответ AI. Попробуй ещё раз позже.")
+
+
+async def _run_gemini_task(func, *args, timeout_seconds: float = 45.0):
+    """Запускает синхронный Gemini-вызов в отдельном потоке с timeout."""
+    if gemini_service is None:
+        raise GeminiServiceTemporaryUnavailableError("Gemini service is not initialized")
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(func, *args), timeout=timeout_seconds)
+    except asyncio.TimeoutError as exc:
+        raise GeminiServiceTemporaryUnavailableError(AI_TIMEOUT_UNAVAILABLE_TEXT) from exc
 
 
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
@@ -660,7 +672,7 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
     
     # Получаем КБЖУ через Gemini
     try:
-        kbju_data = gemini_service.estimate_kbju(user_text)
+        kbju_data = await _run_gemini_task(gemini_service.estimate_kbju, user_text)
     except Exception as e:
         await _send_ai_error_message(message, e)
         return
@@ -819,7 +831,7 @@ async def handle_photo_input(message: Message, state: FSMContext):
     
     # Анализируем через Gemini
     try:
-        kbju_data = gemini_service.estimate_kbju_from_photo(image_data)
+        kbju_data = await _run_gemini_task(gemini_service.estimate_kbju_from_photo, image_data)
     except Exception as e:
         await _send_ai_error_message(message, e)
         return
@@ -937,7 +949,7 @@ async def handle_label_photo(message: Message, state: FSMContext):
     
     # Анализируем через Gemini
     try:
-        label_data = gemini_service.extract_kbju_from_label(image_data)
+        label_data = await _run_gemini_task(gemini_service.extract_kbju_from_label, image_data)
     except Exception as e:
         await _send_ai_error_message(message, e)
         return
@@ -1048,7 +1060,7 @@ async def handle_barcode_photo(message: Message, state: FSMContext):
     
     # Распознаём штрих-код
     try:
-        barcode = gemini_service.scan_barcode(image_data)
+        barcode = await _run_gemini_task(gemini_service.scan_barcode, image_data)
     except Exception as e:
         await _send_ai_error_message(message, e)
         return
@@ -2273,7 +2285,7 @@ async def handle_meal_composition_edit(message: Message, state: FSMContext):
     
     # Получаем КБЖУ через Gemini (как в "ввести прием пищи")
     try:
-        kbju_data = gemini_service.estimate_kbju(user_text)
+        kbju_data = await _run_gemini_task(gemini_service.estimate_kbju, user_text)
     except Exception as e:
         await _send_ai_error_message(message, e)
         return
