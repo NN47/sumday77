@@ -133,22 +133,12 @@ async def _ensure_meal_type_selected(
 
 @router.message(lambda m: m.text in {MEALS_BUTTON_TEXT, LEGACY_MEALS_BUTTON_TEXT})
 async def calories(message: Message, state: FSMContext):
-    """Показывает меню КБЖУ."""
+    """Открывает дневник питания с актуальной сводкой за сегодня."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened KBJU menu")
+    logger.info(f"User {user_id} opened food diary section")
     AnalyticsRepository.track_event(user_id, "open_kbju", section="kbju")
-    await state.clear()  # Очищаем FSM состояние
-    
-    # Показываем прогресс КБЖУ
-    from utils.progress_formatters import format_progress_block
-    progress_text = format_progress_block(user_id)
-    
-    push_menu_stack(message.bot, kbju_menu)
-    await message.answer(
-        f"{progress_text}\n\nВыбери действие:",
-        reply_markup=kbju_menu,
-        parse_mode="HTML",
-    )
+    await state.clear()
+    await send_today_results(message, user_id)
 
 
 @router.message(lambda m: m.text == "🍱 Быстрый перекус")
@@ -1156,16 +1146,23 @@ async def send_today_results(message: Message, user_id: str):
     today = date.today()
     meals = MealRepository.get_meals_for_date(user_id, today)
     
+    daily_totals = MealRepository.get_daily_totals(user_id, today)
+    settings = MealRepository.get_kbju_settings(user_id)
+
     if not meals:
         from utils.keyboards import kbju_menu
+        from utils.meal_formatters import format_food_diary_header, format_daily_totals_message
+
         push_menu_stack(message.bot, kbju_menu)
-        await message.answer(
-            "Пока нет записей за сегодня. Добавь приём пищи, и я посчитаю КБЖУ!",
-            reply_markup=kbju_menu,
+        today_str = today.strftime("%d.%m.%Y")
+        empty_report = (
+            f"{format_food_diary_header(today_str)}\n\n"
+            "Пока нет записей за сегодня. Добавь приём пищи 👇\n\n"
+            f"{format_daily_totals_message(daily_totals, today_str, settings=settings, include_action_prompt=True)}"
         )
+        await message.answer(empty_report, reply_markup=kbju_menu)
         return
-    
-    daily_totals = MealRepository.get_daily_totals(user_id, today)
+
     day_str = today.strftime("%d.%m.%Y")
 
     from collections import defaultdict
@@ -1190,7 +1187,7 @@ async def send_today_results(message: Message, user_id: str):
             block_text = f"{format_food_diary_header(day_str)}\n\n{block_text}"
         messages.append(block_text)
 
-    messages.append(format_daily_totals_message(daily_totals, day_str))
+    messages.append(format_daily_totals_message(daily_totals, day_str, settings=settings, include_action_prompt=True))
     keyboard = build_meals_actions_keyboard(meals, today)
     logger.info("KBJU daily report messages=%s", len(messages))
 
@@ -1315,7 +1312,8 @@ async def show_day_meals(message: Message, user_id: str, target_date: date):
             block_text = f"{format_food_diary_header(day_str)}\n\n{block_text}"
         messages.append(block_text)
 
-    messages.append(format_daily_totals_message(daily_totals, day_str))
+    settings = MealRepository.get_kbju_settings(user_id)
+    messages.append(format_daily_totals_message(daily_totals, day_str, settings=settings, include_action_prompt=True))
     keyboard = build_meals_actions_keyboard(meals, target_date, include_back=True)
 
     for index, chunk in enumerate(messages):

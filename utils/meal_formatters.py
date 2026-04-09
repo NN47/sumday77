@@ -7,7 +7,9 @@ from collections import defaultdict
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.models import Meal, KbjuSettings
 from utils.emoji_map import EMOJI_MAP
+from utils.formatters import get_kbju_goal_label
 from utils.meal_types import MEAL_TYPE_ORDER, normalize_meal_type
+from utils.progress_formatters import build_progress_bar
 
 logger = logging.getLogger(__name__)
 
@@ -166,25 +168,70 @@ def format_meal_block(meal_type: str, items: list[Meal]) -> list[str]:
     return lines
 
 
-def format_daily_totals_lines(day_totals: dict, day_str: str) -> list[str]:
-    """Форматирует лаконичный итог дня по фактическим КБЖУ."""
+def _build_goal_progress_line(label: str, current: float, target: float, unit: str) -> list[str]:
+    percent = 0 if target <= 0 else round((current / target) * 100)
+    return [
+        f"{label}: {current:.0f}/{target:.0f} {unit} ({percent}%)",
+        build_progress_bar(current, target),
+    ]
+
+
+def format_daily_totals_lines(
+    day_totals: dict,
+    day_str: str,
+    settings: KbjuSettings | None = None,
+    include_action_prompt: bool = False,
+) -> list[str]:
+    """Форматирует нижний блок прогресса КБЖУ в дневнике питания."""
     calories_current = float(day_totals.get("calories", 0) or 0)
     protein_current = float(day_totals.get("protein_g", day_totals.get("protein", 0)) or 0)
     fat_current = float(day_totals.get("fat_total_g", day_totals.get("fat", 0)) or 0)
     carbs_current = float(day_totals.get("carbohydrates_total_g", day_totals.get("carbs", 0)) or 0)
 
+    if settings:
+        goal_label = get_kbju_goal_label(settings.goal)
+        base_calories_target = float(settings.calories or 0)
+        protein_target = float(settings.protein or 0)
+        fat_target = float(settings.fat or 0)
+        carbs_target = float(settings.carbs or 0)
+    else:
+        goal_label = "Не задана"
+        base_calories_target = 0.0
+        protein_target = 0.0
+        fat_target = 0.0
+        carbs_target = 0.0
+
     lines = [
-        f"📊 Итог дня — {day_str}",
+        f"🎯 Цель: {goal_label}",
+        f"📊 Базовая норма: {base_calories_target:.0f} ккал",
         "",
-        f"🔥 {calories_current:.0f} ккал",
-        f"💪 {protein_current:.0f} г 🥑 {fat_current:.0f} г 🍩 {carbs_current:.0f} г",
     ]
+    lines.extend(_build_goal_progress_line("🔥 Калории", calories_current, base_calories_target, "ккал"))
+    lines.extend(_build_goal_progress_line("💪 Белки", protein_current, protein_target, "г"))
+    lines.extend(_build_goal_progress_line("🥑 Жиры", fat_current, fat_target, "г"))
+    lines.extend(_build_goal_progress_line("🍩 Углеводы", carbs_current, carbs_target, "г"))
+
+    if include_action_prompt:
+        lines.extend(["", "Выбери действие:"])
+
     return lines
 
 
-def format_daily_totals_message(day_totals: dict, day_str: str) -> str:
-    """Собирает итог дня в одну строку сообщения."""
-    return "\n".join(format_daily_totals_lines(day_totals, day_str))
+def format_daily_totals_message(
+    day_totals: dict,
+    day_str: str,
+    settings: KbjuSettings | None = None,
+    include_action_prompt: bool = False,
+) -> str:
+    """Собирает нижний блок прогресса КБЖУ в одну строку сообщения."""
+    return "\n".join(
+        format_daily_totals_lines(
+            day_totals,
+            day_str,
+            settings=settings,
+            include_action_prompt=include_action_prompt,
+        )
+    )
 
 
 def build_meals_actions_keyboard(
