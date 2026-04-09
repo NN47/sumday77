@@ -1469,20 +1469,20 @@ async def edit_last_meal(message: Message, state: FSMContext):
         )
         return
     
-    # Сохраняем данные в FSM для редактирования
-    await state.set_state(MealEntryStates.choosing_edit_type)
+    # Сохраняем данные в FSM для редактирования веса
+    await state.set_state(MealEntryStates.editing_meal_weight)
     await state.update_data(
         meal_id=last_meal_id,
         target_date=meal.date.isoformat(),
         saved_products=products,
+        weight_drafts={},
+        editing_product_idx=None,
     )
-    
-    # Показываем выбор типа редактирования
-    push_menu_stack(message.bot, kbju_edit_type_menu)
+
+    # Сразу переходим к изменению веса продукта
     await message.answer(
-        "✏️ Редактирование приёма пищи\n\n"
-        "Выбери, что хочешь изменить:",
-        reply_markup=kbju_edit_type_menu,
+        "⚖️ Выбери продукт, вес которого хочешь изменить:",
+        reply_markup=_build_weight_products_keyboard(products),
     )
 
 
@@ -1551,20 +1551,19 @@ async def start_meal_edit(callback: CallbackQuery, state: FSMContext):
         )
         return
     
-    # Сохраняем данные в FSM
+    # Сохраняем данные в FSM и сразу открываем изменение веса
     await state.update_data(
         meal_id=meal_id,
         target_date=target_date.isoformat(),
         saved_products=products,
+        weight_drafts={},
+        editing_product_idx=None,
     )
-    await state.set_state(MealEntryStates.choosing_edit_type)
-    
-    # Показываем выбор типа редактирования
-    push_menu_stack(callback.message.bot, kbju_edit_type_menu)
+    await state.set_state(MealEntryStates.editing_meal_weight)
+
     await callback.message.answer(
-        "✏️ Редактирование приёма пищи\n\n"
-        "Выбери, что хочешь изменить:",
-        reply_markup=kbju_edit_type_menu,
+        "⚖️ Выбери продукт, вес которого хочешь изменить:",
+        reply_markup=_build_weight_products_keyboard(products),
     )
 
 
