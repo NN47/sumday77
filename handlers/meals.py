@@ -26,7 +26,7 @@ from services.gemini_service import gemini_service
 from utils.validators import parse_date
 from utils.telegram_text import split_telegram_message
 from datetime import datetime
-from utils.meal_types import MealType, normalize_meal_type, display_meal_type
+from utils.meal_types import MealType, MEAL_TYPE_ORDER, normalize_meal_type, display_meal_type
 
 logger = logging.getLogger(__name__)
 
@@ -1130,20 +1130,31 @@ async def send_today_results(message: Message, user_id: str):
     daily_totals = MealRepository.get_daily_totals(user_id, today)
     day_str = today.strftime("%d.%m.%Y")
 
-    kbju_settings = MealRepository.get_kbju_settings(user_id)
-
-    from utils.meal_formatters import format_today_meals, build_meals_actions_keyboard
-    report_text = format_today_meals(
-        meals,
-        daily_totals,
-        day_str,
-        include_date_header=True,
-        settings=kbju_settings,
+    from collections import defaultdict
+    from utils.meal_formatters import (
+        format_food_diary_header,
+        format_meal_block,
+        format_daily_totals_message,
+        build_meals_actions_keyboard,
     )
-    text = report_text
-    keyboard = build_meals_actions_keyboard(meals, today)
 
-    logger.info("KBJU daily report length=%s", len(text))
+    grouped: dict[str, list] = defaultdict(list)
+    for meal in meals:
+        grouped[normalize_meal_type(getattr(meal, "meal_type", None))].append(meal)
+
+    messages: list[str] = []
+    for meal_type in MEAL_TYPE_ORDER:
+        meal_group = grouped.get(meal_type, [])
+        if not meal_group:
+            continue
+        block_text = "\n".join(format_meal_block(meal_type, meal_group))
+        if not messages:
+            block_text = f"{format_food_diary_header(day_str)}\n\n{block_text}"
+        messages.append(block_text)
+
+    messages.append(format_daily_totals_message(daily_totals, day_str))
+    keyboard = build_meals_actions_keyboard(meals, today)
+    logger.info("KBJU daily report messages=%s", len(messages))
 
     async def _safe_send(chunk: str, *, with_keyboard: bool = False):
         """Безопасная отправка chunk: сначала HTML, при ошибке — plain text."""
@@ -1163,15 +1174,16 @@ async def send_today_results(message: Message, user_id: str):
                 fallback_kwargs["reply_markup"] = keyboard
             await message.answer(chunk, **fallback_kwargs)
 
-    if len(text) <= 4000:
-        await _safe_send(text, with_keyboard=True)
-        return
+    for index, chunk in enumerate(messages):
+        if len(chunk) <= 4000:
+            await _safe_send(chunk, with_keyboard=(index == len(messages) - 1))
+            continue
 
-    chunks = split_telegram_message(text)
-    logger.info("KBJU daily report split into %s chunk(s)", len(chunks))
-
-    for index, chunk in enumerate(chunks):
-        await _safe_send(chunk, with_keyboard=(index == 0))
+        chunks = split_telegram_message(chunk)
+        logger.info("KBJU daily report split message %s into %s chunk(s)", index, len(chunks))
+        for chunk_index, nested_chunk in enumerate(chunks):
+            is_last_piece = index == len(messages) - 1 and chunk_index == len(chunks) - 1
+            await _safe_send(nested_chunk, with_keyboard=is_last_piece)
 
 
 @router.message(lambda m: m.text == "📆 Календарь КБЖУ")
@@ -1243,13 +1255,36 @@ async def show_day_meals(message: Message, user_id: str, target_date: date):
     
     daily_totals = MealRepository.get_daily_totals(user_id, target_date)
     day_str = target_date.strftime("%d.%m.%Y")
-    kbju_settings = MealRepository.get_kbju_settings(user_id)
-    
-    from utils.meal_formatters import format_today_meals, build_meals_actions_keyboard
-    text = format_today_meals(meals, daily_totals, day_str, settings=kbju_settings)
+    from collections import defaultdict
+    from utils.meal_formatters import (
+        format_food_diary_header,
+        format_meal_block,
+        format_daily_totals_message,
+        build_meals_actions_keyboard,
+    )
+
+    grouped: dict[str, list] = defaultdict(list)
+    for meal in meals:
+        grouped[normalize_meal_type(getattr(meal, "meal_type", None))].append(meal)
+
+    messages: list[str] = []
+    for meal_type in MEAL_TYPE_ORDER:
+        meal_group = grouped.get(meal_type, [])
+        if not meal_group:
+            continue
+        block_text = "\n".join(format_meal_block(meal_type, meal_group))
+        if not messages:
+            block_text = f"{format_food_diary_header(day_str)}\n\n{block_text}"
+        messages.append(block_text)
+
+    messages.append(format_daily_totals_message(daily_totals, day_str))
     keyboard = build_meals_actions_keyboard(meals, target_date, include_back=True)
-    
-    await message.answer(text, reply_markup=keyboard)
+
+    for index, chunk in enumerate(messages):
+        await message.answer(
+            chunk,
+            reply_markup=keyboard if index == len(messages) - 1 else None,
+        )
 
 
 def _truncate_product_name(name: str, limit: int = 28) -> str:
