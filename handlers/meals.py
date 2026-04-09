@@ -1661,12 +1661,47 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
 
 @router.callback_query(lambda c: c.data.startswith("food:clear_meal:"))
 async def clear_meal_from_diary_block(callback: CallbackQuery):
-    """Очищает выбранный приём пищи (meal_type) за дату."""
+    """Запрашивает подтверждение очистки выбранного приёма пищи (meal_type) за дату."""
     await callback.answer()
     parts = callback.data.split(":")
     if len(parts) < 4:
         await callback.message.answer("❌ Не удалось очистить приём пищи: некорректные данные.")
         return
+
+    meal_type = normalize_meal_type(parts[2], fallback=MealType.SNACK.value)
+    target_date = date.fromisoformat(parts[3])
+    meal_title = display_meal_type(meal_type).lower()
+    target_date_iso = target_date.isoformat()
+
+    confirm_keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Да, удалить",
+                    callback_data=f"food:clear_meal_confirm:{meal_type}:{target_date_iso}",
+                ),
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data=f"food:clear_meal_cancel:{meal_type}:{target_date_iso}",
+                ),
+            ]
+        ]
+    )
+    await callback.message.answer(
+        f"❓ Вы точно хотите удалить все данные за {meal_title}?",
+        reply_markup=confirm_keyboard,
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("food:clear_meal_confirm:"))
+async def clear_meal_from_diary_block_confirmed(callback: CallbackQuery):
+    """Очищает выбранный приём пищи (meal_type) за дату после подтверждения."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    if len(parts) < 4:
+        await callback.message.answer("❌ Не удалось очистить приём пищи: некорректные данные.")
+        return
+
     meal_type = normalize_meal_type(parts[2], fallback=MealType.SNACK.value)
     target_date = date.fromisoformat(parts[3])
     user_id = str(callback.from_user.id)
@@ -1674,7 +1709,22 @@ async def clear_meal_from_diary_block(callback: CallbackQuery):
     if deleted_count <= 0:
         await callback.message.answer("ℹ️ В этом приёме пищи уже нет записей.")
         return
+
     await callback.message.answer(f"✅ {display_meal_type(meal_type)} очищен: удалено записей — {deleted_count}.")
+    await show_day_meals(callback.message, user_id, target_date)
+
+
+@router.callback_query(lambda c: c.data.startswith("food:clear_meal_cancel:"))
+async def clear_meal_from_diary_block_cancelled(callback: CallbackQuery):
+    """Отменяет очистку выбранного приёма пищи и возвращает отчёт за день."""
+    await callback.answer("Очистка отменена")
+    parts = callback.data.split(":")
+    if len(parts) < 4:
+        return
+
+    target_date = date.fromisoformat(parts[3])
+    user_id = str(callback.from_user.id)
+    await callback.message.answer("👌 Очистку отменили.")
     await show_day_meals(callback.message, user_id, target_date)
 
 
