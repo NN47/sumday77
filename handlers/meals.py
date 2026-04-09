@@ -960,6 +960,7 @@ async def handle_weight_input(message: Message, state: FSMContext):
 
     user_id = str(message.from_user.id)
     data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     
     try:
         weight_grams = float(message.text.replace(",", "."))
