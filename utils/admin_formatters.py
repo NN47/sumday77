@@ -210,96 +210,204 @@ def format_users(metrics: dict) -> str:
     return "\n".join(lines)
 
 
-def format_gemini(metrics: dict) -> str:
-    def translate_status(status: str | None) -> str:
-        status_translations = {
-            "active": "🟢 Активен",
-            "cooldown": "🟡 Ожидание",
-            "rate_limited": "🔴 Ошибка",
-            "auth_failed": "🔴 Ошибка",
-            "unknown": "🔴 Ошибка",
-            "temporary": "🔴 Ошибка",
-            "quota": "🔴 Ошибка",
-            "auth": "🔴 Ошибка",
-            "disabled": "⚫ Отключен",
-        }
-        return status_translations.get(status or "", "🔴 Ошибка")
+def clean_text(value: str | None, *, max_length: int = 140) -> str:
+    if not value:
+        return "—"
+    cleaned = " ".join(str(value).split())
+    if not cleaned:
+        return "—"
+    if len(cleaned) > max_length:
+        return f"{cleaned[: max_length - 1].rstrip()}…"
+    return cleaned
 
-    def translate_error_type(error_type: str | None) -> str:
-        error_type_translations = {
-            "temporary": "Временная ошибка",
-            "quota": "Превышен лимит",
-            "auth": "Ошибка авторизации",
-            "unknown": "Неизвестная ошибка",
-        }
-        return error_type_translations.get(error_type or "", error_type or "—")
 
-    def translate_event(event: str | None) -> str:
-        event_translations = {
-            "request_success": "Успешный запрос",
-            "retry_temporary_error": "Повтор запроса (временная ошибка)",
-            "key_put_on_cooldown": "Ключ временно отключен",
-            "switch_due_to_temporary_failure": "Переключение из-за временной ошибки",
-            "switch_due_to_quota": "Переключение из-за лимита",
-            "switch_due_to_auth_error": "Переключение из-за ошибки авторизации",
-        }
-        return event_translations.get(event or "", event or "Событие")
+def format_datetime(value) -> str:
+    if not value:
+        return "—"
+    if isinstance(value, datetime):
+        return value.strftime("%d.%m %H:%M")
+    return clean_text(str(value), max_length=32)
 
-    lines = ["🤖 <b>Gemini / AI</b>", ""]
 
-    active = metrics.get("active_account")
-    active_name = active.account_name if active else "—"
-    lines.extend(
-        [
-            f"• Активный аккаунт: <b>{active_name}</b>",
-            f"• Запросов сегодня: <b>{metrics.get('total_requests_today', 0)}</b>",
-            f"• Запросов за всё время: <b>{metrics.get('total_requests_all_time', 0)}</b>",
-            f"• Переключений по лимиту: <b>{metrics.get('total_limit_switches', 0)}</b>",
-            f"• Временных переключений: <b>{metrics.get('total_temporary_failovers', 0)}</b>",
-            f"• Последняя причина переключения: <b>{translate_event(metrics.get('last_switch_reason'))}</b>",
-            "",
-            "📚 <b>Аккаунты</b>",
-        ]
-    )
+def translate_error_type(error_type: str | None) -> str:
+    mapping = {
+        "temporary": "Временная ошибка",
+        "quota": "Превышен лимит",
+        "auth": "Ошибка авторизации",
+        "unknown": "Неизвестная ошибка",
+    }
+    if not error_type:
+        return "—"
+    return mapping.get(error_type, "Неизвестная ошибка")
 
-    accounts = metrics.get("accounts", [])
+
+def translate_switch_reason(reason: str | None) -> str:
+    mapping = {
+        "switch_due_to_quota": "Переключение из-за лимита",
+        "switch_due_to_temporary_failure": "Переключение из-за временной ошибки",
+        "switch_due_to_auth_error": "Переключение из-за ошибки авторизации",
+    }
+    return mapping.get(reason or "", "—")
+
+
+def translate_error_message(message: str | None, *, debug: bool = False, max_length: int = 140) -> str:
+    normalized = clean_text(message, max_length=300)
+    if normalized == "—":
+        return "—"
+
+    lowered = normalized.lower()
+    if "this model is currently experiencing high demand" in lowered:
+        translated = "Модель перегружена запросами (503)"
+    elif "client has been closed" in lowered:
+        translated = "Клиент Gemini был закрыт"
+    elif any(token in lowered for token in ("quota", "rate limit", "resource exhausted")):
+        translated = "Превышен лимит Gemini API"
+    elif any(token in lowered for token in ("auth", "unauthenticated", "unauthorized")):
+        translated = "Ошибка авторизации Gemini API"
+    else:
+        translated = normalized
+
+    translated = clean_text(translated, max_length=max_length)
+    if debug and translated != normalized:
+        return clean_text(f"{translated} | raw: {normalized}", max_length=max_length)
+    return translated
+
+
+def _val(value, *, default: str = "—") -> str:
+    if value is None:
+        return default
+    return str(value)
+
+
+def _account_health(account) -> str:
+    if getattr(account, "disabled_reason", None) or getattr(account, "status", None) in {
+        "cooldown",
+        "rate_limited",
+        "auth_failed",
+        "disabled",
+    }:
+        return "Недоступен"
+    errors = int(getattr(account, "error_requests", 0) or 0)
+    total = int(getattr(account, "total_requests", 0) or 0)
+    if total == 0:
+        return "Стабильный"
+    if errors / total >= 0.35 or errors >= 10:
+        return "Нестабильный"
+    return "Стабильный"
+
+
+def translate_status(account, *, active_account_name: str | None) -> str:
+    now = datetime.utcnow()
+    raw_status = getattr(account, "status", None)
+    disabled_reason = getattr(account, "disabled_reason", None)
+    cooldown_until = getattr(account, "temporary_unavailable_until", None)
+
+    if disabled_reason:
+        return "🔴 Отключен"
+    if getattr(account, "account_name", None) == active_account_name or getattr(account, "is_active", False):
+        return "🟢 Активен"
+    if cooldown_until and isinstance(cooldown_until, datetime) and cooldown_until > now:
+        return "🟠 Пауза"
+    if raw_status in {"active", "cooldown", "rate_limited", "auth_failed", "disabled", None, ""}:
+        return "🟡 Ожидание"
+    return "⚪ Неизвестно"
+
+
+def build_account_block(account, *, active_account_name: str | None, compact: bool = False, debug: bool = False) -> str:
+    title = f"• <b>{_val(getattr(account, 'account_name', None))}</b> {translate_status(account, active_account_name=active_account_name)}"
+    if compact:
+        return (
+            f"{title}\n"
+            f"  • Запросы: <b>{_val(getattr(account, 'total_requests', 0), default='0')}</b>, "
+            f"Ошибки: <b>{_val(getattr(account, 'error_requests', 0), default='0')}</b>, "
+            f"Состояние: <b>{_account_health(account)}</b>"
+        )
+
+    lines = [
+        title,
+        "",
+        f"  Ключ: {_val(getattr(account, 'api_key_masked', None))}",
+        "",
+        "  Запросы:",
+        f"  • Сегодня: {_val(getattr(account, 'today_requests', None))}",
+        f"  • Всего: {_val(getattr(account, 'total_requests', 0), default='0')}",
+        f"  • Успешных: {_val(getattr(account, 'success_requests', 0), default='0')}",
+        f"  • Ошибок: {_val(getattr(account, 'error_requests', 0), default='0')}",
+        "",
+        "  Ошибки:",
+        f"  • Временные: {_val(getattr(account, 'temporary_errors_count', 0), default='0')}",
+        f"  • Лимиты: {_val(getattr(account, 'quota_errors_count', 0), default='0')}",
+        f"  • Авторизация: {_val(getattr(account, 'auth_errors_count', 0), default='0')}",
+        f"  • Неизвестные: {_val(getattr(account, 'unknown_errors_count', 0), default='0')}",
+        "",
+        "  Переключения:",
+        f"  • По лимиту: {_val(getattr(account, 'limit_switches', 0), default='0')}",
+        f"  • По временным ошибкам: {_val(getattr(account, 'temporary_failover_count', 0), default='0')}",
+        "",
+        "  Статус:",
+        f"  • Состояние: {_account_health(account)}",
+        f"  • Последний запрос: {format_datetime(getattr(account, 'last_request_at', None))}",
+        f"  • Последняя ошибка: {format_datetime(getattr(account, 'last_error_at', None))}",
+        f"  • Тип ошибки: {translate_error_type(getattr(account, 'last_error_type', None))}",
+        f"  • Ожидание до: {format_datetime(getattr(account, 'temporary_unavailable_until', None))}",
+        f"  • Ограничение API до: {format_datetime(getattr(account, 'rate_limited_until', None))}",
+        f"  • Причина отключения: {clean_text(getattr(account, 'disabled_reason', None), max_length=90)}",
+        f"  • Последнее сообщение об ошибке: {translate_error_message(getattr(account, 'last_error_message', None), debug=debug, max_length=90)}",
+    ]
+    return "\n".join(lines)
+
+
+def build_events_block(events: list[dict], *, debug: bool = False) -> str:
+    mapping = {
+        "retry_temporary_error": "Повтор запроса после ошибки",
+        "request_success": "Успешный запрос",
+        "key_put_on_cooldown": "Ключ временно на паузе",
+        "switch_due_to_quota": "Переключение из-за лимита",
+        "switch_due_to_temporary_failure": "Переключение из-за временной ошибки",
+    }
+    lines = ["🕘 <b>Последние события</b>", ""]
+    if not events:
+        lines.append("• —")
+        return "\n".join(lines)
+
+    for event in events:
+        event_type = event.get("event_type") or event.get("status")
+        label = mapping.get(event_type, "Событие")
+        details = translate_error_message(event.get("error_message"), debug=debug, max_length=45)
+        suffix = f" ({details})" if details != "—" and event_type in {"retry_temporary_error", "key_put_on_cooldown"} else ""
+        lines.append(
+            f"• {format_datetime(event.get('created_at'))} — {event.get('account_name') or '—'} — {label}{suffix}"
+        )
+    return "\n".join(lines)
+
+
+def translate_gemini_admin_stats(stats: dict, compact: bool = False, debug: bool = False) -> str:
+    active = stats.get("active_account")
+    active_name = getattr(active, "account_name", None) or "—"
+    lines = [
+        "🤖 <b>Gemini / AI</b>",
+        "",
+        f"• Активный аккаунт: <b>{active_name}</b>",
+        f"• Запросов сегодня: <b>{stats.get('total_requests_today', '—')}</b>",
+        f"• Запросов всего: <b>{stats.get('total_requests_all_time', '—')}</b>",
+        f"• Переключений по лимиту: <b>{stats.get('total_limit_switches', '—')}</b>",
+        f"• Переключений из-за временных ошибок: <b>{stats.get('total_temporary_failovers', '—')}</b>",
+        f"• Последняя причина переключения: <b>{translate_switch_reason(stats.get('last_switch_reason'))}</b>",
+        "",
+        "📚 <b>Аккаунты</b>",
+    ]
+
+    accounts = stats.get("accounts", [])
     if not accounts:
-        lines.append("• Нет настроенных аккаунтов")
+        lines.append("• —")
     else:
         for account in accounts:
-            active_mark = " ✅" if account.is_active else ""
-            lines.extend(
-                [
-                    f"• <b>{account.account_name}</b> {translate_status(account.status)}{active_mark}",
-                    f"  ключ: {account.api_key_masked}",
-                    f"  Всего запросов/Успешных/Ошибок: <b>{account.total_requests}</b> / "
-                    f"<b>{account.success_requests}</b> / <b>{account.error_requests}</b>",
-                    f"  Временные/Лимиты/Авторизация/Неизвестные: <b>{account.temporary_errors_count}</b> / "
-                    f"<b>{account.quota_errors_count}</b> / <b>{account.auth_errors_count}</b> / "
-                    f"<b>{account.unknown_errors_count}</b>",
-                    f"  limit_switches: <b>{account.limit_switches}</b>, "
-                    f"temporary_failover: <b>{account.temporary_failover_count}</b>",
-                    f"  Последний запрос: {fmt_dt(account.last_request_at)}",
-                    f"  Последняя ошибка: {fmt_dt(account.last_error_at)}",
-                    f"  Тип ошибки: {translate_error_type(account.last_error_type)}",
-                    f"  Ожидание до: {fmt_dt(account.temporary_unavailable_until)}",
-                    f"  Ограничение API до: {fmt_dt(account.rate_limited_until)}",
-                    f"  Причина отключения: {account.disabled_reason or '—'}",
-                    f"  last_error_message: {(account.last_error_message or '—')[:180]}",
-                ]
-            )
+            lines.append(build_account_block(account, active_account_name=active_name, compact=compact, debug=debug))
+            lines.append("")
 
-    lines.extend(["", "🕘 <b>Последние 10 событий</b>"])
-    events = metrics.get("recent_events", [])
-    if not events:
-        lines.append("• Пока нет событий")
-    else:
-        for event in events:
-            label = translate_event(event.get("event_type") or event.get("status"))
-            details = (event.get("error_message") or "").strip()
-            suffix = f" — {details[:120]}" if details else ""
-            lines.append(
-                f"• {fmt_dt(event.get('created_at'))} — {event.get('account_name')} — {label}{suffix}"
-            )
+    lines.append(build_events_block(stats.get("recent_events", []), debug=debug))
+    return "\n".join(lines).strip()
 
-    return "\n".join(lines)
+
+def format_gemini(metrics: dict) -> str:
+    return translate_gemini_admin_stats(metrics)
