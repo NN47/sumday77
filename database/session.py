@@ -126,6 +126,48 @@ def init_db():
         except Exception as e:
             logger.warning(f"Ошибка при проверке meals.meal_type: {e}")
 
+        # gemini_accounts расширенные статусы и метрики
+        try:
+            gemini_columns = {col["name"] for col in inspector.get_columns("gemini_accounts")}
+        except Exception as e:
+            logger.warning(f"Ошибка при чтении схемы gemini_accounts: {e}")
+            gemini_columns = set()
+
+        def _add_gemini_account_column_if_missing(column_name: str, sql_type: str) -> None:
+            if column_name in gemini_columns:
+                return
+            try:
+                conn.execute(text(f"ALTER TABLE gemini_accounts ADD COLUMN {column_name} {sql_type}"))
+                conn.commit()
+                logger.info(f"Добавлен столбец gemini_accounts.{column_name}")
+            except Exception as e:
+                logger.warning(f"Ошибка при добавлении gemini_accounts.{column_name}: {e}")
+
+        _add_gemini_account_column_if_missing("temporary_failover_count", "INTEGER DEFAULT 0 NOT NULL")
+        _add_gemini_account_column_if_missing("temporary_errors_count", "INTEGER DEFAULT 0 NOT NULL")
+        _add_gemini_account_column_if_missing("quota_errors_count", "INTEGER DEFAULT 0 NOT NULL")
+        _add_gemini_account_column_if_missing("auth_errors_count", "INTEGER DEFAULT 0 NOT NULL")
+        _add_gemini_account_column_if_missing("unknown_errors_count", "INTEGER DEFAULT 0 NOT NULL")
+        _add_gemini_account_column_if_missing("status", "VARCHAR DEFAULT 'active' NOT NULL")
+        _add_gemini_account_column_if_missing("disabled_reason", "VARCHAR")
+        _add_gemini_account_column_if_missing("rate_limited_until", "TIMESTAMP")
+        _add_gemini_account_column_if_missing("temporary_unavailable_until", "TIMESTAMP")
+        _add_gemini_account_column_if_missing("last_error_type", "VARCHAR")
+
+        # gemini_request_logs event_type / reason
+        try:
+            gemini_log_columns = {col["name"] for col in inspector.get_columns("gemini_request_logs")}
+            if "event_type" not in gemini_log_columns:
+                conn.execute(text("ALTER TABLE gemini_request_logs ADD COLUMN event_type VARCHAR"))
+                conn.commit()
+                logger.info("Добавлен столбец gemini_request_logs.event_type")
+            if "reason" not in gemini_log_columns:
+                conn.execute(text("ALTER TABLE gemini_request_logs ADD COLUMN reason VARCHAR"))
+                conn.commit()
+                logger.info("Добавлен столбец gemini_request_logs.reason")
+        except Exception as e:
+            logger.warning(f"Ошибка при проверке gemini_request_logs event columns: {e}")
+
 
 @contextmanager
 def get_db_session():

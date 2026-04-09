@@ -1,24 +1,66 @@
 """Сервис для работы с Gemini API."""
 import json
 import logging
+import random
 import time
-from typing import Optional
+from typing import Literal, Optional
+
 from google import genai
-from google.genai import errors as genai_errors
-from config import GEMINI_API_KEY, GEMINI_API_KEY2, GEMINI_API_KEY3
+
+from config import (
+    GEMINI_API_KEY,
+    GEMINI_API_KEY2,
+    GEMINI_API_KEY3,
+    GEMINI_MAX_KEYS_PER_REQUEST,
+    GEMINI_MAX_TOTAL_ATTEMPTS_PER_REQUEST,
+    GEMINI_RATE_LIMIT_COOLDOWN_SECONDS,
+    GEMINI_TEMP_ERROR_BACKOFF_SECONDS,
+    GEMINI_TEMP_ERROR_JITTER_SECONDS,
+    GEMINI_TEMP_ERROR_MAX_RETRIES,
+    GEMINI_TEMP_KEY_COOLDOWN_SECONDS,
+)
 from database.repositories import GeminiRepository
 
 logger = logging.getLogger(__name__)
 
+GeminiErrorType = Literal["temporary", "quota", "auth", "unknown"]
+
+
+class GeminiServiceError(Exception):
+    """Базовая доменная ошибка сервиса Gemini."""
+
+    def __init__(self, message: str, *, error_type: GeminiErrorType):
+        super().__init__(message)
+        self.error_type = error_type
+
+
+class GeminiServiceTemporaryUnavailableError(GeminiServiceError):
+    def __init__(self, message: str):
+        super().__init__(message, error_type="temporary")
+
+
+class GeminiServiceQuotaError(GeminiServiceError):
+    def __init__(self, message: str):
+        super().__init__(message, error_type="quota")
+
+
+class GeminiServiceAuthError(GeminiServiceError):
+    def __init__(self, message: str):
+        super().__init__(message, error_type="auth")
+
+
+class GeminiServiceUnknownError(GeminiServiceError):
+    def __init__(self, message: str):
+        super().__init__(message, error_type="unknown")
+
 
 class GeminiService:
-    """Сервис для работы с Gemini API с поддержкой fallback ключей."""
-    
+    """Сервис для работы с Gemini API с fallback ключами и устойчивой обработкой ошибок."""
+
     def __init__(self):
         if not GEMINI_API_KEY:
             raise RuntimeError("GEMINI_API_KEY не задан в конфигурации")
-        
-        # Список ключей для переключения (имена стабильны для БД)
+
         self.account_configs = [
             {"account_name": "GEMINI_API_KEY", "api_key": GEMINI_API_KEY, "priority_order": 1}
         ]
@@ -39,174 +81,228 @@ class GeminiService:
         self.model = "gemini-2.5-flash"
         self.client = genai.Client(api_key=self.account_configs[0]["api_key"])
 
+        self.max_retries_per_key_for_temporary_errors = max(0, GEMINI_TEMP_ERROR_MAX_RETRIES)
+        self.backoff_schedule = [max(0, int(v)) for v in GEMINI_TEMP_ERROR_BACKOFF_SECONDS]
+        self.backoff_jitter_seconds = max(0.0, float(GEMINI_TEMP_ERROR_JITTER_SECONDS))
+        self.temporary_cooldown_seconds = max(1, GEMINI_TEMP_KEY_COOLDOWN_SECONDS)
+        self.rate_limit_cooldown_seconds = max(1, GEMINI_RATE_LIMIT_COOLDOWN_SECONDS)
+        self.max_keys_per_request = max(1, GEMINI_MAX_KEYS_PER_REQUEST)
+        self.max_total_attempts_per_request = max(1, GEMINI_MAX_TOTAL_ATTEMPTS_PER_REQUEST)
+
     def _ensure_accounts_synced(self):
         if self._accounts_synced:
             return
         GeminiRepository.sync_accounts(self.account_configs)
         self._accounts_synced = True
 
-    def _build_client_for_active_account(self):
-        self._ensure_accounts_synced()
-        active_account = GeminiRepository.get_active_account()
-        if not active_account:
-            GeminiRepository.sync_accounts(self.account_configs)
-            active_account = GeminiRepository.get_active_account()
-        if not active_account:
-            raise RuntimeError("Не удалось определить активный Gemini-аккаунт")
-        api_key = self.api_key_by_account_name.get(active_account.account_name)
+    def _build_client_for_account(self, account_name: str):
+        api_key = self.api_key_by_account_name.get(account_name)
         if not api_key:
-            raise RuntimeError(f"API ключ для аккаунта {active_account.account_name} не найден в окружении")
+            raise RuntimeError(f"API ключ для аккаунта {account_name} не найден в окружении")
         return genai.Client(api_key=api_key)
-    
-    def _is_quota_error(self, error: Exception) -> bool:
-        """Проверяет, является ли ошибка ошибкой квоты/лимита."""
+
+    def classify_gemini_error(self, error: Exception) -> GeminiErrorType:
+        """Классифицирует ошибку Gemini на temporary/quota/auth/unknown."""
         error_str = str(error).lower()
-        error_type = type(error).__name__
-        
-        # Проверяем различные типы ошибок квоты
-        quota_indicators = [
-            "quota",
-            "rate limit",
-            "429",
-            "resource exhausted",
-            "too many requests",
-            "billing",
+        error_type_name = type(error).__name__.lower()
+
+        auth_indicators = [
+            "401",
+            "403",
+            "invalid api key",
+            "api key not valid",
             "permission denied",
             "forbidden",
-            "403",
+            "unauthorized",
+            "auth",
+            "authentication",
         ]
-        
-        return any(indicator in error_str for indicator in quota_indicators) or \
-               error_type in ["ResourceExhausted", "RateLimitError", "QuotaExceeded"]
-
-    def _is_retryable_error(self, error: Exception) -> bool:
-        """Проверяет, является ли ошибка временной и подходящей для повтора."""
-        error_str = str(error).lower()
-        error_type = type(error).__name__
-
-        retryable_indicators = [
+        quota_indicators = [
+            "429",
+            "resource exhausted",
+            "quota exceeded",
+            "rate limit",
+            "daily limit",
+            "exhausted quota",
+            "too many requests",
+        ]
+        temporary_indicators = [
             "503",
+            "500",
             "unavailable",
+            "internal",
             "deadline exceeded",
             "timed out",
             "timeout",
             "connection reset",
             "temporarily unavailable",
-            "client has been closed",
+            "upstream",
             "high demand",
-            "internal server error",
-            "500",
+            "service unavailable",
+            "client has been closed",
         ]
-        retryable_error_types = {"ServerError", "ServiceUnavailable", "InternalServerError"}
 
-        return (
-            any(indicator in error_str for indicator in retryable_indicators)
-            or error_type in retryable_error_types
+        if any(token in error_str for token in auth_indicators) or error_type_name in {
+            "authenticationerror",
+            "permissiondenied",
+            "unauthorized",
+            "forbidden",
+        }:
+            return "auth"
+        if any(token in error_str for token in quota_indicators) or error_type_name in {
+            "resourceexhausted",
+            "ratelimiterror",
+            "quotaexceeded",
+        }:
+            return "quota"
+        if any(token in error_str for token in temporary_indicators) or error_type_name in {
+            "servererror",
+            "serviceunavailable",
+            "internalservererror",
+            "timeout",
+            "connectionerror",
+        }:
+            return "temporary"
+        return "unknown"
+
+    @staticmethod
+    def should_retry(error_type: GeminiErrorType) -> bool:
+        return error_type == "temporary"
+
+    def get_backoff_delay(self, attempt_number: int) -> float:
+        """Возвращает задержку перед повтором для попытки (начиная с 1)."""
+        if attempt_number <= 0:
+            return 0.0
+        if attempt_number <= len(self.backoff_schedule):
+            base = float(self.backoff_schedule[attempt_number - 1])
+        elif self.backoff_schedule:
+            base = float(self.backoff_schedule[-1])
+        else:
+            base = float(2 ** attempt_number)
+        jitter = random.uniform(0, self.backoff_jitter_seconds) if self.backoff_jitter_seconds else 0.0
+        return max(0.0, base + jitter)
+
+    def _select_next_available_key(self, *, current_account_id: int | None, excluded_account_ids: set[int]):
+        return GeminiRepository.select_next_available_account(
+            current_account_id=current_account_id,
+            excluded_account_ids=excluded_account_ids,
         )
-    
-    def _switch_to_next_account(self, current_account_id: int) -> bool:
-        """Переключается на следующий аккаунт и сохраняет активный в БД."""
-        if len(self.account_configs) <= 1:
-            logger.warning("⚠️ Нет резервных Gemini-аккаунтов для переключения")
-            return False
-        next_account = GeminiRepository.switch_to_next_account(current_account_id)
-        if not next_account:
-            return False
-        self.client = self._build_client_for_active_account()
-        logger.warning("🔄 Переключился на резервный Gemini-аккаунт: %s", next_account.account_name)
-        return True
-    
-    def _make_request(self, func, *args, **kwargs):
-        """Выполняет запрос с автоматическим переключением ключей при ошибках квоты."""
-        max_attempts = max(len(self.account_configs) * 3, 3)
-        last_error = None
-        
-        for attempt in range(max_attempts):
-            self._ensure_accounts_synced()
-            active_account = GeminiRepository.get_active_account()
-            if not active_account:
-                raise RuntimeError("Нет активного Gemini-аккаунта в БД")
-            self.client = self._build_client_for_active_account()
-            try:
-                response = func(*args, **kwargs)
-                GeminiRepository.increment_account_stats(
-                    active_account.id,
-                    status="success",
-                    model_name=self.model,
-                )
-                return response
-            except Exception as e:
-                last_error = e
-                is_quota = self._is_quota_error(e)
-                is_retryable = self._is_retryable_error(e)
-                status = "limit_exceeded" if is_quota else "error"
-                GeminiRepository.increment_account_stats(
-                    active_account.id,
-                    status=status,
-                    model_name=self.model,
-                    error_message=str(e),
-                )
-                
-                # Если это ошибка квоты и есть резервные ключи
-                if is_quota and len(self.account_configs) > 1:
-                    logger.warning(f"⚠️ Ошибка квоты на аккаунте {active_account.account_name}: {e}")
-                    
-                    # Переключаемся на следующий аккаунт
-                    if self._switch_to_next_account(active_account.id):
-                        continue  # Пробуем снова с новым ключом
 
-                # Повторяем временные ошибки, а при наличии резервных аккаунтов переключаемся
-                if is_retryable:
-                    logger.warning(
-                        "⚠️ Временная ошибка Gemini на аккаунте %s (попытка %s/%s): %s",
-                        active_account.account_name,
-                        attempt + 1,
-                        max_attempts,
-                        e,
+    def execute_gemini_request_with_failover(self, func, *args, **kwargs):
+        """Единый поток выполнения запроса Gemini с retry/backoff/cooldown/failover."""
+        self._ensure_accounts_synced()
+
+        used_account_ids: set[int] = set()
+        keys_tried = 0
+        total_attempts = 0
+        last_error: Exception | None = None
+        last_error_type: GeminiErrorType = "unknown"
+
+        active = GeminiRepository.get_active_account()
+        current_account = (
+            active if active else self._select_next_available_key(current_account_id=None, excluded_account_ids=set())
+        )
+
+        while current_account:
+            if keys_tried >= self.max_keys_per_request:
+                break
+            keys_tried += 1
+            used_account_ids.add(current_account.id)
+            self.client = self._build_client_for_account(current_account.account_name)
+
+            temp_attempt = 0
+            while total_attempts < self.max_total_attempts_per_request:
+                total_attempts += 1
+                try:
+                    response = func(*args, **kwargs)
+                    GeminiRepository.record_request_success(current_account.id, model_name=self.model)
+                    return response
+                except Exception as err:  # pragma: no cover - runtime errors from SDK
+                    last_error = err
+                    error_type = self.classify_gemini_error(err)
+                    last_error_type = error_type
+                    GeminiRepository.record_key_error(
+                        current_account.id,
+                        error_type=error_type,
+                        model_name=self.model,
+                        error_message=str(err),
                     )
-                    if len(self.account_configs) > 1:
-                        self._switch_to_next_account(active_account.id)
-                    time.sleep(min(1.5 * (attempt + 1), 6))
-                    continue
-                
-                # Если это не ошибка квоты или нет резервных ключей - пробрасываем ошибку
-                raise
-        
-        # Если все попытки исчерпаны
-        raise last_error
-    
+
+                    if error_type == "auth":
+                        GeminiRepository.mark_key_auth_failed(current_account.id, reason=str(err))
+                        break
+
+                    if error_type == "quota":
+                        GeminiRepository.mark_key_rate_limited(
+                            current_account.id,
+                            cooldown_seconds=self.rate_limit_cooldown_seconds,
+                            reason=str(err),
+                        )
+                        break
+
+                    if self.should_retry(error_type) and temp_attempt < self.max_retries_per_key_for_temporary_errors:
+                        temp_attempt += 1
+                        backoff = self.get_backoff_delay(temp_attempt)
+                        logger.warning(
+                            "⚠️ retry_temporary_error: key=%s attempt=%s/%s delay=%.2fs error=%s",
+                            current_account.account_name,
+                            temp_attempt,
+                            self.max_retries_per_key_for_temporary_errors,
+                            backoff,
+                            err,
+                        )
+                        time.sleep(backoff)
+                        continue
+
+                    if error_type == "temporary":
+                        GeminiRepository.mark_key_temporary_unavailable(
+                            current_account.id,
+                            cooldown_seconds=self.temporary_cooldown_seconds,
+                            reason=(
+                                f"cooldown {self.temporary_cooldown_seconds}s "
+                                f"after {temp_attempt} retries: {err}"
+                            ),
+                        )
+                    break
+
+            if total_attempts >= self.max_total_attempts_per_request:
+                break
+
+            next_reason = "switch_due_to_temporary_failure" if last_error_type == "temporary" else "switch_due_to_quota"
+            if last_error_type == "auth":
+                next_reason = "switch_due_to_auth_error"
+
+            if last_error_type == "temporary":
+                GeminiRepository.increment_temporary_failover(current_account.id)
+
+            current_account = GeminiRepository.switch_to_next_available_account(
+                current_account.id,
+                reason=next_reason,
+                model_name=self.model,
+                error_message=str(last_error) if last_error else None,
+                excluded_account_ids=used_account_ids,
+            )
+
+        if last_error_type == "temporary":
+            raise GeminiServiceTemporaryUnavailableError(
+                "Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
+            )
+        if last_error_type == "quota":
+            raise GeminiServiceQuotaError("AI временно недоступен из-за лимита запросов.")
+        if last_error_type == "auth":
+            raise GeminiServiceAuthError("AI временно недоступен из-за ошибки настройки.")
+        raise GeminiServiceUnknownError(str(last_error) if last_error else "Неизвестная ошибка Gemini")
+
     def analyze(self, text: str) -> str:
         """Анализирует текст через Gemini."""
-        try:
-            response = self._make_request(
-                lambda **request_kwargs: self.client.models.generate_content(**request_kwargs),
-                model=self.model,
-                contents=text
-            )
-            return response.text
-        except genai_errors.ServerError as e:
-            logger.warning(f"Gemini временно недоступен (ServerError): {e}")
-            raise
-        except Exception as e:
-            if "503" in str(e):
-                logger.warning(f"Gemini временно недоступен (503): {e}")
-                raise
-            logger.exception("Ошибка Gemini при анализе")
-            raise
-    
+        response = self.execute_gemini_request_with_failover(
+            lambda **request_kwargs: self.client.models.generate_content(**request_kwargs),
+            model=self.model,
+            contents=text,
+        )
+        return response.text
+
     def estimate_kbju(self, food_text: str) -> Optional[dict]:
-        """
-        Оценивает КБЖУ через Gemini по текстовому описанию.
-        
-        Возвращает dict вида:
-        {
-          "items": [
-            {"name": "курица", "grams": 100, "kcal": 165, "protein": 31, "fat": 4, "carbs": 0}
-          ],
-          "total": {"kcal": 165, "protein": 31, "fat": 4, "carbs": 0}
-        }
-        или None при ошибке.
-        """
         prompt = f"""
 Ты нутрициолог. Твоя задача — ОЦЕНИТЬ калории, белки, жиры и углеводы для списка продуктов.
 
@@ -250,29 +346,26 @@ class GeminiService:
 Вот данные пользователя: "{food_text}"
 """
         try:
-            response = self._make_request(
+            response = self.execute_gemini_request_with_failover(
                 lambda **request_kwargs: self.client.models.generate_content(**request_kwargs),
                 model=self.model,
                 contents=prompt,
             )
             raw = response.text.strip()
-            logger.debug(f"Gemini raw KBJU response: {raw[:200]}...")
-            
-            # Парсим JSON
             try:
                 parsed = json.loads(raw)
                 return self._normalize_kbju_payload(parsed)
             except json.JSONDecodeError:
-                # Если Gemini добавил лишний текст — вырежем JSON
                 start = raw.find("{")
                 end = raw.rfind("}")
                 if start != -1 and end != -1 and end > start:
-                    snippet = raw[start : end + 1]
-                    parsed = json.loads(snippet)
+                    parsed = json.loads(raw[start : end + 1])
                     return self._normalize_kbju_payload(parsed)
                 raise
+        except GeminiServiceError:
+            raise
         except Exception as e:
-            logger.error(f"Ошибка Gemini (КБЖУ): {e}", exc_info=True)
+            logger.error("Ошибка Gemini (КБЖУ): %s", e, exc_info=True)
             return None
 
     def _normalize_kbju_payload(self, payload: dict) -> Optional[dict]:
@@ -294,8 +387,7 @@ class GeminiService:
                     return safe_float(source.get(key))
             return 0.0
 
-        raw_items = payload.get("items")
-        items = raw_items if isinstance(raw_items, list) else []
+        items = payload.get("items") if isinstance(payload.get("items"), list) else []
         normalized_items = []
         for item in items:
             if not isinstance(item, dict):
@@ -311,8 +403,7 @@ class GeminiService:
                 }
             )
 
-        raw_total = payload.get("total")
-        total_dict = raw_total if isinstance(raw_total, dict) else {}
+        total_dict = payload.get("total") if isinstance(payload.get("total"), dict) else {}
         total = {
             "kcal": get_num(total_dict, "kcal", "calories"),
             "protein": get_num(total_dict, "protein", "protein_g"),
@@ -320,7 +411,6 @@ class GeminiService:
             "carbs": get_num(total_dict, "carbs", "carbohydrates", "carbohydrates_g"),
         }
 
-        # Если total не пришел или пустой — считаем из items
         if not any(total.values()) and normalized_items:
             total = {
                 "kcal": sum(i["kcal"] for i in normalized_items),
@@ -331,253 +421,109 @@ class GeminiService:
 
         if not normalized_items and not any(total.values()):
             return None
-
         return {"items": normalized_items, "total": total}
-    
+
     def estimate_kbju_from_photo(self, image_bytes: bytes) -> Optional[dict]:
-        """
-        Оценивает КБЖУ через Gemini Vision API по фото еды.
-        
-        Возвращает dict вида:
-        {
-          "items": [
-            {"name": "курица", "grams": 100, "kcal": 165, "protein": 31, "fat": 4, "carbs": 0}
-          ],
-          "total": {"kcal": 165, "protein": 31, "fat": 4, "carbs": 0}
-        }
-        или None при ошибке.
-        """
-        prompt = """
-Ты нутрициолог. Твоя задача — ОЦЕНИТЬ калории, белки, жиры и углеводы для еды на фотографии.
-
-Проанализируй изображение и определи:
-1. Какие продукты/блюда видны на фото
-2. Примерный вес каждого продукта (в граммах)
-3. КБЖУ для каждого продукта
-
-Требования:
-1. Оценивай вес продуктов визуально, исходя из типичных размеров порций
-2. Используй типичные значения КБЖУ для обычных продуктов (не бренд-специфично)
-3. Ответь СТРОГО в формате JSON, БЕЗ объяснений, комментариев и оформления
-
-ФОРМАТ ОТВЕТА (пример):
-{
-  "items": [
-    {
-      "name": "курица",
-      "grams": 200,
-      "kcal": 330,
-      "protein": 40,
-      "fat": 15,
-      "carbs": 0
-    },
-    {
-      "name": "рис",
-      "grams": 150,
-      "kcal": 195,
-      "protein": 4,
-      "fat": 1,
-      "carbs": 42
-    }
-  ],
-  "total": {
-    "kcal": 525,
-    "protein": 44,
-    "fat": 16,
-    "carbs": 42
-  }
-}
-"""
+        prompt = """Ты нутрициолог. Оцени КБЖУ еды на фотографии. Ответь строго JSON с items и total."""
         try:
             from google.genai import types
-            
-            # Определяем MIME тип
+
             mime_type = "image/jpeg"
-            if image_bytes.startswith(b'\x89PNG'):
+            if image_bytes.startswith(b"\x89PNG"):
                 mime_type = "image/png"
-            elif image_bytes.startswith(b'GIF'):
+            elif image_bytes.startswith(b"GIF"):
                 mime_type = "image/gif"
-            elif image_bytes.startswith(b'WEBP'):
+            elif image_bytes.startswith(b"WEBP"):
                 mime_type = "image/webp"
-            
-            response = self._make_request(
+
+            response = self.execute_gemini_request_with_failover(
                 lambda **request_kwargs: self.client.models.generate_content(**request_kwargs),
                 model=self.model,
-                contents=[
-                    types.Part.from_bytes(
-                        data=image_bytes,
-                        mime_type=mime_type
-                    ),
-                    prompt
-                ]
+                contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type), prompt],
             )
-            
             raw = response.text.strip()
-            logger.debug(f"Gemini raw KBJU response from photo: {raw[:200]}...")
-            
-            # Парсим JSON
             try:
                 return json.loads(raw)
             except json.JSONDecodeError:
                 start = raw.find("{")
                 end = raw.rfind("}")
                 if start != -1 and end != -1 and end > start:
-                    snippet = raw[start : end + 1]
-                    return json.loads(snippet)
+                    return json.loads(raw[start : end + 1])
                 raise
+        except GeminiServiceError:
+            raise
         except Exception as e:
-            logger.error(f"Ошибка Gemini (КБЖУ по фото): {e}", exc_info=True)
+            logger.error("Ошибка Gemini (КБЖУ по фото): %s", e, exc_info=True)
             return None
-    
+
     def extract_kbju_from_label(self, image_bytes: bytes) -> Optional[dict]:
-        """
-        Извлекает КБЖУ из текста на этикетке/упаковке через Gemini Vision API.
-        
-        Возвращает dict вида:
-        {
-          "product_name": "название продукта",
-          "kbju_per_100g": {
-            "kcal": 200,
-            "protein": 10,
-            "fat": 5,
-            "carbs": 30
-          },
-          "package_weight": 50,
-          "found_weight": true
-        }
-        или None при ошибке.
-        """
-        prompt = """
-Ты анализируешь фото этикетки или упаковки продукта. Твоя задача — найти в тексте информацию о КБЖУ (калориях, белках, жирах, углеводах).
-
-ВАЖНО:
-1. Прочитай весь текст на этикетке/упаковке
-2. Найди таблицу пищевой ценности или информацию о КБЖУ
-3. Обычно КБЖУ указывается на 100 грамм продукта
-4. Также попробуй найти вес упаковки/порции (может быть указан как "масса нетто", "вес", "порция" и т.д.)
-
-Ответь СТРОГО в формате JSON, БЕЗ объяснений, комментариев и оформления:
-
-{
-  "product_name": "название продукта (если видно)",
-  "kbju_per_100g": {
-    "kcal": число_калорий_на_100г,
-    "protein": число_белков_на_100г,
-    "fat": число_жиров_на_100г,
-    "carbs": число_углеводов_на_100г
-  },
-  "package_weight": число_грамм_упаковки_или_null,
-  "found_weight": true_если_найден_вес_иначе_false
-}
-
-Если не нашёл КБЖУ в тексте, верни null для всех значений.
-Если нашёл КБЖУ, но не нашёл вес упаковки, установи "package_weight": null и "found_weight": false.
-"""
+        prompt = """Извлеки КБЖУ и вес из этикетки. Ответь только JSON."""
         try:
             from google.genai import types
-            
+
             mime_type = "image/jpeg"
-            if image_bytes.startswith(b'\x89PNG'):
+            if image_bytes.startswith(b"\x89PNG"):
                 mime_type = "image/png"
-            elif image_bytes.startswith(b'GIF'):
+            elif image_bytes.startswith(b"GIF"):
                 mime_type = "image/gif"
-            elif image_bytes.startswith(b'WEBP'):
+            elif image_bytes.startswith(b"WEBP"):
                 mime_type = "image/webp"
-            
-            response = self._make_request(
+
+            response = self.execute_gemini_request_with_failover(
                 lambda **request_kwargs: self.client.models.generate_content(**request_kwargs),
                 model=self.model,
-                contents=[
-                    types.Part.from_bytes(
-                        data=image_bytes,
-                        mime_type=mime_type
-                    ),
-                    prompt
-                ]
+                contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type), prompt],
             )
-            
             raw = response.text.strip()
-            logger.debug(f"Gemini raw label KBJU response: {raw[:200]}...")
-            
             try:
                 return json.loads(raw)
             except json.JSONDecodeError:
                 start = raw.find("{")
                 end = raw.rfind("}")
                 if start != -1 and end != -1 and end > start:
-                    snippet = raw[start : end + 1]
-                    return json.loads(snippet)
+                    return json.loads(raw[start : end + 1])
                 raise
+        except GeminiServiceError:
+            raise
         except Exception as e:
-            logger.error(f"Ошибка Gemini (КБЖУ с этикетки): {e}", exc_info=True)
+            logger.error("Ошибка Gemini (КБЖУ с этикетки): %s", e, exc_info=True)
             return None
-    
+
     def scan_barcode(self, image_bytes: bytes) -> Optional[str]:
-        """
-        Распознаёт штрих-код на фото через Gemini Vision API.
-        
-        Возвращает строку с номером штрих-кода (EAN-13, UPC и т.д.) или None при ошибке.
-        """
-        prompt = """
-Ты видишь фото со штрих-кодом. Твоя задача — прочитать номер штрих-кода.
-
-ВАЖНО:
-1. Найди штрих-код на изображении (обычно это вертикальные полоски с цифрами под ними)
-2. Прочитай все цифры, которые видны под штрих-кодом
-3. Верни ТОЛЬКО номер штрих-кода (цифры), БЕЗ пробелов, дефисов и других символов
-4. Если штрих-код не виден или нечитаем, верни "NOT_FOUND"
-
-Примеры правильных ответов:
-- 4607025392134
-- 3017620422003
-- 5449000000996
-
-Ответь ТОЛЬКО номером штрих-кода, без дополнительных объяснений.
-"""
+        prompt = """Прочитай штрих-код и верни только цифры или NOT_FOUND."""
         try:
             from google.genai import types
-            
+
             mime_type = "image/jpeg"
-            if image_bytes.startswith(b'\x89PNG'):
+            if image_bytes.startswith(b"\x89PNG"):
                 mime_type = "image/png"
-            elif image_bytes.startswith(b'GIF'):
+            elif image_bytes.startswith(b"GIF"):
                 mime_type = "image/gif"
-            elif image_bytes.startswith(b'WEBP'):
+            elif image_bytes.startswith(b"WEBP"):
                 mime_type = "image/webp"
-            
-            response = self._make_request(
+
+            response = self.execute_gemini_request_with_failover(
                 lambda **request_kwargs: self.client.models.generate_content(**request_kwargs),
                 model=self.model,
-                contents=[
-                    types.Part.from_bytes(
-                        data=image_bytes,
-                        mime_type=mime_type
-                    ),
-                    prompt
-                ]
+                contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type), prompt],
             )
-            
-            raw = response.text.strip()
-            logger.debug(f"Gemini raw barcode response: {raw}")
-            
-            # Очищаем ответ от лишних символов
-            barcode = raw.replace(" ", "").replace("-", "").replace("_", "")
-            
-            # Проверяем, что это похоже на штрих-код (обычно 8-13 цифр)
+            barcode = response.text.strip().replace(" ", "").replace("-", "").replace("_", "")
             if barcode.isdigit() and 8 <= len(barcode) <= 14:
                 return barcode
-            elif barcode.upper() == "NOT_FOUND":
+            if barcode.upper() == "NOT_FOUND":
                 return None
-            else:
-                # Пробуем извлечь только цифры
-                digits = ''.join(filter(str.isdigit, barcode))
-                if 8 <= len(digits) <= 14:
-                    return digits
-                return None
+            digits = "".join(filter(str.isdigit, barcode))
+            return digits if 8 <= len(digits) <= 14 else None
+        except GeminiServiceError:
+            raise
         except Exception as e:
-            logger.error(f"Ошибка Gemini (распознавание штрих-кода): {e}", exc_info=True)
+            logger.error("Ошибка Gemini (распознавание штрих-кода): %s", e, exc_info=True)
             return None
 
 
 # Глобальный экземпляр сервиса
-gemini_service = GeminiService()
+try:
+    gemini_service = GeminiService()
+except RuntimeError as init_error:  # pragma: no cover - для тестовых окружений без ключей
+    logger.warning("GeminiService не инициализирован: %s", init_error)
+    gemini_service = None
