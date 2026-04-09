@@ -1,4 +1,5 @@
 """Обработчики для анализа деятельности."""
+import asyncio
 import logging
 import re
 import json
@@ -33,7 +34,11 @@ AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT = (
 
 def _is_gemini_temporarily_unavailable_error(error: Exception) -> bool:
     """Проверяет, связана ли ошибка с временной недоступностью Gemini (ServerError/503)."""
-    return isinstance(error, GeminiServiceTemporaryUnavailableError) or "503" in str(error)
+    return (
+        isinstance(error, (GeminiServiceTemporaryUnavailableError, asyncio.TimeoutError))
+        or "503" in str(error)
+        or "timeout" in str(error).lower()
+    )
 
 
 def _normalize_workout_type(exercise: str, variant: str | None = None) -> str:
@@ -706,7 +711,9 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
 Рекомендации делай в стиле кнопки "🔥 Философия Sumday77", учитывай её принципы, но не вставляй текст или списки из неё дословно.
 """
     
-    result = gemini_service.analyze(prompt)
+    if gemini_service is None:
+        raise GeminiServiceTemporaryUnavailableError("Gemini service is not initialized")
+    result = await asyncio.wait_for(asyncio.to_thread(gemini_service.analyze, prompt), timeout=60.0)
     
     # Заменяем markdown звездочки на HTML-теги для жирного шрифта
     # Заменяем **текст** на <b>текст</b>
