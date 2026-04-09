@@ -7,9 +7,7 @@ from collections import defaultdict
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.models import Meal, KbjuSettings
 from utils.emoji_map import EMOJI_MAP
-from utils.formatters import get_kbju_goal_label
 from utils.meal_types import MEAL_TYPE_ORDER, normalize_meal_type
-from utils.progress_formatters import build_progress_bar
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +32,7 @@ def format_today_meals(
     include_date_header: bool = True,
     settings: KbjuSettings | None = None,
 ) -> str:
-    """Форматирует дневник питания в виде блоков по приёмам пищи + баланс дня."""
+    """Форматирует дневник питания в виде блоков по приёмам пищи + итог дня."""
     lines: list[str] = []
     if include_date_header:
         lines.append(format_food_diary_header(day_str))
@@ -55,12 +53,12 @@ def format_today_meals(
         lines.extend(format_meal_block(meal_type, meal_group))
         non_empty_blocks += 1
 
-    if non_empty_blocks > 0:
+    if non_empty_blocks > 0 and daily_totals:
         lines.append("")
         lines.append("⸻")
         lines.append("")
 
-    lines.extend(format_daily_balance(daily_totals, settings))
+    lines.extend(format_daily_totals_lines(daily_totals, day_str))
     return "\n".join(lines)
 
 
@@ -168,38 +166,25 @@ def format_meal_block(meal_type: str, items: list[Meal]) -> list[str]:
     return lines
 
 
-def format_daily_balance(day_totals: dict, settings: KbjuSettings | None) -> list[str]:
-    """Форматирует блок баланса дня в фирменном стиле."""
+def format_daily_totals_lines(day_totals: dict, day_str: str) -> list[str]:
+    """Форматирует лаконичный итог дня по фактическим КБЖУ."""
     calories_current = float(day_totals.get("calories", 0) or 0)
     protein_current = float(day_totals.get("protein_g", day_totals.get("protein", 0)) or 0)
     fat_current = float(day_totals.get("fat_total_g", day_totals.get("fat", 0)) or 0)
     carbs_current = float(day_totals.get("carbohydrates_total_g", day_totals.get("carbs", 0)) or 0)
 
-    target_calories = float(getattr(settings, "calories", 0) or 0)
-    target_protein = float(getattr(settings, "protein", 0) or 0)
-    target_fat = float(getattr(settings, "fat", 0) or 0)
-    target_carbs = float(getattr(settings, "carbs", 0) or 0)
-    goal_label = get_kbju_goal_label(getattr(settings, "goal", None))
-
-    def metric_lines(label: str, current: float, target: float, unit: str) -> list[str]:
-        percent = 0 if target <= 0 else round((current / target) * 100)
-        return [
-            f"{label}: {current:.0f}/{target:.0f} {unit} ({percent}%)",
-            build_progress_bar(current, target, length=10),
-        ]
-
     lines = [
-        "📊 Баланс дня",
+        f"📊 Итог дня — {day_str}",
         "",
-        f"🎯 Цель: {goal_label}",
-        f"📊 Базовая норма: {target_calories:.0f} ккал",
-        "",
+        f"🔥 {calories_current:.0f} ккал",
+        f"💪 {protein_current:.0f} г 🥑 {fat_current:.0f} г 🍩 {carbs_current:.0f} г",
     ]
-    lines.extend(metric_lines("🔥 Калории", calories_current, target_calories, "ккал"))
-    lines.extend(metric_lines("💪 Белки", protein_current, target_protein, "г"))
-    lines.extend(metric_lines("🥑 Жиры", fat_current, target_fat, "г"))
-    lines.extend(metric_lines("🍩 Углеводы", carbs_current, target_carbs, "г"))
     return lines
+
+
+def format_daily_totals_message(day_totals: dict, day_str: str) -> str:
+    """Собирает итог дня в одну строку сообщения."""
+    return "\n".join(format_daily_totals_lines(day_totals, day_str))
 
 
 def build_meals_actions_keyboard(
