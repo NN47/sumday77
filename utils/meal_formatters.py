@@ -168,6 +168,21 @@ def format_meal_block(meal_type: str, items: list[Meal]) -> list[str]:
     return lines
 
 
+def format_meal_message(
+    meal_type: str,
+    items: list[Meal],
+    day_str: str | None = None,
+    include_date_header: bool = False,
+) -> str:
+    """Собирает сообщение одного блока приёма пищи."""
+    lines: list[str] = []
+    if include_date_header and day_str:
+        lines.append(format_food_diary_header(day_str))
+        lines.append("")
+    lines.extend(format_meal_block(meal_type, items))
+    return "\n".join(lines)
+
+
 def _build_goal_progress_line(label: str, current: float, target: float, unit: str) -> list[str]:
     percent = 0 if target <= 0 else round((current / target) * 100)
     return [
@@ -231,6 +246,46 @@ def format_daily_totals_message(
             settings=settings,
             include_action_prompt=include_action_prompt,
         )
+    )
+
+
+def build_meal_actions_keyboard(meal_type: str, target_date: date) -> InlineKeyboardMarkup:
+    """Inline-кнопки действий для конкретного типа приёма пищи."""
+    normalized_meal_type = normalize_meal_type(meal_type)
+    iso_date = target_date.isoformat()
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="➕ Добавить",
+                    callback_data=f"add_meal:{normalized_meal_type}:{iso_date}",
+                ),
+                InlineKeyboardButton(
+                    text="✏️ Редактировать",
+                    callback_data=f"edit_meal:{normalized_meal_type}:{iso_date}",
+                ),
+                InlineKeyboardButton(
+                    text="🗑 Очистить",
+                    callback_data=f"clear_meal:{normalized_meal_type}:{iso_date}",
+                ),
+            ]
+        ]
+    )
+
+
+def build_daily_totals_keyboard(target_date: date, include_back: bool = False) -> InlineKeyboardMarkup | None:
+    """Клавиатура для итогового сообщения дня (без кнопок редактирования приёмов пищи)."""
+    if not include_back:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад к календарю",
+                    callback_data=f"meal_cal_back:{target_date.year}-{target_date.month:02d}",
+                )
+            ]
+        ]
     )
 
 
