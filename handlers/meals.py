@@ -13,6 +13,7 @@ from utils.keyboards import (
     MAIN_MENU_BUTTON_ALIASES,
     MEALS_BUTTON_TEXT,
     LEGACY_MEALS_BUTTON_TEXT,
+    MEALS_BUTTON_ALIASES,
     kbju_menu,
     kbju_add_menu,
     kbju_meal_type_menu,
@@ -282,7 +283,7 @@ async def _ensure_meal_type_selected(
     return False
 
 
-@router.message(lambda m: m.text in {MEALS_BUTTON_TEXT, LEGACY_MEALS_BUTTON_TEXT})
+@router.message(lambda m: (m.text or "").strip() in MEALS_BUTTON_ALIASES)
 async def calories(message: Message, state: FSMContext):
     """Открывает дневник питания с актуальной сводкой за сегодня."""
     user_id = str(message.from_user.id)
