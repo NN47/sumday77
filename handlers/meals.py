@@ -29,7 +29,6 @@ from services.gemini_service import (
     GeminiServiceAuthError,
 )
 from utils.validators import parse_date
-from utils.telegram_text import split_telegram_message
 from datetime import datetime
 from utils.meal_types import MealType, MEAL_TYPE_ORDER, normalize_meal_type, display_meal_type
 
@@ -55,6 +54,158 @@ ADD_METHOD_TEXTS = {
 AI_TEMPORARY_UNAVAILABLE_TEXT = "🤖 Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
 AI_QUOTA_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за лимита запросов."
 AI_CONFIG_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за ошибки настройки."
+
+
+def _get_food_diary_message_store(bot) -> dict:
+    """Возвращает хранилище message_id для дневника питания."""
+    if not hasattr(bot, "food_diary_message_ids"):
+        bot.food_diary_message_ids = {}
+    return bot.food_diary_message_ids
+
+
+def _get_food_diary_day_store(bot, user_id: str, target_date: date) -> dict:
+    """Возвращает/создаёт хранилище message_id для пользователя и даты."""
+    store = _get_food_diary_message_store(bot)
+    user_store = store.setdefault(user_id, {})
+    return user_store.setdefault(target_date.isoformat(), {"meals": {}, "summary": None})
+
+
+async def _safe_edit_or_send_message(
+    message: Message,
+    *,
+    stored_message_id: int | None,
+    text: str,
+    inline_keyboard: InlineKeyboardMarkup | None = None,
+) -> int | None:
+    """Пытается отредактировать сообщение, при ошибке отправляет новое."""
+    if stored_message_id:
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=stored_message_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=inline_keyboard,
+            )
+            return stored_message_id
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                return stored_message_id
+            logger.info("Не удалось отредактировать сообщение %s: %s", stored_message_id, exc)
+
+    try:
+        sent = await message.answer(text, parse_mode="HTML", reply_markup=inline_keyboard)
+    except TelegramBadRequest:
+        sent = await message.answer(text, reply_markup=inline_keyboard)
+    return sent.message_id if sent else None
+
+
+async def _delete_stored_message(message: Message, stored_message_id: int | None) -> None:
+    """Удаляет ранее сохранённое сообщение дневника, если оно существует."""
+    if not stored_message_id:
+        return
+    try:
+        await message.bot.delete_message(chat_id=message.chat.id, message_id=stored_message_id)
+    except TelegramBadRequest as exc:
+        logger.info("Не удалось удалить сообщение %s: %s", stored_message_id, exc)
+
+
+async def _render_day_meals_messages(
+    message: Message,
+    user_id: str,
+    target_date: date,
+    *,
+    include_back: bool = False,
+    changed_meal_type: str | None = None,
+) -> None:
+    """Точечно рендерит сообщения по приёмам пищи + отдельное сообщение итогов дня."""
+    from collections import defaultdict
+    from utils.meal_formatters import (
+        format_food_diary_header,
+        format_meal_message,
+        format_daily_totals_message,
+        build_meal_actions_keyboard,
+        build_daily_totals_keyboard,
+    )
+
+    meals = MealRepository.get_meals_for_date(user_id, target_date)
+    daily_totals = MealRepository.get_daily_totals(user_id, target_date)
+    settings = MealRepository.get_kbju_settings(user_id)
+    day_str = target_date.strftime("%d.%m.%Y")
+
+    grouped: dict[str, list] = defaultdict(list)
+    for meal in meals:
+        grouped[normalize_meal_type(getattr(meal, "meal_type", None))].append(meal)
+
+    day_store = _get_food_diary_day_store(message.bot, user_id, target_date)
+    meal_messages: dict[str, int] = day_store.setdefault("meals", {})
+
+    if not meals:
+        for stored_id in list(meal_messages.values()):
+            await _delete_stored_message(message, stored_id)
+        meal_messages.clear()
+        if day_store.get("summary"):
+            await _delete_stored_message(message, day_store.get("summary"))
+            day_store["summary"] = None
+
+        empty_text = (
+            f"{format_food_diary_header(day_str)}\n\n"
+            "Пока нет записей за выбранный день. Добавь приём пищи 👇"
+        )
+        keyboard = build_daily_totals_keyboard(target_date, include_back=include_back)
+        day_store["summary"] = await _safe_edit_or_send_message(
+            message,
+            stored_message_id=None,
+            text=empty_text,
+            inline_keyboard=keyboard,
+        )
+        return
+
+    meal_types_to_update = (
+        [normalize_meal_type(changed_meal_type)]
+        if changed_meal_type
+        else [meal_type for meal_type in MEAL_TYPE_ORDER if grouped.get(meal_type)]
+    )
+
+    first_meal_type = next((mt for mt in MEAL_TYPE_ORDER if grouped.get(mt)), None)
+    for meal_type in meal_types_to_update:
+        items = grouped.get(meal_type, [])
+        if not items:
+            if meal_type in meal_messages:
+                await _delete_stored_message(message, meal_messages.get(meal_type))
+                meal_messages.pop(meal_type, None)
+            continue
+
+        include_header = meal_type == first_meal_type
+        meal_text = format_meal_message(
+            meal_type,
+            items,
+            day_str=day_str,
+            include_date_header=include_header,
+        )
+        meal_messages[meal_type] = await _safe_edit_or_send_message(
+            message,
+            stored_message_id=meal_messages.get(meal_type),
+            text=meal_text,
+            inline_keyboard=build_meal_actions_keyboard(meal_type, target_date),
+        )
+
+    for stale_type in [mt for mt in list(meal_messages.keys()) if mt not in grouped]:
+        await _delete_stored_message(message, meal_messages.get(stale_type))
+        meal_messages.pop(stale_type, None)
+
+    summary_text = format_daily_totals_message(
+        daily_totals,
+        day_str,
+        settings=settings,
+        include_action_prompt=False,
+    )
+    day_store["summary"] = await _safe_edit_or_send_message(
+        message,
+        stored_message_id=day_store.get("summary"),
+        text=summary_text,
+        inline_keyboard=build_daily_totals_keyboard(target_date, include_back=include_back),
+    )
 
 
 async def _send_ai_error_message(message: Message, error: Exception) -> None:
@@ -1144,81 +1295,8 @@ async def calories_today_results(message: Message):
 async def send_today_results(message: Message, user_id: str):
     """Отправляет результаты за сегодня."""
     today = date.today()
-    meals = MealRepository.get_meals_for_date(user_id, today)
-    
-    daily_totals = MealRepository.get_daily_totals(user_id, today)
-    settings = MealRepository.get_kbju_settings(user_id)
-
-    if not meals:
-        from utils.keyboards import kbju_menu
-        from utils.meal_formatters import format_food_diary_header, format_daily_totals_message
-
-        push_menu_stack(message.bot, kbju_menu)
-        today_str = today.strftime("%d.%m.%Y")
-        empty_report = (
-            f"{format_food_diary_header(today_str)}\n\n"
-            "Пока нет записей за сегодня. Добавь приём пищи 👇\n\n"
-            f"{format_daily_totals_message(daily_totals, today_str, settings=settings, include_action_prompt=True)}"
-        )
-        await message.answer(empty_report, reply_markup=kbju_menu)
-        return
-
-    day_str = today.strftime("%d.%m.%Y")
-
-    from collections import defaultdict
-    from utils.meal_formatters import (
-        format_food_diary_header,
-        format_meal_block,
-        format_daily_totals_message,
-        build_meals_actions_keyboard,
-    )
-
-    grouped: dict[str, list] = defaultdict(list)
-    for meal in meals:
-        grouped[normalize_meal_type(getattr(meal, "meal_type", None))].append(meal)
-
-    messages: list[str] = []
-    for meal_type in MEAL_TYPE_ORDER:
-        meal_group = grouped.get(meal_type, [])
-        if not meal_group:
-            continue
-        block_text = "\n".join(format_meal_block(meal_type, meal_group))
-        if not messages:
-            block_text = f"{format_food_diary_header(day_str)}\n\n{block_text}"
-        messages.append(block_text)
-
-    messages.append(format_daily_totals_message(daily_totals, day_str, settings=settings, include_action_prompt=True))
-    keyboard = build_meals_actions_keyboard(meals, today)
-    logger.info("KBJU daily report messages=%s", len(messages))
-
-    async def _safe_send(chunk: str, *, with_keyboard: bool = False):
-        """Безопасная отправка chunk: сначала HTML, при ошибке — plain text."""
-        kwargs = {"parse_mode": "HTML"}
-        if with_keyboard:
-            kwargs["reply_markup"] = keyboard
-
-        try:
-            await message.answer(chunk, **kwargs)
-        except TelegramBadRequest as exc:
-            logger.warning(
-                "KBJU daily report chunk failed with HTML, fallback to plain text: %s",
-                exc,
-            )
-            fallback_kwargs = {}
-            if with_keyboard:
-                fallback_kwargs["reply_markup"] = keyboard
-            await message.answer(chunk, **fallback_kwargs)
-
-    for index, chunk in enumerate(messages):
-        if len(chunk) <= 4000:
-            await _safe_send(chunk, with_keyboard=(index == len(messages) - 1))
-            continue
-
-        chunks = split_telegram_message(chunk)
-        logger.info("KBJU daily report split message %s into %s chunk(s)", index, len(chunks))
-        for chunk_index, nested_chunk in enumerate(chunks):
-            is_last_piece = index == len(messages) - 1 and chunk_index == len(chunks) - 1
-            await _safe_send(nested_chunk, with_keyboard=is_last_piece)
+    push_menu_stack(message.bot, kbju_menu)
+    await _render_day_meals_messages(message, user_id, today, include_back=False)
 
 
 @router.message(lambda m: m.text == "📆 Календарь КБЖУ")
@@ -1278,49 +1356,7 @@ async def select_kbju_calendar_day(callback: CallbackQuery):
 
 async def show_day_meals(message: Message, user_id: str, target_date: date):
     """Показывает приёмы пищи за день."""
-    meals = MealRepository.get_meals_for_date(user_id, target_date)
-    
-    if not meals:
-        from utils.meal_formatters import build_kbju_day_actions_keyboard
-        await message.answer(
-            f"{target_date.strftime('%d.%m.%Y')}: нет записей по КБЖУ.",
-            reply_markup=build_kbju_day_actions_keyboard(target_date),
-        )
-        return
-    
-    daily_totals = MealRepository.get_daily_totals(user_id, target_date)
-    day_str = target_date.strftime("%d.%m.%Y")
-    from collections import defaultdict
-    from utils.meal_formatters import (
-        format_food_diary_header,
-        format_meal_block,
-        format_daily_totals_message,
-        build_meals_actions_keyboard,
-    )
-
-    grouped: dict[str, list] = defaultdict(list)
-    for meal in meals:
-        grouped[normalize_meal_type(getattr(meal, "meal_type", None))].append(meal)
-
-    messages: list[str] = []
-    for meal_type in MEAL_TYPE_ORDER:
-        meal_group = grouped.get(meal_type, [])
-        if not meal_group:
-            continue
-        block_text = "\n".join(format_meal_block(meal_type, meal_group))
-        if not messages:
-            block_text = f"{format_food_diary_header(day_str)}\n\n{block_text}"
-        messages.append(block_text)
-
-    settings = MealRepository.get_kbju_settings(user_id)
-    messages.append(format_daily_totals_message(daily_totals, day_str, settings=settings, include_action_prompt=True))
-    keyboard = build_meals_actions_keyboard(meals, target_date, include_back=True)
-
-    for index, chunk in enumerate(messages):
-        await message.answer(
-            chunk,
-            reply_markup=keyboard if index == len(messages) - 1 else None,
-        )
+    await _render_day_meals_messages(message, user_id, target_date, include_back=True)
 
 
 def _truncate_product_name(name: str, limit: int = 28) -> str:
@@ -1659,16 +1695,16 @@ async def _start_meal_edit_flow(
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("food:add:"))
+@router.callback_query(lambda c: c.data.startswith("add_meal:"))
 async def add_meal_from_diary_block(callback: CallbackQuery, state: FSMContext):
     """Добавляет приём в выбранный блок meal_type/дата из дневника."""
     await callback.answer()
     parts = callback.data.split(":")
-    if len(parts) < 4:
+    if len(parts) < 3:
         await callback.message.answer("❌ Не удалось открыть добавление: некорректные данные.")
         return
-    meal_type = normalize_meal_type(parts[2], fallback=MealType.SNACK.value)
-    target_date = date.fromisoformat(parts[3])
+    meal_type = normalize_meal_type(parts[1], fallback=MealType.SNACK.value)
+    target_date = date.fromisoformat(parts[2]) if len(parts) > 2 else date.today()
     await state.update_data(meal_type=meal_type, entry_date=target_date.isoformat(), pending_add_method=None)
     await callback.message.answer(
         f"Добавляем в приём пищи: {display_meal_type(meal_type)} ({target_date.strftime('%d.%m.%Y')})"
@@ -1676,16 +1712,16 @@ async def add_meal_from_diary_block(callback: CallbackQuery, state: FSMContext):
     await _show_input_methods(callback.message, state)
 
 
-@router.callback_query(lambda c: c.data.startswith("food:edit_meal:"))
+@router.callback_query(lambda c: c.data.startswith("edit_meal:"))
 async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext):
     """Редактирует последний приём выбранного meal_type за дату."""
     await callback.answer()
     parts = callback.data.split(":")
-    if len(parts) < 4:
+    if len(parts) < 3:
         await callback.message.answer("❌ Не удалось открыть редактирование: некорректные данные.")
         return
-    meal_type = normalize_meal_type(parts[2], fallback=MealType.SNACK.value)
-    target_date = date.fromisoformat(parts[3])
+    meal_type = normalize_meal_type(parts[1], fallback=MealType.SNACK.value)
+    target_date = date.fromisoformat(parts[2]) if len(parts) > 2 else date.today()
     user_id = str(callback.from_user.id)
     meals_for_type = MealRepository.get_meals_for_type_for_date(user_id, target_date, meal_type)
     if not meals_for_type:
@@ -1695,17 +1731,17 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
     await _start_meal_edit_flow(callback.message, state, user_id, target_meal.id, target_date)
 
 
-@router.callback_query(lambda c: c.data.startswith("food:clear_meal:"))
+@router.callback_query(lambda c: c.data.startswith("clear_meal:"))
 async def clear_meal_from_diary_block(callback: CallbackQuery):
     """Запрашивает подтверждение очистки выбранного приёма пищи (meal_type) за дату."""
     await callback.answer()
     parts = callback.data.split(":")
-    if len(parts) < 4:
+    if len(parts) < 3:
         await callback.message.answer("❌ Не удалось очистить приём пищи: некорректные данные.")
         return
 
-    meal_type = normalize_meal_type(parts[2], fallback=MealType.SNACK.value)
-    target_date = date.fromisoformat(parts[3])
+    meal_type = normalize_meal_type(parts[1], fallback=MealType.SNACK.value)
+    target_date = date.fromisoformat(parts[2]) if len(parts) > 2 else date.today()
     meal_title = display_meal_type(meal_type).lower()
     target_date_iso = target_date.isoformat()
 
@@ -1714,11 +1750,11 @@ async def clear_meal_from_diary_block(callback: CallbackQuery):
             [
                 InlineKeyboardButton(
                     text="✅ Да, удалить",
-                    callback_data=f"food:clear_meal_confirm:{meal_type}:{target_date_iso}",
+                    callback_data=f"clear_meal_confirm:{meal_type}:{target_date_iso}",
                 ),
                 InlineKeyboardButton(
                     text="❌ Отмена",
-                    callback_data=f"food:clear_meal_cancel:{meal_type}:{target_date_iso}",
+                    callback_data=f"clear_meal_cancel:{meal_type}:{target_date_iso}",
                 ),
             ]
         ]
@@ -1729,17 +1765,17 @@ async def clear_meal_from_diary_block(callback: CallbackQuery):
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("food:clear_meal_confirm:"))
+@router.callback_query(lambda c: c.data.startswith("clear_meal_confirm:"))
 async def clear_meal_from_diary_block_confirmed(callback: CallbackQuery):
     """Очищает выбранный приём пищи (meal_type) за дату после подтверждения."""
     await callback.answer()
     parts = callback.data.split(":")
-    if len(parts) < 4:
+    if len(parts) < 3:
         await callback.message.answer("❌ Не удалось очистить приём пищи: некорректные данные.")
         return
 
-    meal_type = normalize_meal_type(parts[2], fallback=MealType.SNACK.value)
-    target_date = date.fromisoformat(parts[3])
+    meal_type = normalize_meal_type(parts[1], fallback=MealType.SNACK.value)
+    target_date = date.fromisoformat(parts[2]) if len(parts) > 2 else date.today()
     user_id = str(callback.from_user.id)
     deleted_count = MealRepository.delete_meals_by_type_for_date(user_id, target_date, meal_type)
     if deleted_count <= 0:
@@ -1747,21 +1783,32 @@ async def clear_meal_from_diary_block_confirmed(callback: CallbackQuery):
         return
 
     await callback.message.answer(f"✅ {display_meal_type(meal_type)} очищен: удалено записей — {deleted_count}.")
-    await show_day_meals(callback.message, user_id, target_date)
+    await _render_day_meals_messages(
+        callback.message,
+        user_id,
+        target_date,
+        include_back=True,
+        changed_meal_type=meal_type,
+    )
 
 
-@router.callback_query(lambda c: c.data.startswith("food:clear_meal_cancel:"))
+@router.callback_query(lambda c: c.data.startswith("clear_meal_cancel:"))
 async def clear_meal_from_diary_block_cancelled(callback: CallbackQuery):
     """Отменяет очистку выбранного приёма пищи и возвращает отчёт за день."""
     await callback.answer("Очистка отменена")
     parts = callback.data.split(":")
-    if len(parts) < 4:
+    if len(parts) < 3:
         return
 
-    target_date = date.fromisoformat(parts[3])
+    target_date = date.fromisoformat(parts[2]) if len(parts) > 2 else date.today()
     user_id = str(callback.from_user.id)
     await callback.message.answer("👌 Очистку отменили.")
-    await show_day_meals(callback.message, user_id, target_date)
+    await _render_day_meals_messages(
+        callback.message,
+        user_id,
+        target_date,
+        include_back=True,
+    )
 
 
 @router.message(MealEntryStates.choosing_edit_type)
@@ -2015,6 +2062,7 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
     totals, api_details = _build_meal_update_payload(saved_products)
     meal = MealRepository.get_meal_by_id(meal_id, user_id)
     raw_query = meal.raw_query if meal and hasattr(meal, "raw_query") else None
+    changed_meal_type = normalize_meal_type(getattr(meal, "meal_type", None)) if meal else None
 
     success = MealRepository.update_meal(
         meal_id=meal_id,
@@ -2046,7 +2094,13 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
             target_date = date.today()
     else:
         target_date = date.today()
-    await show_day_meals(callback.message, user_id, target_date)
+    await _render_day_meals_messages(
+        callback.message,
+        user_id,
+        target_date,
+        include_back=True,
+        changed_meal_type=changed_meal_type,
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_wdelask:"))
@@ -2100,6 +2154,8 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
     if not meal_id or product_idx < 0 or product_idx >= len(saved_products):
         await callback.answer("Не удалось удалить продукт", show_alert=True)
         return
+    meal = MealRepository.get_meal_by_id(meal_id, user_id)
+    changed_meal_type = normalize_meal_type(getattr(meal, "meal_type", None)) if meal else None
 
     saved_products.pop(product_idx)
     drafts = {
@@ -2148,7 +2204,13 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
             target_date = date.today()
     else:
         target_date = date.today()
-    await show_day_meals(callback.message, user_id, target_date)
+    await _render_day_meals_messages(
+        callback.message,
+        user_id,
+        target_date,
+        include_back=True,
+        changed_meal_type=changed_meal_type,
+    )
 
 
 @router.message(MealEntryStates.editing_meal_composition)
@@ -2183,6 +2245,8 @@ async def handle_meal_composition_edit(message: Message, state: FSMContext):
         await message.answer("❌ Не удалось найти запись для обновления.")
         await state.clear()
         return
+    meal = MealRepository.get_meal_by_id(meal_id, user_id)
+    changed_meal_type = normalize_meal_type(getattr(meal, "meal_type", None)) if meal else None
     
     # Показываем сообщение об анализе
     await message.answer("🤖 Считаю КБЖУ с помощью ИИ, секунду...")
@@ -2249,7 +2313,13 @@ async def handle_meal_composition_edit(message: Message, state: FSMContext):
         target_date = date.today()
     
     await message.answer("✅ Состав продуктов обновлён! КБЖУ пересчитано через ИИ.")
-    await show_day_meals(message, user_id, target_date)
+    await _render_day_meals_messages(
+        message,
+        user_id,
+        target_date,
+        include_back=True,
+        changed_meal_type=changed_meal_type,
+    )
 
 
 @router.message(MealEntryStates.editing_meal)
@@ -2283,6 +2353,8 @@ async def handle_meal_edit_input(message: Message, state: FSMContext):
         await message.answer("❌ Не получилось определить запись для обновления.")
         await state.clear()
         return
+    meal_before_update = MealRepository.get_meal_by_id(meal_id, user_id)
+    changed_meal_type = normalize_meal_type(getattr(meal_before_update, "meal_type", None)) if meal_before_update else None
     
     if not new_text:
         await message.answer("Напиши новый состав продуктов в формате: название, вес г")
@@ -2530,7 +2602,13 @@ async def handle_meal_edit_input(message: Message, state: FSMContext):
             target_date = date.today()
         
         await message.answer("✅ Приём пищи обновлён!")
-        await show_day_meals(message, user_id, target_date)
+        await _render_day_meals_messages(
+            message,
+            user_id,
+            target_date,
+            include_back=True,
+            changed_meal_type=changed_meal_type,
+        )
         
     except Exception as e:
         logger.error(f"Error in handle_meal_edit_input for user {user_id}: {e}", exc_info=True)
@@ -2550,10 +2628,18 @@ async def delete_meal(callback: CallbackQuery):
     target_date = date.fromisoformat(parts[2]) if len(parts) > 2 else date.today()
     user_id = str(callback.from_user.id)
     
+    meal = MealRepository.get_meal_by_id(meal_id, user_id)
+    changed_meal_type = normalize_meal_type(getattr(meal, "meal_type", None)) if meal else None
     success = MealRepository.delete_meal(meal_id, user_id)
     if success:
         await callback.message.answer("✅ Запись удалена")
-        await show_day_meals(callback.message, user_id, target_date)
+        await _render_day_meals_messages(
+            callback.message,
+            user_id,
+            target_date,
+            include_back=True,
+            changed_meal_type=changed_meal_type,
+        )
     else:
         await callback.message.answer("❌ Не удалось удалить запись")
 
