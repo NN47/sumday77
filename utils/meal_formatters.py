@@ -5,11 +5,26 @@ import html
 from datetime import date
 from collections import defaultdict
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from database.models import Meal
+from database.models import Meal, KbjuSettings
 from utils.emoji_map import EMOJI_MAP
-from utils.meal_types import MEAL_TYPE_ORDER, display_meal_type, normalize_meal_type
+from utils.formatters import get_kbju_goal_label
+from utils.meal_types import MEAL_TYPE_ORDER, normalize_meal_type
+from utils.progress_formatters import build_progress_bar
 
 logger = logging.getLogger(__name__)
+
+
+MEAL_UI = {
+    "breakfast": {"emoji": "🍳", "title": "Завтрак", "totals_label": "завтрак"},
+    "lunch": {"emoji": "🍲", "title": "Обед", "totals_label": "обед"},
+    "dinner": {"emoji": "🍽", "title": "Ужин", "totals_label": "ужин"},
+    "snack": {"emoji": "🍎", "title": "Перекус", "totals_label": "перекус"},
+}
+
+
+def format_food_diary_header(day_str: str) -> str:
+    """Форматирует заголовок дневника питания."""
+    return f"🍱 Дневник питания — {day_str}"
 
 
 def format_today_meals(
@@ -17,48 +32,35 @@ def format_today_meals(
     daily_totals: dict,
     day_str: str,
     include_date_header: bool = True,
+    settings: KbjuSettings | None = None,
 ) -> str:
-    """Форматирует дневник питания с группировкой по приёмам пищи."""
+    """Форматирует дневник питания в виде блоков по приёмам пищи + баланс дня."""
     lines: list[str] = []
     if include_date_header:
-        lines.append(f"📅 Дневник питания за {day_str}\n")
+        lines.append(format_food_diary_header(day_str))
+        lines.append("")
 
     grouped: dict[str, list[Meal]] = defaultdict(list)
     for meal in meals:
         grouped[normalize_meal_type(getattr(meal, "meal_type", None))].append(meal)
 
+    non_empty_blocks = 0
     for meal_type in MEAL_TYPE_ORDER:
         meal_group = grouped.get(meal_type, [])
         if not meal_group:
             continue
-        lines.append(display_meal_type(meal_type))
-        meal_totals = {"calories": 0.0, "protein": 0.0, "fat": 0.0, "carbs": 0.0}
-        for meal in meal_group:
-            for product_line in _extract_product_lines(meal):
-                lines.append(product_line)
-            meal_totals["calories"] += float(getattr(meal, "calories", 0) or 0)
-            meal_totals["protein"] += float(getattr(meal, "protein", 0) or 0)
-            meal_totals["fat"] += float(getattr(meal, "fat", 0) or 0)
-            meal_totals["carbs"] += float(getattr(meal, "carbs", 0) or 0)
+        if non_empty_blocks > 0:
+            lines.append("⸻")
+            lines.append("")
+        lines.extend(format_meal_block(meal_type, meal_group))
+        non_empty_blocks += 1
 
-        title = display_meal_type(meal_type).split(" ", 1)[1].lower()
-        lines.append(f"\nИтого {title}:")
-        lines.append(f"{EMOJI_MAP['calories']} {meal_totals['calories']:.0f} ккал")
-        lines.append(f"{EMOJI_MAP['protein']} {meal_totals['protein']:.1f} г")
-        lines.append(f"{EMOJI_MAP['fat']} {meal_totals['fat']:.1f} г")
-        lines.append(f"{EMOJI_MAP['carbs']} {meal_totals['carbs']:.1f} г")
+    if non_empty_blocks > 0:
+        lines.append("")
+        lines.append("⸻")
         lines.append("")
 
-    lines.append("📊 Итого за день:")
-    lines.append(f"{EMOJI_MAP['calories']} Калории: {daily_totals.get('calories', 0):.0f} ккал")
-    lines.append(
-        f"{EMOJI_MAP['protein']} Белки: {daily_totals.get('protein_g', daily_totals.get('protein', 0)):.1f} г"
-    )
-    lines.append(f"{EMOJI_MAP['fat']} Жиры: {daily_totals.get('fat_total_g', daily_totals.get('fat', 0)):.1f} г")
-    lines.append(
-        f"{EMOJI_MAP['carbs']} Углеводы: {daily_totals.get('carbohydrates_total_g', daily_totals.get('carbs', 0)):.1f} г"
-    )
-    
+    lines.extend(format_daily_balance(daily_totals, settings))
     return "\n".join(lines)
 
 
@@ -95,10 +97,11 @@ def _extract_product_lines(meal: Meal) -> list[str]:
             getattr(meal, "description", None) or getattr(meal, "raw_query", None)
         )
         return [
-            f"• {html.escape(fallback_name)} — {float(getattr(meal, 'calories', 0) or 0):.0f} ккал "
+            f"• {html.escape(fallback_name)}",
+            f"{float(getattr(meal, 'calories', 0) or 0):.0f} ккал "
             f"(Б {float(getattr(meal, 'protein', 0) or 0):.1f} / "
             f"Ж {float(getattr(meal, 'fat', 0) or 0):.1f} / "
-            f"У {float(getattr(meal, 'carbs', 0) or 0):.1f})"
+            f"У {float(getattr(meal, 'carbs', 0) or 0):.1f})",
         ]
 
     lines: list[str] = []
@@ -113,13 +116,89 @@ def _extract_product_lines(meal: Meal) -> list[str]:
         grams = _safe_float(p.get("grams") or p.get("weight"))
         if grams > 0:
             lines.append(
-                f"• {html.escape(name)} ({grams:.0f} г) — {cal:.0f} ккал "
-                f"(Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})"
+                f"• {html.escape(name)} ({grams:.0f} г)"
             )
+            lines.append(f"{cal:.0f} ккал (Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})")
         else:
             lines.append(
-                f"• {html.escape(name)} — {cal:.0f} ккал (Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})"
+                f"• {html.escape(name)}"
             )
+            lines.append(f"{cal:.0f} ккал (Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})")
+    return lines
+
+
+def _collect_meal_totals(items: list[Meal]) -> dict[str, float]:
+    totals = {"calories": 0.0, "protein": 0.0, "fat": 0.0, "carbs": 0.0}
+    for meal in items:
+        totals["calories"] += float(getattr(meal, "calories", 0) or 0)
+        totals["protein"] += float(getattr(meal, "protein", 0) or 0)
+        totals["fat"] += float(getattr(meal, "fat", 0) or 0)
+        totals["carbs"] += float(getattr(meal, "carbs", 0) or 0)
+    return totals
+
+
+def format_meal_totals(meal_type: str, totals: dict[str, float]) -> list[str]:
+    meal_ui = MEAL_UI.get(meal_type, MEAL_UI["snack"])
+    return [
+        f"Итого {meal_ui['totals_label']}:",
+        "",
+        f"🔥 {totals['calories']:.0f} ккал",
+        f"💪 {totals['protein']:.0f} г 🥑 {totals['fat']:.0f} г 🍩 {totals['carbs']:.0f} г",
+    ]
+
+
+def format_meal_block(meal_type: str, items: list[Meal]) -> list[str]:
+    meal_ui = MEAL_UI.get(meal_type, MEAL_UI["snack"])
+    totals = _collect_meal_totals(items)
+    lines = [f"{meal_ui['emoji']} {meal_ui['title']} • {totals['calories']:.0f} ккал", ""]
+
+    first_product = True
+    for meal in items:
+        product_lines = _extract_product_lines(meal)
+        for i in range(0, len(product_lines), 2):
+            if not first_product:
+                lines.append("")
+            lines.append(product_lines[i])
+            if i + 1 < len(product_lines):
+                lines.append(product_lines[i + 1])
+            first_product = False
+
+    lines.append("")
+    lines.extend(format_meal_totals(meal_type, totals))
+    return lines
+
+
+def format_daily_balance(day_totals: dict, settings: KbjuSettings | None) -> list[str]:
+    """Форматирует блок баланса дня в фирменном стиле."""
+    calories_current = float(day_totals.get("calories", 0) or 0)
+    protein_current = float(day_totals.get("protein_g", day_totals.get("protein", 0)) or 0)
+    fat_current = float(day_totals.get("fat_total_g", day_totals.get("fat", 0)) or 0)
+    carbs_current = float(day_totals.get("carbohydrates_total_g", day_totals.get("carbs", 0)) or 0)
+
+    target_calories = float(getattr(settings, "calories", 0) or 0)
+    target_protein = float(getattr(settings, "protein", 0) or 0)
+    target_fat = float(getattr(settings, "fat", 0) or 0)
+    target_carbs = float(getattr(settings, "carbs", 0) or 0)
+    goal_label = get_kbju_goal_label(getattr(settings, "goal", None))
+
+    def metric_lines(label: str, current: float, target: float, unit: str) -> list[str]:
+        percent = 0 if target <= 0 else round((current / target) * 100)
+        return [
+            f"{label}: {current:.0f}/{target:.0f} {unit} ({percent}%)",
+            build_progress_bar(current, target, length=10),
+        ]
+
+    lines = [
+        "📊 Баланс дня",
+        "",
+        f"🎯 Цель: {goal_label}",
+        f"📊 Базовая норма: {target_calories:.0f} ккал",
+        "",
+    ]
+    lines.extend(metric_lines("🔥 Калории", calories_current, target_calories, "ккал"))
+    lines.extend(metric_lines("💪 Белки", protein_current, target_protein, "г"))
+    lines.extend(metric_lines("🥑 Жиры", fat_current, target_fat, "г"))
+    lines.extend(metric_lines("🍩 Углеводы", carbs_current, target_carbs, "г"))
     return lines
 
 
@@ -128,31 +207,36 @@ def build_meals_actions_keyboard(
     target_date: date,
     include_back: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Строит клавиатуру с действиями для приёмов пищи."""
+    """Строит клавиатуру с действиями на уровне приёма пищи (meal_type)."""
+    grouped: dict[str, list[Meal]] = defaultdict(list)
+    for meal in meals:
+        grouped[normalize_meal_type(getattr(meal, "meal_type", None))].append(meal)
+
     rows: list[list[InlineKeyboardButton]] = []
-    for idx, meal in enumerate(meals, start=1):
+    iso_date = target_date.isoformat()
+    for meal_type in MEAL_TYPE_ORDER:
+        meal_group = grouped.get(meal_type, [])
+        if not meal_group:
+            continue
+        meal_ui = MEAL_UI.get(meal_type, MEAL_UI["snack"])
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"✏️ {idx}",
-                    callback_data=f"meal_edit:{meal.id}:{target_date.isoformat()}",
+                    text=f"➕ {meal_ui['title']}",
+                    callback_data=f"food:add:{meal_type}:{iso_date}",
                 ),
                 InlineKeyboardButton(
-                    text=f"🗑 {idx}",
-                    callback_data=f"meal_del:{meal.id}:{target_date.isoformat()}",
+                    text="✏️ Редактировать",
+                    callback_data=f"food:edit_meal:{meal_type}:{iso_date}",
+                ),
+                InlineKeyboardButton(
+                    text="🗑 Очистить",
+                    callback_data=f"food:clear_meal:{meal_type}:{iso_date}",
                 ),
             ]
         )
-    
+
     if include_back:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="➕ Добавить",
-                    callback_data=f"meal_cal_add:{target_date.isoformat()}",
-                )
-            ]
-        )
         rows.append(
             [
                 InlineKeyboardButton(

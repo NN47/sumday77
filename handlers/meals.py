@@ -1129,8 +1129,16 @@ async def send_today_results(message: Message, user_id: str):
     daily_totals = MealRepository.get_daily_totals(user_id, today)
     day_str = today.strftime("%d.%m.%Y")
 
+    kbju_settings = MealRepository.get_kbju_settings(user_id)
+
     from utils.meal_formatters import format_today_meals, build_meals_actions_keyboard
-    report_text = format_today_meals(meals, daily_totals, day_str, include_date_header=True)
+    report_text = format_today_meals(
+        meals,
+        daily_totals,
+        day_str,
+        include_date_header=True,
+        settings=kbju_settings,
+    )
     text = report_text
     keyboard = build_meals_actions_keyboard(meals, today)
 
@@ -1234,12 +1242,13 @@ async def show_day_meals(message: Message, user_id: str, target_date: date):
     
     daily_totals = MealRepository.get_daily_totals(user_id, target_date)
     day_str = target_date.strftime("%d.%m.%Y")
+    kbju_settings = MealRepository.get_kbju_settings(user_id)
     
     from utils.meal_formatters import format_today_meals, build_meals_actions_keyboard
-    text = format_today_meals(meals, daily_totals, day_str)
+    text = format_today_meals(meals, daily_totals, day_str, settings=kbju_settings)
     keyboard = build_meals_actions_keyboard(meals, target_date, include_back=True)
     
-    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    await message.answer(text, reply_markup=keyboard)
 
 
 def _truncate_product_name(name: str, limit: int = 28) -> str:
@@ -1494,10 +1503,21 @@ async def start_meal_edit(callback: CallbackQuery, state: FSMContext):
     meal_id = int(parts[1])
     target_date = date.fromisoformat(parts[2]) if len(parts) > 2 else date.today()
     user_id = str(callback.from_user.id)
-    
+
+    await _start_meal_edit_flow(callback.message, state, user_id, meal_id, target_date)
+
+
+async def _start_meal_edit_flow(
+    message: Message,
+    state: FSMContext,
+    user_id: str,
+    meal_id: int,
+    target_date: date,
+) -> None:
+    """Общий сценарий запуска редактирования конкретной записи приёма пищи."""
     meal = MealRepository.get_meal_by_id(meal_id, user_id)
     if not meal:
-        await callback.message.answer("❌ Не нашёл запись для изменения.")
+        await message.answer("❌ Не нашёл запись для изменения.")
         return
     
     # Извлекаем продукты из products_json
@@ -1545,7 +1565,7 @@ async def start_meal_edit(callback: CallbackQuery, state: FSMContext):
                             })
     
     if not products:
-        await callback.message.answer(
+        await message.answer(
             "❌ Не удалось извлечь список продуктов из этой записи.\n"
             "Попробуй удалить и создать запись заново."
         )
@@ -1561,10 +1581,65 @@ async def start_meal_edit(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(MealEntryStates.editing_meal_weight)
 
-    await callback.message.answer(
+    await message.answer(
         "⚖️ Выбери продукт, вес которого хочешь изменить:",
         reply_markup=_build_weight_products_keyboard(products),
     )
+
+
+@router.callback_query(lambda c: c.data.startswith("food:add:"))
+async def add_meal_from_diary_block(callback: CallbackQuery, state: FSMContext):
+    """Добавляет приём в выбранный блок meal_type/дата из дневника."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    if len(parts) < 4:
+        await callback.message.answer("❌ Не удалось открыть добавление: некорректные данные.")
+        return
+    meal_type = normalize_meal_type(parts[2], fallback=MealType.SNACK.value)
+    target_date = date.fromisoformat(parts[3])
+    await state.update_data(meal_type=meal_type, entry_date=target_date.isoformat(), pending_add_method=None)
+    await callback.message.answer(
+        f"Добавляем в приём пищи: {display_meal_type(meal_type)} ({target_date.strftime('%d.%m.%Y')})"
+    )
+    await _show_input_methods(callback.message, state)
+
+
+@router.callback_query(lambda c: c.data.startswith("food:edit_meal:"))
+async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext):
+    """Редактирует последний приём выбранного meal_type за дату."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    if len(parts) < 4:
+        await callback.message.answer("❌ Не удалось открыть редактирование: некорректные данные.")
+        return
+    meal_type = normalize_meal_type(parts[2], fallback=MealType.SNACK.value)
+    target_date = date.fromisoformat(parts[3])
+    user_id = str(callback.from_user.id)
+    meals_for_type = MealRepository.get_meals_for_type_for_date(user_id, target_date, meal_type)
+    if not meals_for_type:
+        await callback.message.answer("❌ В этом приёме пищи пока нечего редактировать.")
+        return
+    target_meal = meals_for_type[-1]
+    await _start_meal_edit_flow(callback.message, state, user_id, target_meal.id, target_date)
+
+
+@router.callback_query(lambda c: c.data.startswith("food:clear_meal:"))
+async def clear_meal_from_diary_block(callback: CallbackQuery):
+    """Очищает выбранный приём пищи (meal_type) за дату."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    if len(parts) < 4:
+        await callback.message.answer("❌ Не удалось очистить приём пищи: некорректные данные.")
+        return
+    meal_type = normalize_meal_type(parts[2], fallback=MealType.SNACK.value)
+    target_date = date.fromisoformat(parts[3])
+    user_id = str(callback.from_user.id)
+    deleted_count = MealRepository.delete_meals_by_type_for_date(user_id, target_date, meal_type)
+    if deleted_count <= 0:
+        await callback.message.answer("ℹ️ В этом приёме пищи уже нет записей.")
+        return
+    await callback.message.answer(f"✅ {display_meal_type(meal_type)} очищен: удалено записей — {deleted_count}.")
+    await show_day_meals(callback.message, user_id, target_date)
 
 
 @router.message(MealEntryStates.choosing_edit_type)
