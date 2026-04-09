@@ -6,6 +6,9 @@ from types import SimpleNamespace
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "utils" / "meal_formatters.py"
+ROOT_PATH = MODULE_PATH.parents[1]
+if str(ROOT_PATH) not in sys.path:
+    sys.path.insert(0, str(ROOT_PATH))
 spec = importlib.util.spec_from_file_location("meal_formatters", MODULE_PATH)
 module = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
@@ -45,7 +48,9 @@ class MealFormatterTests(unittest.TestCase):
         )
         self.assertLess(text.find("🍳 Завтрак"), text.find("🍲 Обед"))
         self.assertNotIn("🍽 Ужин", text)
-        self.assertIn("📊 Итого за день:", text)
+        self.assertIn("🍱 Дневник питания — 08.04.2026", text)
+        self.assertIn("📊 Баланс дня", text)
+        self.assertIn("🔥 Калории:", text)
 
     def test_fallback_name_replaces_none(self):
         meals = [
@@ -65,7 +70,8 @@ class MealFormatterTests(unittest.TestCase):
             daily_totals={"calories": 100, "protein": 1, "fat": 2, "carbs": 3},
             day_str="08.04.2026",
         )
-        self.assertIn("• Продукт — 100 ккал", text)
+        self.assertIn("• Продукт", text)
+        self.assertIn("100 ккал (Б 1.0 / Ж 2.0 / У 3.0)", text)
         self.assertNotIn("None", text)
 
 

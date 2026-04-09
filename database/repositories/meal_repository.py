@@ -87,6 +87,20 @@ class MealRepository:
                 "carbs": float(result.carbs) if result.carbs else 0.0,
                 "carbohydrates_total_g": float(result.carbs) if result.carbs else 0.0,  # Для совместимости
             }
+
+    @staticmethod
+    def get_meals_for_type_for_date(user_id: str, entry_date: date, meal_type: str) -> list[Meal]:
+        """Получает приёмы пищи конкретного типа за дату."""
+        normalized_meal_type = normalize_meal_type(meal_type, fallback=MealType.SNACK.value)
+        with get_db_session() as session:
+            return (
+                session.query(Meal)
+                .filter(Meal.user_id == user_id)
+                .filter(Meal.date == entry_date)
+                .filter(Meal.meal_type == normalized_meal_type)
+                .order_by(Meal.id.asc())
+                .all()
+            )
     
     @staticmethod
     def delete_meal(meal_id: int, user_id: str) -> bool:
@@ -104,6 +118,32 @@ class MealRepository:
                 logger.info(f"Deleted meal {meal_id} for user {user_id}")
                 return True
             return False
+
+    @staticmethod
+    def delete_meals_by_type_for_date(user_id: str, entry_date: date, meal_type: str) -> int:
+        """Удаляет все приёмы пищи выбранного типа за дату."""
+        normalized_meal_type = normalize_meal_type(meal_type, fallback=MealType.SNACK.value)
+        with get_db_session() as session:
+            meals = (
+                session.query(Meal)
+                .filter(Meal.user_id == user_id)
+                .filter(Meal.date == entry_date)
+                .filter(Meal.meal_type == normalized_meal_type)
+                .all()
+            )
+            deleted_count = len(meals)
+            for meal in meals:
+                session.delete(meal)
+            if deleted_count:
+                session.commit()
+                logger.info(
+                    "Deleted %s meal(s) for user %s, date=%s, meal_type=%s",
+                    deleted_count,
+                    user_id,
+                    entry_date.isoformat(),
+                    normalized_meal_type,
+                )
+            return deleted_count
     
     @staticmethod
     def get_kbju_settings(user_id: str) -> Optional[KbjuSettings]:
