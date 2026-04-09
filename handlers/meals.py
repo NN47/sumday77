@@ -292,6 +292,19 @@ async def _ensure_meal_type_selected(
     return False
 
 
+async def _show_input_methods(message: Message, state: FSMContext) -> None:
+    """Показывает меню способов добавления еды для уже выбранного типа приёма."""
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    text = (
+        "<b>Теперь выбери, как добавить еду:</b>\n"
+        "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
+        "• 📷 Анализ еды по фото\n"
+        "• 📋 Анализ этикетки"
+    )
+    push_menu_stack(message.bot, kbju_add_menu)
+    await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
+
+
 @router.message(lambda m: (m.text or "").strip() in MEALS_BUTTON_ALIASES)
 async def calories(message: Message, state: FSMContext):
     """Открывает дневник питания с актуальной сводкой за сегодня."""
@@ -439,15 +452,8 @@ async def select_meal_type(message: Message, state: FSMContext):
             await kbju_add_via_calorieninjas(message, state)
             return
 
-    text = (
-        f"Отлично! {display_meal_type(meal_type)}.\n\n"
-        "<b>Теперь выбери, как добавить еду:</b>\n"
-        "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
-        "• 📷 Анализ еды по фото\n"
-        "• 📋 Анализ этикетки"
-    )
-    push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
+    await message.answer(f"Отлично! {display_meal_type(meal_type)}.")
+    await _show_input_methods(message, state)
 
 
 @router.message(lambda m: m.text == "➕ Через CalorieNinjas")
