@@ -355,7 +355,7 @@ def build_exercise_selection_menu(exercises: list[str]) -> ReplyKeyboardMarkup:
 kbju_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="➕ Добавить")],
-        [KeyboardButton(text="📊 Дневной отчёт"), KeyboardButton(text="📆 Календарь КБЖУ")],
+        [KeyboardButton(text="📆 Календарь КБЖУ")],
         [KeyboardButton(text="🎯 Цель / Норма КБЖУ")],
         [main_menu_button],
     ],

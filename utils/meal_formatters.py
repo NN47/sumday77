@@ -310,15 +310,15 @@ def build_meals_actions_keyboard(
             [
                 InlineKeyboardButton(
                     text=f"➕ {meal_ui['title']}",
-                    callback_data=f"food:add:{meal_type}:{iso_date}",
+                    callback_data=f"add_meal:{meal_type}:{iso_date}",
                 ),
                 InlineKeyboardButton(
                     text="✏️ Редактировать",
-                    callback_data=f"food:edit_meal:{meal_type}:{iso_date}",
+                    callback_data=f"edit_meal:{meal_type}:{iso_date}",
                 ),
                 InlineKeyboardButton(
                     text="🗑 Очистить",
-                    callback_data=f"food:clear_meal:{meal_type}:{iso_date}",
+                    callback_data=f"clear_meal:{meal_type}:{iso_date}",
                 ),
             ]
         )
