@@ -457,7 +457,26 @@ class GeminiService:
             return None
 
     def extract_kbju_from_label(self, image_bytes: bytes) -> Optional[dict]:
-        prompt = """Извлеки КБЖУ и вес из этикетки. Ответь только JSON."""
+        prompt = """
+Извлеки данные с пищевой этикетки.
+Ответь СТРОГО JSON без markdown и комментариев в формате:
+{
+  "product_name": "строка",
+  "kbju_per_100g": {
+    "kcal": number|null,
+    "protein": number|null,
+    "fat": number|null,
+    "carbs": number|null
+  },
+  "package_weight": number|null,
+  "found_weight": true|false
+}
+
+Правила:
+- если значение не найдено — верни null.
+- kbju_per_100g должен быть на 100 г (если на порцию — пересчитай в 100 г, если возможно).
+- числа возвращай как number, не как строку.
+""".strip()
         try:
             from google.genai import types
 
@@ -476,18 +495,94 @@ class GeminiService:
             )
             raw = response.text.strip()
             try:
-                return json.loads(raw)
+                parsed = json.loads(raw)
             except json.JSONDecodeError:
                 start = raw.find("{")
                 end = raw.rfind("}")
                 if start != -1 and end != -1 and end > start:
-                    return json.loads(raw[start : end + 1])
-                raise
+                    parsed = json.loads(raw[start : end + 1])
+                else:
+                    raise
+            normalized = self._normalize_label_payload(parsed)
+            return normalized if normalized else None
         except GeminiServiceError:
             raise
         except Exception as e:
             logger.error("Ошибка Gemini (КБЖУ с этикетки): %s", e, exc_info=True)
             return None
+
+    @staticmethod
+    def _to_float(value) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            cleaned = (
+                value.strip()
+                .replace(",", ".")
+                .replace("ккал", "")
+                .replace("г", "")
+                .replace("гр", "")
+                .strip()
+            )
+            if not cleaned:
+                return None
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+        return None
+
+    @classmethod
+    def _pick_first_numeric(cls, payload: dict, keys: list[str]) -> float | None:
+        for key in keys:
+            if key in payload:
+                numeric = cls._to_float(payload.get(key))
+                if numeric is not None:
+                    return numeric
+        return None
+
+    @classmethod
+    def _normalize_label_payload(cls, payload: dict) -> Optional[dict]:
+        if not isinstance(payload, dict):
+            return None
+
+        kbju_raw = payload.get("kbju_per_100g")
+        if not isinstance(kbju_raw, dict):
+            kbju_raw = payload
+
+        kcal = cls._pick_first_numeric(kbju_raw, ["kcal", "calories", "energy_kcal", "ккал", "калории"])
+        protein = cls._pick_first_numeric(kbju_raw, ["protein", "proteins", "белки", "белок"])
+        fat = cls._pick_first_numeric(kbju_raw, ["fat", "fats", "жиры", "жир"])
+        carbs = cls._pick_first_numeric(kbju_raw, ["carbs", "carbohydrates", "углеводы", "углевод"])
+
+        if all(value is None for value in (kcal, protein, fat, carbs)):
+            return None
+
+        package_weight = cls._pick_first_numeric(
+            payload,
+            ["package_weight", "weight", "net_weight", "mass", "вес_упаковки", "вес"],
+        )
+        found_weight = bool(package_weight and package_weight > 0)
+
+        product_name = payload.get("product_name") or payload.get("name") or "Продукт"
+        if not isinstance(product_name, str):
+            product_name = str(product_name)
+
+        return {
+            "product_name": product_name.strip() or "Продукт",
+            "kbju_per_100g": {
+                "kcal": kcal,
+                "protein": protein,
+                "fat": fat,
+                "carbs": carbs,
+            },
+            "package_weight": package_weight,
+            "found_weight": found_weight,
+        }
 
     def scan_barcode(self, image_bytes: bytes) -> Optional[str]:
         prompt = """Прочитай штрих-код и верни только цифры или NOT_FOUND."""
