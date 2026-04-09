@@ -1362,6 +1362,9 @@ async def select_kbju_calendar_day(callback: CallbackQuery):
     parts = callback.data.split(":")
     target_date = date.fromisoformat(parts[1])
     user_id = str(callback.from_user.id)
+    if target_date == date.today():
+        await send_today_results(callback.message, user_id)
+        return
     await show_day_meals(callback.message, user_id, target_date)
 
 
