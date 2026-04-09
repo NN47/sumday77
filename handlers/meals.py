@@ -1294,9 +1294,10 @@ async def calories_today_results(message: Message):
 
 
 async def send_today_results(message: Message, user_id: str):
-    """Отправляет результаты за сегодня."""
+    """Отправляет результаты за сегодня и возвращает меню раздела в reply-клавиатуру."""
     today = date.today()
     push_menu_stack(message.bot, kbju_menu)
+    await message.answer("🍱 Дневник питания", reply_markup=kbju_menu)
     await _render_day_meals_messages(message, user_id, today, include_back=False)
 
 
