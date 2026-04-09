@@ -118,6 +118,7 @@ async def _render_day_meals_messages(
     *,
     include_back: bool = False,
     changed_meal_type: str | None = None,
+    force_refresh: bool = False,
 ) -> None:
     """Точечно рендерит сообщения по приёмам пищи + отдельное сообщение итогов дня."""
     from collections import defaultdict
@@ -140,6 +141,14 @@ async def _render_day_meals_messages(
 
     day_store = _get_food_diary_day_store(message.bot, user_id, target_date)
     meal_messages: dict[str, int] = day_store.setdefault("meals", {})
+
+    if force_refresh:
+        for stored_id in list(meal_messages.values()):
+            await _delete_stored_message(message, stored_id)
+        meal_messages.clear()
+        if day_store.get("summary"):
+            await _delete_stored_message(message, day_store.get("summary"))
+            day_store["summary"] = None
 
     if not meals:
         for stored_id in list(meal_messages.values()):
@@ -1298,7 +1307,7 @@ async def send_today_results(message: Message, user_id: str):
     today = date.today()
     push_menu_stack(message.bot, kbju_menu)
     await message.answer("🍱 Дневник питания", reply_markup=kbju_menu)
-    await _render_day_meals_messages(message, user_id, today, include_back=False)
+    await _render_day_meals_messages(message, user_id, today, include_back=False, force_refresh=True)
 
 
 @router.message(lambda m: m.text == "📆 Календарь КБЖУ")
