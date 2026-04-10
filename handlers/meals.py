@@ -19,6 +19,7 @@ from utils.keyboards import (
     kbju_add_menu,
     kbju_meal_type_menu,
     kbju_after_meal_menu,
+    kbju_weight_input_menu,
     kbju_edit_type_menu,
     push_menu_stack,
 )
@@ -1002,8 +1003,9 @@ async def handle_label_photo(message: Message, state: FSMContext):
                 f"💪 Белки: {protein_100g:.1f} г\n"
                 f"🥑 Жиры: {fat_100g:.1f} г\n"
                 f"🍩 Углеводы: {carbs_100g:.1f} г\n\n"
-                f"📦 В упаковке {weight:.0f} г, сколько Вы съели?",
-                reply_markup=kbju_add_menu,
+                f"📦 В упаковке {weight:.0f} г, сколько Вы съели?\n"
+                f"Можешь выбрать кнопку или ввести вес вручную.",
+                reply_markup=kbju_weight_input_menu,
             )
         else:
             await message.answer(
@@ -1014,8 +1016,9 @@ async def handle_label_photo(message: Message, state: FSMContext):
                 f"💪 Белки: {protein_100g:.1f} г\n"
                 f"🥑 Жиры: {fat_100g:.1f} г\n"
                 f"🍩 Углеводы: {carbs_100g:.1f} г\n\n"
-                f"❓ Вес в упаковке не найден, сколько вы съели?",
-                reply_markup=kbju_add_menu,
+                f"❓ Вес в упаковке не найден, сколько вы съели?\n"
+                f"Можешь выбрать кнопку или ввести вес вручную.",
+                reply_markup=kbju_weight_input_menu,
             )
     else:
         await message.answer(
@@ -1026,8 +1029,9 @@ async def handle_label_photo(message: Message, state: FSMContext):
             f"💪 Белки: {protein_100g:.1f} г\n"
             f"🥑 Жиры: {fat_100g:.1f} г\n"
             f"🍩 Углеводы: {carbs_100g:.1f} г\n\n"
-            f"❓ Вес в упаковке не найден, сколько вы съели?",
-            reply_markup=kbju_add_menu,
+            f"❓ Вес в упаковке не найден, сколько вы съели?\n"
+            f"Можешь выбрать кнопку или ввести вес вручную.",
+            reply_markup=kbju_weight_input_menu,
         )
 
 
@@ -1152,9 +1156,10 @@ async def handle_barcode_photo(message: Message, state: FSMContext):
         text_parts.append(f"Сколько грамм вы съели? (можно ввести {weight} или другое значение)")
     else:
         text_parts.append(f"\n❓ Сколько грамм вы съели?")
+    text_parts.append("\nМожно выбрать кнопку или ввести вес вручную.")
     
-    push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer("".join(text_parts), reply_markup=kbju_add_menu, parse_mode="HTML")
+    push_menu_stack(message.bot, kbju_weight_input_menu)
+    await message.answer("".join(text_parts), reply_markup=kbju_weight_input_menu, parse_mode="HTML")
 
 
 @router.message(MealEntryStates.waiting_for_weight_input)

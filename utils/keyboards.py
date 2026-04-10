@@ -609,6 +609,16 @@ kbju_after_meal_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+kbju_weight_input_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="10"), KeyboardButton(text="20"), KeyboardButton(text="30"), KeyboardButton(text="40")],
+        [KeyboardButton(text="50"), KeyboardButton(text="60"), KeyboardButton(text="70"), KeyboardButton(text="80")],
+        [KeyboardButton(text="90"), KeyboardButton(text="100"), KeyboardButton(text="150"), KeyboardButton(text="200")],
+        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
 # Меню выбора типа редактирования КБЖУ
 kbju_edit_type_menu = ReplyKeyboardMarkup(
     keyboard=[
