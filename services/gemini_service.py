@@ -81,6 +81,8 @@ class GeminiService:
         self.model = "gemini-2.5-flash"
         self.client = genai.Client(api_key=self.account_configs[0]["api_key"])
 
+        # Количество ПОВТОРОВ после первой ошибки. Итого попыток на ключ:
+        # 1 базовая + max_retries.
         self.max_retries_per_key_for_temporary_errors = max(0, GEMINI_TEMP_ERROR_MAX_RETRIES)
         self.backoff_schedule = [max(0, int(v)) for v in GEMINI_TEMP_ERROR_BACKOFF_SECONDS]
         self.backoff_jitter_seconds = max(0.0, float(GEMINI_TEMP_ERROR_JITTER_SECONDS))
@@ -191,12 +193,14 @@ class GeminiService:
     def execute_gemini_request_with_failover(self, func, *args, **kwargs):
         """Единый поток выполнения запроса Gemini с retry/backoff/cooldown/failover."""
         self._ensure_accounts_synced()
+        GeminiRepository.log_user_request_started(model_name=self.model)
 
         used_account_ids: set[int] = set()
         keys_tried = 0
         total_attempts = 0
         last_error: Exception | None = None
         last_error_type: GeminiErrorType = "unknown"
+        total_retries = 0
 
         active = GeminiRepository.get_active_account()
         current_account = (
@@ -213,9 +217,21 @@ class GeminiService:
             temp_attempt = 0
             while total_attempts < self.max_total_attempts_per_request:
                 total_attempts += 1
+                GeminiRepository.log_api_attempt(
+                    account_id=current_account.id,
+                    model_name=self.model,
+                    api_attempt_number=total_attempts,
+                    key_attempt_number=temp_attempt + 1,
+                )
                 try:
                     response = func(*args, **kwargs)
                     GeminiRepository.record_request_success(current_account.id, model_name=self.model)
+                    GeminiRepository.log_user_request_finished(
+                        status="request_finished_success",
+                        model_name=self.model,
+                        attempts=total_attempts,
+                        retries=total_retries,
+                    )
                     return response
                 except Exception as err:  # pragma: no cover - runtime errors from SDK
                     last_error = err
@@ -242,6 +258,7 @@ class GeminiService:
 
                     if self.should_retry(error_type) and temp_attempt < self.max_retries_per_key_for_temporary_errors:
                         temp_attempt += 1
+                        total_retries += 1
                         backoff = self.get_backoff_delay(temp_attempt)
                         logger.warning(
                             "⚠️ retry_temporary_error: key=%s attempt=%s/%s delay=%.2fs error=%s",
@@ -250,6 +267,13 @@ class GeminiService:
                             self.max_retries_per_key_for_temporary_errors,
                             backoff,
                             err,
+                        )
+                        GeminiRepository.log_retry_scheduled(
+                            account_id=current_account.id,
+                            model_name=self.model,
+                            retry_number=temp_attempt,
+                            delay_seconds=backoff,
+                            error_message=str(err),
                         )
                         time.sleep(backoff)
                         continue
@@ -263,6 +287,12 @@ class GeminiService:
                                 f"after {temp_attempt} retries: {err}"
                             ),
                         )
+                    GeminiRepository.log_request_failed(
+                        account_id=current_account.id,
+                        model_name=self.model,
+                        error_type=error_type,
+                        error_message=str(err),
+                    )
                     break
 
             if total_attempts >= self.max_total_attempts_per_request:
@@ -283,6 +313,14 @@ class GeminiService:
                 excluded_account_ids=used_account_ids,
             )
 
+        GeminiRepository.log_user_request_finished(
+            status="request_finished_failed",
+            model_name=self.model,
+            attempts=total_attempts,
+            retries=total_retries,
+            error_type=last_error_type,
+            error_message=str(last_error) if last_error else None,
+        )
         if last_error_type == "temporary":
             raise GeminiServiceTemporaryUnavailableError(
                 "Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
