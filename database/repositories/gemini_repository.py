@@ -17,6 +17,7 @@ class GeminiRepository:
     STATUS_RATE_LIMITED = "rate_limited"
     STATUS_AUTH_FAILED = "auth_failed"
     STATUS_DISABLED = "disabled"
+    FINAL_USER_EVENTS = {"user_request_started", "request_finished_success", "request_finished_failed"}
 
     @staticmethod
     def mask_api_key(api_key: str) -> str:
@@ -232,6 +233,130 @@ class GeminiRepository:
             )
 
     @staticmethod
+    def _get_fallback_account_id(session) -> int | None:
+        fallback = (
+            session.query(GeminiAccount)
+            .order_by(GeminiAccount.priority_order.asc(), GeminiAccount.id.asc())
+            .first()
+        )
+        return fallback.id if fallback else None
+
+    @staticmethod
+    def _log_without_account(
+        session,
+        *,
+        event_type: str,
+        status: str,
+        model_name: str | None = None,
+        reason: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        account_id = GeminiRepository._get_fallback_account_id(session)
+        if not account_id:
+            return
+        session.add(
+            GeminiRequestLog(
+                account_id=account_id,
+                status=status,
+                event_type=event_type,
+                reason=reason,
+                model_name=model_name,
+                error_message=(error_message or "")[:1000] if error_message else None,
+            )
+        )
+
+    @staticmethod
+    def log_user_request_started(*, model_name: str) -> None:
+        with get_db_session() as session:
+            GeminiRepository._log_without_account(
+                session,
+                event_type="user_request_started",
+                status="user_request_started",
+                model_name=model_name,
+                reason="user_request",
+            )
+
+    @staticmethod
+    def log_api_attempt(
+        *,
+        account_id: int,
+        model_name: str,
+        api_attempt_number: int,
+        key_attempt_number: int,
+    ) -> None:
+        with get_db_session() as session:
+            session.add(
+                GeminiRequestLog(
+                    account_id=account_id,
+                    status="api_attempt",
+                    event_type="api_attempt",
+                    reason=f"attempt#{api_attempt_number}/key_attempt#{key_attempt_number}",
+                    model_name=model_name,
+                )
+            )
+
+    @staticmethod
+    def log_retry_scheduled(
+        *,
+        account_id: int,
+        model_name: str,
+        retry_number: int,
+        delay_seconds: float,
+        error_message: str | None = None,
+    ) -> None:
+        with get_db_session() as session:
+            session.add(
+                GeminiRequestLog(
+                    account_id=account_id,
+                    status="retry_temporary_error",
+                    event_type="retry_temporary_error",
+                    reason=f"retry#{retry_number} delay={delay_seconds:.2f}s",
+                    model_name=model_name,
+                    error_message=(error_message or "")[:1000] if error_message else None,
+                )
+            )
+
+    @staticmethod
+    def log_request_failed(
+        *,
+        account_id: int,
+        model_name: str,
+        error_type: str,
+        error_message: str,
+    ) -> None:
+        with get_db_session() as session:
+            session.add(
+                GeminiRequestLog(
+                    account_id=account_id,
+                    status="request_failed",
+                    event_type="request_failed",
+                    reason=error_type,
+                    model_name=model_name,
+                    error_message=(error_message or "")[:1000],
+                )
+            )
+
+    @staticmethod
+    def log_user_request_finished(
+        *,
+        status: str,
+        model_name: str,
+        attempts: int,
+        retries: int,
+        error_type: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        with get_db_session() as session:
+            GeminiRepository._log_without_account(
+                session,
+                event_type=status,
+                status=status,
+                model_name=model_name,
+                reason=f"attempts={attempts};retries={retries};error={error_type or 'none'}",
+                error_message=error_message,
+            )
+
+    @staticmethod
     def record_key_error(
         account_id: int,
         *,
@@ -368,9 +493,59 @@ class GeminiRepository:
             total_temporary_failovers = int(sum(int(acc.temporary_failover_count or 0) for acc in accounts))
             active = next((acc for acc in accounts if acc.is_active), None)
 
-            total_requests_today = (
+            total_user_requests_today = (
                 session.query(func.count(GeminiRequestLog.id))
                 .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.event_type == "user_request_started")
+                .scalar()
+                or 0
+            )
+            total_api_attempts_today = (
+                session.query(func.count(GeminiRequestLog.id))
+                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.event_type == "api_attempt")
+                .scalar()
+                or 0
+            )
+            retries_today = (
+                session.query(func.count(GeminiRequestLog.id))
+                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.event_type == "retry_temporary_error")
+                .scalar()
+                or 0
+            )
+            successful_requests_today = (
+                session.query(func.count(GeminiRequestLog.id))
+                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.event_type == "request_success")
+                .scalar()
+                or 0
+            )
+            failed_requests_today = (
+                session.query(func.count(GeminiRequestLog.id))
+                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.event_type == "request_failed")
+                .scalar()
+                or 0
+            )
+            failovers_due_to_quota_today = (
+                session.query(func.count(GeminiRequestLog.id))
+                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.event_type == "switch_due_to_quota")
+                .scalar()
+                or 0
+            )
+            failovers_due_to_temporary_today = (
+                session.query(func.count(GeminiRequestLog.id))
+                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.event_type == "switch_due_to_temporary_failure")
+                .scalar()
+                or 0
+            )
+            failovers_due_to_auth_today = (
+                session.query(func.count(GeminiRequestLog.id))
+                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.event_type == "switch_due_to_auth_error")
                 .scalar()
                 or 0
             )
@@ -399,7 +574,14 @@ class GeminiRepository:
 
         return {
             "active_account": active,
-            "total_requests_today": int(total_requests_today),
+            "user_requests_today": int(total_user_requests_today),
+            "api_attempts_today": int(total_api_attempts_today),
+            "retries_today": int(retries_today),
+            "successful_requests_today": int(successful_requests_today),
+            "failed_requests_today": int(failed_requests_today),
+            "failovers_due_to_quota_today": int(failovers_due_to_quota_today),
+            "failovers_due_to_temporary_today": int(failovers_due_to_temporary_today),
+            "failovers_due_to_auth_today": int(failovers_due_to_auth_today),
             "total_requests_all_time": total_requests_all_time,
             "total_limit_switches": total_limit_switches,
             "total_temporary_failovers": total_temporary_failovers,

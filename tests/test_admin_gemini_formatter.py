@@ -50,10 +50,16 @@ def test_translate_gemini_admin_stats_full_russian_output() -> None:
     )
     stats = {
         "active_account": active,
-        "total_requests_today": 5,
+        "user_requests_today": 5,
+        "api_attempts_today": 8,
+        "retries_today": 3,
+        "successful_requests_today": 5,
+        "failed_requests_today": 3,
         "total_requests_all_time": 32,
         "total_limit_switches": 7,
         "total_temporary_failovers": 4,
+        "failovers_due_to_quota_today": 1,
+        "failovers_due_to_temporary_today": 2,
         "last_switch_reason": "switch_due_to_temporary_failure",
         "accounts": [active, waiting],
         "recent_events": [
@@ -75,10 +81,12 @@ def test_translate_gemini_admin_stats_full_russian_output() -> None:
     result = translate_gemini_admin_stats(stats)
 
     assert "Переключений из-за временных ошибок" in result
+    assert "User requests сегодня" in result
+    assert "API attempts сегодня" in result
     assert "Последнее сообщение об ошибке" in result
-    assert "Модель перегружена запросами (503)" in result
-    assert "🟢 Активен" in result
-    assert "🟠 Пауза" in result
+    assert "Временная ошибка Gemini (503 / model overloaded)" in result
+    assert "🟢 Active" in result
+    assert "🟠 Cooldown" in result
     assert "limit_switches" not in result
     assert "temporary_failover" not in result
 
@@ -87,10 +95,16 @@ def test_translate_gemini_admin_stats_compact_mode() -> None:
     account = _account(is_active=True, error_requests=0, total_requests=8)
     stats = {
         "active_account": account,
-        "total_requests_today": 2,
+        "user_requests_today": 2,
+        "api_attempts_today": 2,
+        "retries_today": 0,
+        "successful_requests_today": 2,
+        "failed_requests_today": 0,
         "total_requests_all_time": 8,
         "total_limit_switches": 1,
         "total_temporary_failovers": 0,
+        "failovers_due_to_quota_today": 0,
+        "failovers_due_to_temporary_today": 0,
         "last_switch_reason": None,
         "accounts": [account],
         "recent_events": [],
