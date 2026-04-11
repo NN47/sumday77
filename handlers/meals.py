@@ -46,6 +46,8 @@ MEAL_TYPE_BUTTONS = {
     "🍎 Перекус": MealType.SNACK.value,
 }
 
+BACK_BUTTON_TEXTS = {"⬅️ Назад", "↩️ Назад", "Назад"}
+
 ADD_METHOD_TEXTS = {
     "calorieninjas": "➕ Через CalorieNinjas",
     "ai": "📝 Ввести приём пищи текстом (AI-анализ)",
@@ -467,6 +469,22 @@ async def select_meal_type(message: Message, state: FSMContext):
 
     await message.answer(f"Отлично! {display_meal_type(meal_type)}.")
     await _show_input_methods(message, state)
+
+
+@router.message(MealEntryStates.choosing_meal_type, lambda m: (m.text or "").strip() in BACK_BUTTON_TEXTS or (m.text or "").strip() in MAIN_MENU_BUTTON_ALIASES)
+async def handle_meal_type_menu_navigation(message: Message, state: FSMContext):
+    """Обрабатывает навигационные кнопки на шаге выбора приёма пищи."""
+    text = (message.text or "").strip()
+    await state.clear()
+    if text in MAIN_MENU_BUTTON_ALIASES:
+        from handlers.common import go_main_menu
+
+        await go_main_menu(message, state)
+        return
+
+    from handlers.common import go_back
+
+    await go_back(message, state)
 
 
 @router.message(lambda m: m.text == "➕ Через CalorieNinjas")

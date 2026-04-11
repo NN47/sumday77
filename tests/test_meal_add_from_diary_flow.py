@@ -53,3 +53,27 @@ def test_add_meal_from_diary_block_sets_context_and_opens_methods():
     assert state._data["meal_type"] == "lunch"
     assert state._data["entry_date"] == target_date
     show_methods.assert_awaited_once_with(callback.message, state)
+
+
+def test_meal_type_navigation_back_supports_hook_arrow():
+    message = _build_message()
+    message.text = "↩️ Назад"
+    state = SimpleNamespace(clear=AsyncMock())
+
+    with patch("handlers.common.go_back", new=AsyncMock()) as go_back:
+        asyncio.run(meals.handle_meal_type_menu_navigation(message, state))
+
+    state.clear.assert_awaited_once()
+    go_back.assert_awaited_once_with(message, state)
+
+
+def test_meal_type_navigation_main_menu_alias():
+    message = _build_message()
+    message.text = "🔄 Главное меню"
+    state = SimpleNamespace(clear=AsyncMock())
+
+    with patch("handlers.common.go_main_menu", new=AsyncMock()) as go_main_menu:
+        asyncio.run(meals.handle_meal_type_menu_navigation(message, state))
+
+    state.clear.assert_awaited_once()
+    go_main_menu.assert_awaited_once_with(message, state)
