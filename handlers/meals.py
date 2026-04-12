@@ -822,21 +822,7 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
         await message.answer("Напиши, пожалуйста, что ты съел(а) 🙏")
         return
     
-    user_id = str(message.from_user.id)
     data = await state.get_data()
-    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    entry_date_str = data.get("entry_date")
-    if entry_date_str:
-        if isinstance(entry_date_str, str):
-            try:
-                entry_date = date.fromisoformat(entry_date_str)
-            except ValueError:
-                parsed = parse_date(entry_date_str)
-                entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
-        else:
-            entry_date = date.today()
-    else:
-        entry_date = date.today()
     
     # Показываем сообщение об анализе
     await message.answer("🤖 Считаю КБЖУ с помощью ИИ, секунду...")
@@ -898,37 +884,97 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
         f"🍩 Углеводы: {totals_for_db['carbs']:.1f} г"
     )
     
-    # Сохраняем в БД
+    lines.append("\nВыбери действие ниже 👇")
+
+    await state.update_data(
+        ai_pending_meal={
+            "raw_query": user_text,
+            "items": items,
+            "total": totals_for_db,
+            "meal_type": normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
+            "entry_date": data.get("entry_date"),
+        }
+    )
+    await state.set_state(MealEntryStates.confirming_ai_meal)
+    push_menu_stack(message.bot, openrouter_confirm_menu)
+    await message.answer("\n".join(lines), reply_markup=openrouter_confirm_menu)
+
+
+@router.message(MealEntryStates.confirming_ai_meal)
+async def handle_ai_confirm(message: Message, state: FSMContext):
+    """Подтверждение сохранения результата Gemini (AI-анализ)."""
+    text = (message.text or "").strip()
+
+    if text in MAIN_MENU_BUTTON_ALIASES:
+        await state.clear()
+        from handlers.common import go_main_menu
+
+        await go_main_menu(message, state)
+        return
+
+    if text == "⬅️ Назад":
+        await state.set_state(MealEntryStates.waiting_for_ai_food_input)
+        push_menu_stack(message.bot, kbju_add_menu)
+        await message.answer("Ок, отправь описание приёма пищи ещё раз.", reply_markup=kbju_add_menu)
+        return
+
+    if text == "❌ Отмена":
+        await state.set_state(MealEntryStates.waiting_for_ai_food_input)
+        await state.update_data(ai_pending_meal=None)
+        push_menu_stack(message.bot, kbju_add_menu)
+        await message.answer("Отменил сохранение. Можешь отправить новый текст.", reply_markup=kbju_add_menu)
+        return
+
+    if text != "💾 Сохранить":
+        await message.answer("Выбери действие кнопкой: сохранить, отмена или назад.")
+        return
+
+    data = await state.get_data()
+    pending = data.get("ai_pending_meal") or {}
+    total = pending.get("total") or {}
+    items = pending.get("items") or []
+    raw_query = pending.get("raw_query") or "[AI-анализ]"
+
+    user_id = str(message.from_user.id)
+    meal_type = normalize_meal_type(pending.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date_str = pending.get("entry_date")
+    if entry_date_str and isinstance(entry_date_str, str):
+        try:
+            entry_date = date.fromisoformat(entry_date_str)
+        except ValueError:
+            parsed = parse_date(entry_date_str)
+            entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
+    else:
+        entry_date = date.today()
+
     saved_meal = MealRepository.save_meal(
         user_id=user_id,
-        raw_query=user_text,
-        calories=totals_for_db["calories"],
-        protein=totals_for_db["protein"],
-        fat=totals_for_db["fat"],
-        carbs=totals_for_db["carbs"],
+        raw_query=raw_query,
+        calories=float(total.get("calories", 0)),
+        protein=float(total.get("protein", 0)),
+        fat=float(total.get("fat", 0)),
+        carbs=float(total.get("carbs", 0)),
         entry_date=entry_date,
         products_json=json.dumps(items),
         meal_type=meal_type,
     )
-    
-    # Сохраняем ID последнего приёма для редактирования
+
     if not hasattr(message.bot, "last_meal_ids"):
         message.bot.last_meal_ids = {}
     message.bot.last_meal_ids[user_id] = saved_meal.id
-    
-    # Показываем суммарные данные за день
+
     daily_totals = MealRepository.get_daily_totals(user_id, entry_date)
-    lines.append("\nСУММА ЗА СЕГОДНЯ:")
-    lines.append(
+    await state.clear()
+    push_menu_stack(message.bot, kbju_after_meal_menu)
+    await message.answer(
+        "✅ Сохранил приём пищи через AI-анализ.\n\n"
+        "СУММА ЗА СЕГОДНЯ:\n"
         f"🔥 Калории: {daily_totals.get('calories', 0):.0f} ккал\n"
         f"💪 Белки: {daily_totals.get('protein', 0):.1f} г\n"
         f"🥑 Жиры: {daily_totals.get('fat', 0):.1f} г\n"
-        f"🍩 Углеводы: {daily_totals.get('carbs', 0):.1f} г"
+        f"🍩 Углеводы: {daily_totals.get('carbs', 0):.1f} г",
+        reply_markup=kbju_after_meal_menu,
     )
-    
-    await state.clear()
-    push_menu_stack(message.bot, kbju_after_meal_menu)
-    await message.answer("\n".join(lines), reply_markup=kbju_after_meal_menu)
 
 
 @router.message(lambda m: m.text == "📋 Анализ этикетки")
