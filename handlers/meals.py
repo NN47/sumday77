@@ -1637,7 +1637,7 @@ def _build_weight_products_keyboard(products: list[dict]) -> InlineKeyboardMarku
 
     rows.append(
         [
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="meal_wback_edit"),
+            InlineKeyboardButton(text="✅ Готово", callback_data="meal_wdone"),
             InlineKeyboardButton(text="❌ Отмена", callback_data="meal_wcancel"),
         ]
     )
@@ -2145,6 +2145,14 @@ async def meal_weight_back_to_edit_type(callback: CallbackQuery, state: FSMConte
         reply_markup=kbju_edit_type_menu,
     )
 
+
+
+@router.callback_query(lambda c: c.data == "meal_wdone")
+async def meal_weight_done(callback: CallbackQuery, state: FSMContext):
+    """Завершает редактирование веса и возвращает в меню после приёма пищи."""
+    await callback.answer("Изменения сохранены")
+    await state.clear()
+    await callback.message.answer("✅ Изменения выполнены", reply_markup=kbju_after_meal_menu)
 
 @router.callback_query(lambda c: c.data == "meal_wcancel")
 async def meal_weight_cancel(callback: CallbackQuery, state: FSMContext):
