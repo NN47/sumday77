@@ -34,7 +34,10 @@ GEMINI_MAX_KEYS_PER_REQUEST = int(os.getenv("GEMINI_MAX_KEYS_PER_REQUEST", "3"))
 GEMINI_MAX_TOTAL_ATTEMPTS_PER_REQUEST = int(os.getenv("GEMINI_MAX_TOTAL_ATTEMPTS_PER_REQUEST", "8"))
 NUTRITION_API_KEY = os.getenv("NUTRITION_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 OPENROUTER_HTTP_REFERER = os.getenv("OPENROUTER_HTTP_REFERER", "https://your-render-url")
+OPENROUTER_APP_TITLE = os.getenv("OPENROUTER_APP_TITLE", "Sumday Bot")
 
 if not NUTRITION_API_KEY:
     print("⚠️ ВНИМАНИЕ: NUTRITION_API_KEY не найден. КБЖУ через CalorieNinjas работать не будет.")

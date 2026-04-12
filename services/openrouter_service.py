@@ -8,7 +8,13 @@ from typing import Optional
 
 from openai import OpenAI
 
-from config import OPENROUTER_API_KEY, OPENROUTER_HTTP_REFERER
+from config import (
+    OPENROUTER_API_KEY,
+    OPENROUTER_HTTP_REFERER,
+    OPENROUTER_MODEL,
+    OPENROUTER_BASE_URL,
+    OPENROUTER_APP_TITLE,
+)
 from database.repositories import OpenRouterRepository
 
 logger = logging.getLogger(__name__)
@@ -40,7 +46,7 @@ class OpenRouterService:
         if self._client is None:
             self._client = OpenAI(
                 api_key=OPENROUTER_API_KEY,
-                base_url="https://openrouter.ai/api/v1",
+                base_url=OPENROUTER_BASE_URL,
                 timeout=45.0,
             )
         return self._client
@@ -72,7 +78,7 @@ class OpenRouterService:
                 ],
                 extra_headers={
                     "HTTP-Referer": OPENROUTER_HTTP_REFERER,
-                    "X-Title": "Sumday Bot",
+                    "X-Title": OPENROUTER_APP_TITLE,
                 },
             )
 
@@ -111,6 +117,77 @@ class OpenRouterService:
             OpenRouterRepository.log_error(
                 model_name=OPENROUTER_FREE_MODEL,
                 input_text=text,
+                error_message=str(exc),
+                duration_ms=elapsed_ms,
+            )
+            raise wrapped from exc
+
+    def analyze_label_ocr_text(self, cleaned_text: str) -> str:
+        """Отправляет OCR-текст этикетки в OpenRouter и возвращает сырой JSON-ответ."""
+        started = time.perf_counter()
+        logger.info("OpenRouter OCR label: cleaned_text_len=%s model=%s", len(cleaned_text or ""), OPENROUTER_MODEL)
+
+        try:
+            client = self._get_client()
+            response = client.chat.completions.create(
+                model=OPENROUTER_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Ты анализируешь OCR-текст этикетки продукта питания. "
+                            "Верни СТРОГО JSON без markdown и лишнего текста. "
+                            "Нельзя выдумывать значения: если данных нет, ставь null. "
+                            "Формат строго такой: "
+                            '{'
+                            '"product_name":"string|null",'
+                            '"serving_description":"string|null",'
+                            '"weight_grams":null,'
+                            '"nutrition_per_100g":{"calories":null,"protein":null,"fat":null,"carbs":null},'
+                            '"nutrition_total":{"calories":null,"protein":null,"fat":null,"carbs":null},'
+                            '"confidence":"high|medium|low",'
+                            '"notes":"string"'
+                            '}. '
+                            "Если есть только значения на 100 г, не придумывай nutrition_total."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": f"OCR-текст этикетки:\\n{cleaned_text}",
+                    },
+                ],
+                extra_headers={
+                    "HTTP-Referer": OPENROUTER_HTTP_REFERER,
+                    "X-Title": OPENROUTER_APP_TITLE,
+                },
+            )
+
+            content = ((response.choices or [None])[0].message.content or "").strip()
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            if not content:
+                raise OpenRouterServiceTemporaryError("OpenRouter returned empty response for OCR label")
+
+            OpenRouterRepository.log_success(
+                model_name=OPENROUTER_MODEL,
+                input_text=cleaned_text,
+                response_text=content,
+                duration_ms=elapsed_ms,
+            )
+            return content
+        except OpenRouterServiceError:
+            raise
+        except Exception as exc:  # pragma: no cover - внешние исключения SDK
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            message = str(exc).lower()
+            wrapped: OpenRouterServiceError
+            if any(token in message for token in ("timeout", "timed out", "429", "rate", "network", "connection")):
+                wrapped = OpenRouterServiceTemporaryError(str(exc))
+            else:
+                wrapped = OpenRouterServiceError(str(exc))
+
+            OpenRouterRepository.log_error(
+                model_name=OPENROUTER_MODEL,
+                input_text=cleaned_text,
                 error_message=str(exc),
                 duration_ms=elapsed_ms,
             )
