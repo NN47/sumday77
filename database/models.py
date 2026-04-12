@@ -293,3 +293,17 @@ class GeminiRequestLog(Base):
     model_name = Column(String, nullable=True, index=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class OpenRouterRequestLog(Base):
+    """Лог запросов к OpenRouter (free)."""
+    __tablename__ = "openrouter_request_logs"
+
+    id = Column(Integer, primary_key=True)
+    status = Column(String, nullable=False, index=True)  # success | error
+    model_name = Column(String, nullable=False, index=True)
+    input_text = Column(Text, nullable=True)
+    response_text = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

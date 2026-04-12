@@ -430,3 +430,21 @@ def translate_gemini_admin_stats(stats: dict, compact: bool = False, debug: bool
 
 def format_gemini(metrics: dict) -> str:
     return translate_gemini_admin_stats(metrics)
+
+
+def format_openrouter(metrics: dict) -> str:
+    return (
+        "🤖 <b>OpenRouter / AI</b>\n\n"
+        f"• Модель: <b>{metrics.get('model_name', 'openrouter/free')}</b>\n"
+        f"• Тариф: <b>{metrics.get('tariff', 'free')}</b>\n"
+        f"• Запросов сегодня: <b>{metrics.get('requests_today', 0)}</b>\n"
+        f"• Запросов всего: <b>{metrics.get('requests_total', 0)}</b>\n"
+        f"• Успешных сегодня: <b>{metrics.get('success_today', 0)}</b>\n"
+        f"• Успешных всего: <b>{metrics.get('success_total', 0)}</b>\n"
+        f"• Ошибок сегодня: <b>{metrics.get('errors_today', 0)}</b>\n"
+        f"• Ошибок всего: <b>{metrics.get('errors_total', 0)}</b>\n"
+        f"• Последний запрос: <b>{format_datetime(metrics.get('last_request_at'))}</b>\n"
+        f"• Последняя ошибка: <b>{format_datetime(metrics.get('last_error_at'))}</b>\n"
+        f"• Текст последней ошибки: <b>{clean_text(metrics.get('last_error_message'), max_length=120)}</b>\n"
+        f"• Последний запрос (вход): <b>{clean_text(metrics.get('last_request'), max_length=120)}</b>"
+    )

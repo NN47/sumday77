@@ -7,6 +7,8 @@ class MealEntryStates(StatesGroup):
     choosing_meal_type = State()  # Выбор типа приёма пищи
     waiting_for_food_input = State()  # CalorieNinjas
     waiting_for_ai_food_input = State()  # Gemini AI
+    waiting_for_openrouter_food_input = State()  # OpenRouter free
+    confirming_openrouter_meal = State()  # Подтверждение сохранения OpenRouter результата
     waiting_for_photo = State()  # Фото еды
     waiting_for_label_photo = State()  # Фото этикетки
     waiting_for_barcode_photo = State()  # Фото штрих-кода
