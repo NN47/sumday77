@@ -122,6 +122,65 @@ class OpenRouterService:
             )
             raise wrapped from exc
 
+    def analyze_activity_prompt(self, prompt: str) -> str:
+        """Отправляет промпт анализа активности в OpenRouter и возвращает текстовый ответ."""
+        started = time.perf_counter()
+        logger.info("OpenRouter activity: sending request model=%s", OPENROUTER_MODEL)
+
+        try:
+            client = self._get_client()
+            response = client.chat.completions.create(
+                model=OPENROUTER_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Ты персональный фитнес-ассистент. Дай структурированный отчёт на русском языке в HTML-формате.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                extra_headers={
+                    "HTTP-Referer": OPENROUTER_HTTP_REFERER,
+                    "X-Title": OPENROUTER_APP_TITLE,
+                },
+            )
+
+            content = ((response.choices or [None])[0].message.content or "").strip()
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            if not content:
+                raise OpenRouterServiceTemporaryError("OpenRouter returned empty activity response")
+
+            OpenRouterRepository.log_success(
+                model_name=OPENROUTER_MODEL,
+                input_text=prompt,
+                response_text=content,
+                duration_ms=elapsed_ms,
+            )
+            return content
+        except OpenRouterServiceError as exc:
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            OpenRouterRepository.log_error(
+                model_name=OPENROUTER_MODEL,
+                input_text=prompt,
+                error_message=str(exc),
+                duration_ms=elapsed_ms,
+            )
+            raise
+        except Exception as exc:  # pragma: no cover - внешние исключения SDK
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            message = str(exc).lower()
+            if any(token in message for token in ("timeout", "timed out", "429", "rate", "network", "connection")):
+                wrapped = OpenRouterServiceTemporaryError(str(exc))
+            else:
+                wrapped = OpenRouterServiceError(str(exc))
+
+            OpenRouterRepository.log_error(
+                model_name=OPENROUTER_MODEL,
+                input_text=prompt,
+                error_message=str(exc),
+                duration_ms=elapsed_ms,
+            )
+            raise wrapped from exc
+
     def analyze_label_ocr_text(self, cleaned_text: str) -> str:
         """Отправляет OCR-текст этикетки в OpenRouter и возвращает сырой JSON-ответ."""
         started = time.perf_counter()

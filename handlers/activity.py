@@ -18,6 +18,7 @@ from database.repositories.activity_analysis_repository import ActivityAnalysisR
 from database.repositories import AnalyticsRepository
 from states.user_states import ActivityAnalysisStates
 from services.gemini_service import gemini_service, GeminiServiceTemporaryUnavailableError
+from services.openrouter_service import OpenRouterServiceTemporaryError, openrouter_service
 from services.error_logging_service import log_app_error
 
 logger = logging.getLogger(__name__)
@@ -724,6 +725,23 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
     return result
 
 
+async def generate_activity_analysis_openrouter(user_id: str, target_date: date) -> str:
+    """Генерирует анализ за день через OpenRouter."""
+    analysis = await generate_activity_analysis(user_id, target_date, target_date, "за день")
+    prompt = (
+        "Перепиши этот анализ дня, сохрани структуру и HTML-теги, "
+        "сделай стиль более живым и персонализированным.\n\n"
+        f"{analysis}"
+    )
+    result = await asyncio.wait_for(
+        asyncio.to_thread(openrouter_service.analyze_activity_prompt, prompt),
+        timeout=60.0,
+    )
+    result = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', result)
+    result = re.sub(r'\*+$', '', result)
+    return result
+
+
 @router.message(lambda m: m.text in {"🧠 ИИ анализ", "📊 ИИ анализ", "📊 ИИ анализ деятельности", "🤖 ИИ анализ деятельности"})
 async def analyze_activity(message: Message):
     """Показывает меню анализа деятельности."""
@@ -929,6 +947,37 @@ async def analyze_activity_day(message: Message):
             extra={"handler": "analyze_activity_day"},
         )
         await message.answer("⚠️ Не удалось сгенерировать анализ дня. Попробуй позже.")
+        return
+    push_menu_stack(message.bot, activity_analysis_menu)
+    await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
+
+
+@router.message(lambda m: m.text in {"🧪 Анализ дня через OpenRouter"})
+async def analyze_activity_day_openrouter(message: Message):
+    """Анализ дня через OpenRouter."""
+    user_id = str(message.from_user.id)
+    today = date.today()
+    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
+    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
+    await message.answer("⏳ Подожди немного, бот анализирует твой день через OpenRouter...")
+    try:
+        analysis = await generate_activity_analysis_openrouter(user_id, today)
+        ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="generated")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
+    except Exception as e:
+        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
+        if _is_gemini_temporarily_unavailable_error(e) or isinstance(e, OpenRouterServiceTemporaryError):
+            push_menu_stack(message.bot, activity_analysis_menu)
+            await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
+            return
+        log_app_error(
+            source="openrouter",
+            error=e,
+            user_id=user_id,
+            context="daily_analysis_openrouter",
+            extra={"handler": "analyze_activity_day_openrouter"},
+        )
+        await message.answer("⚠️ Не удалось сгенерировать анализ дня через OpenRouter. Попробуй позже.")
         return
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)

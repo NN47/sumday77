@@ -1,4 +1,4 @@
-from utils.keyboards import kbju_add_menu
+from utils.keyboards import kbju_add_menu, activity_analysis_menu
 from utils.admin_formatters import format_openrouter
 from services.openrouter_service import OpenRouterService
 
@@ -11,6 +11,11 @@ def test_kbju_add_menu_has_openrouter_button():
     texts = _reply_keyboard_texts(kbju_add_menu)
     assert "🧪 Ввести текст через OpenRouter" in texts
     assert "📷 Этикетка через OCR (тест)" in texts
+
+
+def test_activity_analysis_menu_has_openrouter_day_button():
+    texts = _reply_keyboard_texts(activity_analysis_menu)
+    assert "🧪 Анализ дня через OpenRouter" in texts
 
 
 def test_openrouter_formatter_shows_free_model():
