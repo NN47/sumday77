@@ -2017,8 +2017,9 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
     )
     await state.set_state(MealEntryStates.editing_meal_weight)
 
+    meal_title = display_meal_type(meal_type)
     await callback.message.answer(
-        "⚖️ Нашёл несколько записей в этом приёме пищи за день — показываю объединённый список продуктов.\n"
+        f"⚖️ Нашёл несколько записей в приёме пищи «{meal_title}» за день — показываю объединённый список продуктов.\n"
         "Выбери продукт, вес которого хочешь изменить:",
         reply_markup=_build_weight_products_keyboard(merged_products),
     )
