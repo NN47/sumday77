@@ -37,12 +37,12 @@ from services.openrouter_service import (
     OpenRouterServiceError,
     OpenRouterServiceTemporaryError,
 )
-from services.ocr_service import ocr_service, OCRServiceError
-from services.ocr_openrouter_parser import parse_ocr_label_json, OCRLabelParseError
+from services.ocr_service import ocr_service
 from utils.validators import parse_date
+from utils.telegram_text import split_telegram_message
 from datetime import datetime
 from utils.meal_types import MealType, MEAL_TYPE_ORDER, normalize_meal_type, display_meal_type
-from config import OPENROUTER_MODEL
+from config import OPENROUTER_MODEL, OCR_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -1020,7 +1020,10 @@ async def kbju_add_via_label(message: Message, state: FSMContext):
 
 @router.message(lambda m: m.text == "📷 Этикетка через OCR (тест)")
 async def kbju_add_via_ocr_label_test(message: Message, state: FSMContext):
-    """Тестовый сценарий: OCR через Tesseract + разбор через OpenRouter."""
+    """Тестовый сценарий: только OCR через Tesseract, без AI."""
+    if not OCR_ENABLED:
+        await message.answer("⚠️ OCR-режим сейчас отключён в конфигурации.")
+        return
     if not await _ensure_meal_type_selected(message, state, "ocr_label_test"):
         return
     reset_user_state(message)
@@ -1029,8 +1032,8 @@ async def kbju_add_via_ocr_label_test(message: Message, state: FSMContext):
 
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(
-        "Отправь фото этикетки продукта. Я сначала распознаю текст через OCR, "
-        "а затем попробую разобрать его через AI.",
+        "Отправь фото этикетки продукта. Я попробую распознать только OCR-текст "
+        "без AI-анализа.",
         reply_markup=kbju_add_menu,
     )
 
@@ -1290,164 +1293,77 @@ async def handle_label_photo(message: Message, state: FSMContext):
 
 @router.message(MealEntryStates.waiting_for_ocr_label_photo, F.photo)
 async def handle_ocr_label_photo(message: Message, state: FSMContext):
-    """Обрабатывает фото этикетки через OCR + OpenRouter (тестовый поток)."""
+    """Обрабатывает фото этикетки в OCR-only тестовом потоке."""
     user_id = str(message.from_user.id)
-    data = await state.get_data()
-    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    entry_date_str = data.get("entry_date")
-    if entry_date_str and isinstance(entry_date_str, str):
-        try:
-            entry_date = date.fromisoformat(entry_date_str)
-        except ValueError:
-            parsed = parse_date(entry_date_str)
-            entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
-    else:
-        entry_date = date.today()
-
     logger.info("OCR label test started: user_id=%s", user_id)
     _bump_ocr_counter("requests")
-    await message.answer("📷 Распознаю текст с этикетки через OCR...")
 
-    photo = message.photo[-1]
-    file = await message.bot.get_file(photo.file_id)
-    image_bytes = await message.bot.download_file(file.file_path)
-
-    import tempfile
-    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-        tmp.write(image_bytes.read())
-        image_path = tmp.name
-
-    try:
-        ocr_result = await asyncio.to_thread(ocr_service.extract_from_image, image_path)
-    except OCRServiceError as exc:
+    if not OCR_ENABLED:
         _bump_ocr_counter("ocr_failed")
-        logger.error("OCR label test failed on OCR: user_id=%s status=ocr_failed error=%s", user_id, exc)
-        await message.answer(
-            "Не удалось нормально распознать текст на фото. "
-            "Попробуй прислать более чёткое фото этикетки крупным планом."
-        )
+        await message.answer("⚠️ OCR-режим сейчас отключён в конфигурации.")
         return
 
-    raw_len = len(ocr_result.raw_ocr_text)
-    cleaned_len = len(ocr_result.cleaned_ocr_text)
-    logger.info(
-        "OCR label test stats: user_id=%s raw_len=%s cleaned_len=%s quality_ok=%s",
-        user_id,
-        raw_len,
-        cleaned_len,
-        ocr_result.metadata.get("quality_ok"),
-    )
+    await message.answer("Пробую распознать текст с этикетки через OCR...")
 
-    if not ocr_result.metadata.get("quality_ok"):
-        _bump_ocr_counter("ocr_failed")
-        logger.info("OCR label test status=ocr_failed user_id=%s", user_id)
-        await message.answer(
-            "Не удалось нормально распознать текст на фото. "
-            "Попробуй прислать более чёткое фото этикетки крупным планом."
+    temp_image_path: str | None = None
+    try:
+        photo = message.photo[-1]
+        file = await message.bot.get_file(photo.file_id)
+        image_bytes = await message.bot.download_file(file.file_path)
+
+        import tempfile
+        with tempfile.NamedTemporaryFile(prefix="ocr_label_", suffix=".jpg", delete=False) as tmp:
+            tmp.write(image_bytes.read())
+            temp_image_path = tmp.name
+
+        ocr_result = await asyncio.to_thread(ocr_service.parse_label_via_ocr_pipeline, temp_image_path)
+        logger.info(
+            "OCR label test finished: user_id=%s success=%s error_type=%s text_len=%s processing_ms=%s",
+            user_id,
+            ocr_result.success,
+            ocr_result.error_type,
+            len(ocr_result.text or ""),
+            ocr_result.processing_time_ms,
         )
+    except Exception as exc:
+        _bump_ocr_counter("ocr_failed")
+        logger.error("OCR label test unexpected error: user_id=%s error=%s", user_id, exc, exc_info=True)
+        try:
+            await message.answer(
+                "Не удалось надёжно распознать текст с этикетки. "
+                "Попробуй фото, где текст снят ближе, ровнее и при хорошем освещении."
+            )
+        except Exception as send_exc:
+            logger.error("OCR label test reply failed: user_id=%s error=%s", user_id, send_exc, exc_info=True)
+        return
+    finally:
+        if temp_image_path:
+            try:
+                import os
+                os.remove(temp_image_path)
+            except OSError as cleanup_exc:
+                logger.warning("OCR source cleanup_error: path=%s error=%s", temp_image_path, cleanup_exc)
+
+    if not ocr_result.success:
+        _bump_ocr_counter("ocr_failed")
+        try:
+            await message.answer(
+                "Не удалось надёжно распознать текст с этикетки. "
+                "Попробуй фото, где текст снят ближе, ровнее и при хорошем освещении."
+            )
+        except Exception as send_exc:
+            logger.error("OCR label test reply failed: user_id=%s error=%s", user_id, send_exc, exc_info=True)
         return
 
     _bump_ocr_counter("ocr_success")
-    await message.answer("🤖 OCR готов. Пробую разобрать данные через OpenRouter...")
     try:
-        raw_response = await asyncio.to_thread(
-            openrouter_service.analyze_label_ocr_text,
-            ocr_result.cleaned_ocr_text,
-        )
-        parsed = parse_ocr_label_json(raw_response)
-    except OpenRouterServiceTemporaryError as exc:
-        _bump_ocr_counter("openrouter_failed")
-        logger.error("OCR label test status=llm_failed user_id=%s error=%s", user_id, exc)
-        await message.answer(
-            "Сервис анализа сейчас временно недоступен. Попробуй позже или используй основной способ анализа."
-        )
-        return
-    except (OpenRouterServiceError, OCRLabelParseError, ValueError) as exc:
-        _bump_ocr_counter("openrouter_failed")
-        logger.error("OCR label test status=parse_failed user_id=%s error=%s", user_id, exc, exc_info=True)
-        await message.answer(
-            "Текст с этикетки удалось распознать, но AI не смог надёжно разобрать данные. "
-            "Попробуй другое фото или используй основной способ анализа."
-        )
-        return
-
-    nutrition_100g = parsed.get("nutrition_per_100g") or {}
-    kcal_100 = nutrition_100g.get("calories")
-    protein_100 = nutrition_100g.get("protein")
-    fat_100 = nutrition_100g.get("fat")
-    carbs_100 = nutrition_100g.get("carbs")
-    if all(value in (None, 0) for value in (kcal_100, protein_100, fat_100, carbs_100)):
-        _bump_ocr_counter("openrouter_failed")
-        logger.info("OCR label test status=llm_failed user_id=%s reason=no_kbju_100g", user_id)
-        await message.answer(
-            "Текст с этикетки удалось распознать, но AI не смог надёжно разобрать данные. "
-            "Попробуй другое фото или используй основной способ анализа."
-        )
-        return
-
-    product_name = parsed.get("product_name") or "Продукт"
-    weight_grams = parsed.get("weight_grams")
-    confidence = parsed.get("confidence", "low")
-    notes = (parsed.get("notes") or "").strip()
-
-    await state.set_state(MealEntryStates.waiting_for_weight_input)
-    await state.update_data(
-        kbju_per_100g={
-            "kcal": kcal_100 or 0,
-            "protein": protein_100 or 0,
-            "fat": fat_100 or 0,
-            "carbs": carbs_100 or 0,
-        },
-        product_name=product_name,
-        meal_source="ocr_openrouter_test",
-        ocr_label_raw_text=ocr_result.raw_ocr_text,
-        ocr_label_cleaned_text=ocr_result.cleaned_ocr_text,
-        ocr_label_confidence=confidence,
-        ocr_label_notes=notes,
-        entry_date=entry_date.isoformat(),
-        meal_type=meal_type,
-    )
-
-    confidence_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(confidence, "🔴")
-    lines = [
-        f"✅ Нашёл данные на этикетке (OCR-тест)!",
-        "",
-        f"📦 Продукт: {product_name}",
-        "📊 КБЖУ на 100 г:",
-        f"🔥 Калории: {float(kcal_100 or 0):.0f} ккал",
-        f"💪 Белки: {float(protein_100 or 0):.1f} г",
-        f"🥑 Жиры: {float(fat_100 or 0):.1f} г",
-        f"🍩 Углеводы: {float(carbs_100 or 0):.1f} г",
-        f"{confidence_emoji} Уверенность: {confidence}",
-        "Источник: OCR + OpenRouter (тест)",
-    ]
-    if notes:
-        lines.append(f"ℹ️ Примечание: {notes}")
-
-    if weight_grams and float(weight_grams) > 0:
-        lines.extend(
-            [
-                "",
-                f"📦 На этикетке похоже указан вес упаковки: {float(weight_grams):.0f} г.",
-                "Сколько грамм вы съели? Можно выбрать кнопку или ввести вручную.",
-            ]
-        )
-    else:
-        lines.extend(
-            [
-                "",
-                "❓ Сколько грамм вы съели? Можно выбрать кнопку или ввести вручную.",
-            ]
-        )
-
-    push_menu_stack(message.bot, kbju_weight_input_menu)
-    await message.answer("\n".join(lines), reply_markup=kbju_weight_input_menu)
-    logger.info(
-        "OCR label test status=success user_id=%s model=%s counters=%s",
-        user_id,
-        OPENROUTER_MODEL,
-        OCR_TEST_COUNTERS,
-    )
+        chunks = split_telegram_message(ocr_result.text, limit=3900)
+        await message.answer("Вот что удалось распознать с этикетки:")
+        for chunk in chunks:
+            await message.answer(chunk)
+    except Exception as send_exc:
+        logger.error("OCR label test send result failed: user_id=%s error=%s", user_id, send_exc, exc_info=True)
+        await message.answer("OCR отработал, но не удалось отправить результат. Попробуй ещё раз.")
 
 
 @router.message(MealEntryStates.waiting_for_barcode_photo, F.photo)
