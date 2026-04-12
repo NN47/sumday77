@@ -1880,50 +1880,8 @@ async def _start_meal_edit_flow(
     if not meal:
         await message.answer("❌ Не нашёл запись для изменения.")
         return
-    
-    # Извлекаем продукты из products_json
-    products = []
-    if meal.products_json:
-        try:
-            products = json.loads(meal.products_json)
-        except Exception:
-            pass
-    
-    # Если продуктов нет, пробуем извлечь из api_details
-    if not products and meal.api_details:
-        # Парсим api_details для извлечения продуктов
-        lines = meal.api_details.split("\n")
-        for line in lines:
-            if line.strip().startswith("•"):
-                # Извлекаем название и вес
-                match = re.match(r"•\s*(.+?)\s*\((\d+(?:\.\d+)?)\s*г\)", line)
-                if match:
-                    name = match.group(1).strip()
-                    grams = float(match.group(2))
-                    # Извлекаем КБЖУ
-                    kbju_match = re.search(
-                        r"(\d+(?:\.\d+)?)\s*ккал.*?Б\s*(\d+(?:\.\d+)?).*?Ж\s*(\d+(?:\.\d+)?).*?У\s*(\d+(?:\.\d+)?)",
-                        line
-                    )
-                    if kbju_match:
-                        cal = float(kbju_match.group(1))
-                        prot = float(kbju_match.group(2))
-                        fat = float(kbju_match.group(3))
-                        carbs = float(kbju_match.group(4))
-                        # Вычисляем КБЖУ на 100г
-                        if grams > 0:
-                            products.append({
-                                "name": name,
-                                "grams": grams,
-                                "calories": cal,
-                                "protein_g": prot,
-                                "fat_total_g": fat,
-                                "carbohydrates_total_g": carbs,
-                                "calories_per_100g": (cal / grams) * 100,
-                                "protein_per_100g": (prot / grams) * 100,
-                                "fat_per_100g": (fat / grams) * 100,
-                                "carbs_per_100g": (carbs / grams) * 100,
-                            })
+
+    products = _extract_products_for_edit(meal)
     
     if not products:
         await message.answer(
@@ -1946,6 +1904,58 @@ async def _start_meal_edit_flow(
         "⚖️ Выбери продукт, вес которого хочешь изменить:",
         reply_markup=_build_weight_products_keyboard(products),
     )
+
+
+def _extract_products_for_edit(meal) -> list[dict]:
+    """Извлекает список продуктов из meal для режима редактирования веса."""
+    products: list[dict] = []
+    if meal.products_json:
+        try:
+            parsed = json.loads(meal.products_json)
+            if isinstance(parsed, list):
+                products = [item for item in parsed if isinstance(item, dict)]
+        except Exception:
+            products = []
+
+    if not products and meal.api_details:
+        lines = meal.api_details.split("\n")
+        for line in lines:
+            if not line.strip().startswith("•"):
+                continue
+            match = re.match(r"•\s*(.+?)\s*\((\d+(?:\.\d+)?)\s*г\)", line)
+            if not match:
+                continue
+            name = match.group(1).strip()
+            grams = float(match.group(2))
+            kbju_match = re.search(
+                r"(\d+(?:\.\d+)?)\s*ккал.*?Б\s*(\d+(?:\.\d+)?).*?Ж\s*(\d+(?:\.\d+)?).*?У\s*(\d+(?:\.\d+)?)",
+                line,
+            )
+            if not kbju_match or grams <= 0:
+                continue
+            cal = float(kbju_match.group(1))
+            prot = float(kbju_match.group(2))
+            fat = float(kbju_match.group(3))
+            carbs = float(kbju_match.group(4))
+            products.append(
+                {
+                    "name": name,
+                    "grams": grams,
+                    "calories": cal,
+                    "protein_g": prot,
+                    "fat_total_g": fat,
+                    "carbohydrates_total_g": carbs,
+                    "calories_per_100g": (cal / grams) * 100,
+                    "protein_per_100g": (prot / grams) * 100,
+                    "fat_per_100g": (fat / grams) * 100,
+                    "carbs_per_100g": (carbs / grams) * 100,
+                }
+            )
+    return products
+
+
+def _strip_source_meta(product: dict) -> dict:
+    return {k: v for k, v in product.items() if not str(k).startswith("_source_")}
 
 
 @router.callback_query(lambda c: c.data.startswith("add_meal:"))
@@ -1980,8 +1990,38 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
     if not meals_for_type:
         await callback.message.answer("❌ В этом приёме пищи пока нечего редактировать.")
         return
-    target_meal = meals_for_type[-1]
-    await _start_meal_edit_flow(callback.message, state, user_id, target_meal.id, target_date)
+    if len(meals_for_type) == 1:
+        await _start_meal_edit_flow(callback.message, state, user_id, meals_for_type[-1].id, target_date)
+        return
+
+    merged_products: list[dict] = []
+    for meal in meals_for_type:
+        meal_products = _extract_products_for_edit(meal)
+        for product in meal_products:
+            enriched = dict(product)
+            enriched["_source_meal_id"] = meal.id
+            merged_products.append(enriched)
+
+    if not merged_products:
+        await callback.message.answer("❌ Не удалось извлечь продукты для редактирования.")
+        return
+
+    await state.update_data(
+        meal_id=None,
+        target_date=target_date.isoformat(),
+        saved_products=merged_products,
+        weight_drafts={},
+        editing_product_idx=None,
+        grouped_meal_ids=[m.id for m in meals_for_type],
+        grouped_meal_type=meal_type,
+    )
+    await state.set_state(MealEntryStates.editing_meal_weight)
+
+    await callback.message.answer(
+        "⚖️ Нашёл несколько записей в этом приёме пищи за день — показываю объединённый список продуктов.\n"
+        "Выбери продукт, вес которого хочешь изменить:",
+        reply_markup=_build_weight_products_keyboard(merged_products),
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("clear_meal:"))
@@ -2306,7 +2346,7 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
     saved_products = data.get("saved_products", [])
     drafts = data.get("weight_drafts", {})
 
-    if not meal_id or product_idx < 0 or product_idx >= len(saved_products):
+    if product_idx < 0 or product_idx >= len(saved_products):
         await callback.answer("Не удалось сохранить", show_alert=True)
         return
 
@@ -2320,20 +2360,30 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Не удалось пересчитать КБЖУ", show_alert=True)
         return
 
-    totals, api_details = _build_meal_update_payload(saved_products)
-    meal = MealRepository.get_meal_by_id(meal_id, user_id)
+    source_meal_id = int(product.get("_source_meal_id") or meal_id or 0)
+    if not source_meal_id:
+        await callback.answer("Не удалось определить запись для обновления", show_alert=True)
+        return
+
+    source_products = [
+        _strip_source_meta(p)
+        for p in saved_products
+        if int(p.get("_source_meal_id") or source_meal_id) == source_meal_id
+    ]
+    totals, api_details = _build_meal_update_payload(source_products)
+    meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
     raw_query = meal.raw_query if meal and hasattr(meal, "raw_query") else None
     changed_meal_type = normalize_meal_type(getattr(meal, "meal_type", None)) if meal else None
 
     success = MealRepository.update_meal(
-        meal_id=meal_id,
+        meal_id=source_meal_id,
         user_id=user_id,
         description=raw_query,
         calories=totals["calories"],
         protein=totals["protein_g"],
         fat=totals["fat_total_g"],
         carbs=totals["carbohydrates_total_g"],
-        products_json=json.dumps(saved_products),
+        products_json=json.dumps(source_products),
         api_details=api_details,
     )
     if not success:
@@ -2412,10 +2462,15 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
     saved_products = data.get("saved_products", [])
     drafts = data.get("weight_drafts", {})
 
-    if not meal_id or product_idx < 0 or product_idx >= len(saved_products):
+    if product_idx < 0 or product_idx >= len(saved_products):
         await callback.answer("Не удалось удалить продукт", show_alert=True)
         return
-    meal = MealRepository.get_meal_by_id(meal_id, user_id)
+    source_meal_id = int(saved_products[product_idx].get("_source_meal_id") or meal_id or 0)
+    if not source_meal_id:
+        await callback.answer("Не удалось определить запись для удаления", show_alert=True)
+        return
+
+    meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
     changed_meal_type = normalize_meal_type(getattr(meal, "meal_type", None)) if meal else None
 
     saved_products.pop(product_idx)
@@ -2425,26 +2480,40 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
         if int(idx) != product_idx
     }
 
-    if not saved_products:
-        success = MealRepository.delete_meal(meal_id, user_id)
+    source_products = [
+        _strip_source_meta(p)
+        for p in saved_products
+        if int(p.get("_source_meal_id") or source_meal_id) == source_meal_id
+    ]
+
+    if not source_products:
+        success = MealRepository.delete_meal(source_meal_id, user_id)
         if not success:
             await callback.answer("Не удалось обновить приём пищи", show_alert=True)
             return
-        await state.clear()
-        await callback.message.answer("Приём пищи теперь пуст. Запись удалена.")
+        if not saved_products:
+            await state.clear()
+            await callback.message.answer("Приём пищи теперь пуст. Запись удалена.")
+        else:
+            await state.update_data(saved_products=saved_products, weight_drafts=drafts)
+            await callback.message.edit_text(
+                "⚖️ Выбери продукт, вес которого хочешь изменить:",
+                reply_markup=_build_weight_products_keyboard(saved_products),
+            )
+            await callback.message.answer("✅ Продукт удалён")
     else:
-        totals, api_details = _build_meal_update_payload(saved_products)
-        meal = MealRepository.get_meal_by_id(meal_id, user_id)
+        totals, api_details = _build_meal_update_payload(source_products)
+        meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
         raw_query = meal.raw_query if meal and hasattr(meal, "raw_query") else None
         success = MealRepository.update_meal(
-            meal_id=meal_id,
+            meal_id=source_meal_id,
             user_id=user_id,
             description=raw_query,
             calories=totals["calories"],
             protein=totals["protein_g"],
             fat=totals["fat_total_g"],
             carbs=totals["carbohydrates_total_g"],
-            products_json=json.dumps(saved_products),
+            products_json=json.dumps(source_products),
             api_details=api_details,
         )
         if not success:
