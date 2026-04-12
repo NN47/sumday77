@@ -35,10 +35,14 @@ from services.gemini_service import (
 from services.openrouter_service import (
     openrouter_service,
     OpenRouterServiceError,
+    OpenRouterServiceTemporaryError,
 )
+from services.ocr_service import ocr_service, OCRServiceError
+from services.ocr_openrouter_parser import parse_ocr_label_json, OCRLabelParseError
 from utils.validators import parse_date
 from datetime import datetime
 from utils.meal_types import MealType, MEAL_TYPE_ORDER, normalize_meal_type, display_meal_type
+from config import OPENROUTER_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +63,7 @@ ADD_METHOD_TEXTS = {
     "openrouter": "🧪 Ввести текст через OpenRouter",
     "photo": "📷 Анализ еды по фото",
     "label": "📋 Анализ этикетки",
+    "ocr_label_test": "📷 Этикетка через OCR (тест)",
     "barcode": "📷 Скан штрих-кода",
 }
 
@@ -66,6 +71,18 @@ AI_TEMPORARY_UNAVAILABLE_TEXT = "🤖 Сервис AI сейчас времен�
 AI_QUOTA_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за лимита запросов."
 AI_CONFIG_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за ошибки настройки."
 AI_TIMEOUT_UNAVAILABLE_TEXT = "⏱️ AI отвечает слишком долго. Попробуй ещё раз чуть позже."
+
+OCR_TEST_COUNTERS = {
+    "requests": 0,
+    "ocr_success": 0,
+    "ocr_failed": 0,
+    "openrouter_success": 0,
+    "openrouter_failed": 0,
+}
+
+
+def _bump_ocr_counter(key: str) -> None:
+    OCR_TEST_COUNTERS[key] = OCR_TEST_COUNTERS.get(key, 0) + 1
 
 
 def _get_food_diary_message_store(bot) -> dict:
@@ -321,7 +338,8 @@ async def _show_input_methods(message: Message, state: FSMContext) -> None:
         "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
         "• 🧪 Ввести текст через OpenRouter\n"
         "• 📷 Анализ еды по фото\n"
-        "• 📋 Анализ этикетки"
+        "• 📋 Анализ этикетки\n"
+        "• 📷 Этикетка через OCR (тест)"
     )
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
@@ -469,6 +487,9 @@ async def select_meal_type(message: Message, state: FSMContext):
             return
         if pending_method == "label":
             await kbju_add_via_label(message, state)
+            return
+        if pending_method == "ocr_label_test":
+            await kbju_add_via_ocr_label_test(message, state)
             return
         if pending_method == "barcode":
             await kbju_add_via_barcode(message, state)
@@ -883,7 +904,6 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
         f"🥑 Жиры: {totals_for_db['fat']:.1f} г\n"
         f"🍩 Углеводы: {totals_for_db['carbs']:.1f} г"
     )
-    
     lines.append("\nВыбери действие ниже 👇")
 
     await state.update_data(
@@ -996,6 +1016,23 @@ async def kbju_add_via_label(message: Message, state: FSMContext):
     
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(text, reply_markup=kbju_add_menu)
+
+
+@router.message(lambda m: m.text == "📷 Этикетка через OCR (тест)")
+async def kbju_add_via_ocr_label_test(message: Message, state: FSMContext):
+    """Тестовый сценарий: OCR через Tesseract + разбор через OpenRouter."""
+    if not await _ensure_meal_type_selected(message, state, "ocr_label_test"):
+        return
+    reset_user_state(message)
+    await state.update_data(pending_add_method=None)
+    await state.set_state(MealEntryStates.waiting_for_ocr_label_photo)
+
+    push_menu_stack(message.bot, kbju_add_menu)
+    await message.answer(
+        "Отправь фото этикетки продукта. Я сначала распознаю текст через OCR, "
+        "а затем попробую разобрать его через AI.",
+        reply_markup=kbju_add_menu,
+    )
 
 
 @router.message(lambda m: m.text == "📷 Скан штрих-кода")
@@ -1251,6 +1288,168 @@ async def handle_label_photo(message: Message, state: FSMContext):
         )
 
 
+@router.message(MealEntryStates.waiting_for_ocr_label_photo, F.photo)
+async def handle_ocr_label_photo(message: Message, state: FSMContext):
+    """Обрабатывает фото этикетки через OCR + OpenRouter (тестовый поток)."""
+    user_id = str(message.from_user.id)
+    data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date_str = data.get("entry_date")
+    if entry_date_str and isinstance(entry_date_str, str):
+        try:
+            entry_date = date.fromisoformat(entry_date_str)
+        except ValueError:
+            parsed = parse_date(entry_date_str)
+            entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
+    else:
+        entry_date = date.today()
+
+    logger.info("OCR label test started: user_id=%s", user_id)
+    _bump_ocr_counter("requests")
+    await message.answer("📷 Распознаю текст с этикетки через OCR...")
+
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    image_bytes = await message.bot.download_file(file.file_path)
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        tmp.write(image_bytes.read())
+        image_path = tmp.name
+
+    try:
+        ocr_result = await asyncio.to_thread(ocr_service.extract_from_image, image_path)
+    except OCRServiceError as exc:
+        _bump_ocr_counter("ocr_failed")
+        logger.error("OCR label test failed on OCR: user_id=%s status=ocr_failed error=%s", user_id, exc)
+        await message.answer(
+            "Не удалось нормально распознать текст на фото. "
+            "Попробуй прислать более чёткое фото этикетки крупным планом."
+        )
+        return
+
+    raw_len = len(ocr_result.raw_ocr_text)
+    cleaned_len = len(ocr_result.cleaned_ocr_text)
+    logger.info(
+        "OCR label test stats: user_id=%s raw_len=%s cleaned_len=%s quality_ok=%s",
+        user_id,
+        raw_len,
+        cleaned_len,
+        ocr_result.metadata.get("quality_ok"),
+    )
+
+    if not ocr_result.metadata.get("quality_ok"):
+        _bump_ocr_counter("ocr_failed")
+        logger.info("OCR label test status=ocr_failed user_id=%s", user_id)
+        await message.answer(
+            "Не удалось нормально распознать текст на фото. "
+            "Попробуй прислать более чёткое фото этикетки крупным планом."
+        )
+        return
+
+    _bump_ocr_counter("ocr_success")
+    await message.answer("🤖 OCR готов. Пробую разобрать данные через OpenRouter...")
+    try:
+        raw_response = await asyncio.to_thread(
+            openrouter_service.analyze_label_ocr_text,
+            ocr_result.cleaned_ocr_text,
+        )
+        parsed = parse_ocr_label_json(raw_response)
+    except OpenRouterServiceTemporaryError as exc:
+        _bump_ocr_counter("openrouter_failed")
+        logger.error("OCR label test status=llm_failed user_id=%s error=%s", user_id, exc)
+        await message.answer(
+            "Сервис анализа сейчас временно недоступен. Попробуй позже или используй основной способ анализа."
+        )
+        return
+    except (OpenRouterServiceError, OCRLabelParseError, ValueError) as exc:
+        _bump_ocr_counter("openrouter_failed")
+        logger.error("OCR label test status=parse_failed user_id=%s error=%s", user_id, exc, exc_info=True)
+        await message.answer(
+            "Текст с этикетки удалось распознать, но AI не смог надёжно разобрать данные. "
+            "Попробуй другое фото или используй основной способ анализа."
+        )
+        return
+
+    nutrition_100g = parsed.get("nutrition_per_100g") or {}
+    kcal_100 = nutrition_100g.get("calories")
+    protein_100 = nutrition_100g.get("protein")
+    fat_100 = nutrition_100g.get("fat")
+    carbs_100 = nutrition_100g.get("carbs")
+    if all(value in (None, 0) for value in (kcal_100, protein_100, fat_100, carbs_100)):
+        _bump_ocr_counter("openrouter_failed")
+        logger.info("OCR label test status=llm_failed user_id=%s reason=no_kbju_100g", user_id)
+        await message.answer(
+            "Текст с этикетки удалось распознать, но AI не смог надёжно разобрать данные. "
+            "Попробуй другое фото или используй основной способ анализа."
+        )
+        return
+
+    product_name = parsed.get("product_name") or "Продукт"
+    weight_grams = parsed.get("weight_grams")
+    confidence = parsed.get("confidence", "low")
+    notes = (parsed.get("notes") or "").strip()
+
+    await state.set_state(MealEntryStates.waiting_for_weight_input)
+    await state.update_data(
+        kbju_per_100g={
+            "kcal": kcal_100 or 0,
+            "protein": protein_100 or 0,
+            "fat": fat_100 or 0,
+            "carbs": carbs_100 or 0,
+        },
+        product_name=product_name,
+        meal_source="ocr_openrouter_test",
+        ocr_label_raw_text=ocr_result.raw_ocr_text,
+        ocr_label_cleaned_text=ocr_result.cleaned_ocr_text,
+        ocr_label_confidence=confidence,
+        ocr_label_notes=notes,
+        entry_date=entry_date.isoformat(),
+        meal_type=meal_type,
+    )
+
+    confidence_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(confidence, "🔴")
+    lines = [
+        f"✅ Нашёл данные на этикетке (OCR-тест)!",
+        "",
+        f"📦 Продукт: {product_name}",
+        "📊 КБЖУ на 100 г:",
+        f"🔥 Калории: {float(kcal_100 or 0):.0f} ккал",
+        f"💪 Белки: {float(protein_100 or 0):.1f} г",
+        f"🥑 Жиры: {float(fat_100 or 0):.1f} г",
+        f"🍩 Углеводы: {float(carbs_100 or 0):.1f} г",
+        f"{confidence_emoji} Уверенность: {confidence}",
+        "Источник: OCR + OpenRouter (тест)",
+    ]
+    if notes:
+        lines.append(f"ℹ️ Примечание: {notes}")
+
+    if weight_grams and float(weight_grams) > 0:
+        lines.extend(
+            [
+                "",
+                f"📦 На этикетке похоже указан вес упаковки: {float(weight_grams):.0f} г.",
+                "Сколько грамм вы съели? Можно выбрать кнопку или ввести вручную.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "❓ Сколько грамм вы съели? Можно выбрать кнопку или ввести вручную.",
+            ]
+        )
+
+    push_menu_stack(message.bot, kbju_weight_input_menu)
+    await message.answer("\n".join(lines), reply_markup=kbju_weight_input_menu)
+    logger.info(
+        "OCR label test status=success user_id=%s model=%s counters=%s",
+        user_id,
+        OPENROUTER_MODEL,
+        OCR_TEST_COUNTERS,
+    )
+
+
 @router.message(MealEntryStates.waiting_for_barcode_photo, F.photo)
 async def handle_barcode_photo(message: Message, state: FSMContext):
     """Обрабатывает фото штрих-кода."""
@@ -1427,6 +1626,7 @@ async def handle_weight_input(message: Message, state: FSMContext):
     kbju_per_100g = data.get("kbju_per_100g")
     product_name = data.get("product_name", "Продукт")
     barcode = data.get("barcode")
+    meal_source = data.get("meal_source")
     
     if kbju_per_100g:
         # Этикетка или штрих-код (оба используют kbju_per_100g)
@@ -1443,7 +1643,10 @@ async def handle_weight_input(message: Message, state: FSMContext):
         }
         
         # Определяем источник по наличию barcode
-        if barcode:
+        if meal_source == "ocr_openrouter_test":
+            lines = [f"📷 OCR-анализ этикетки (тест): {product_name}\n"]
+            raw_query = f"[ocr_openrouter_test] {product_name}"
+        elif barcode:
             lines = [f"📷 Сканирование штрих-кода: {product_name}\n"]
             raw_query = f"[Штрих-код: {barcode}] {product_name}"
         else:
@@ -1471,6 +1674,8 @@ async def handle_weight_input(message: Message, state: FSMContext):
         f"🥑 Жиры: {totals_for_db['fat']:.1f} г\n"
         f"🍩 Углеводы: {totals_for_db['carbs']:.1f} г"
     )
+    if meal_source == "ocr_openrouter_test":
+        lines.append("Источник: OCR + OpenRouter (тест)")
 
     products_json = None
     if kbju_per_100g:
@@ -1496,6 +1701,7 @@ async def handle_weight_input(message: Message, state: FSMContext):
                     "protein_per_100g": protein_100g,
                     "fat_per_100g": fat_100g,
                     "carbs_per_100g": carbs_100g,
+                    "source": meal_source or ("barcode" if barcode else "label"),
                 }
             ]
         )
@@ -2994,3 +3200,4 @@ async def start_kbju_test_from_button(callback: CallbackQuery, state: FSMContext
 def register_meal_handlers(dp):
     """Регистрирует обработчики КБЖУ."""
     dp.include_router(router)
+    _bump_ocr_counter("openrouter_success")

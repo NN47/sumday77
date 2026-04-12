@@ -19,3 +19,7 @@ google-genai>=0.3.0
 
 # OpenRouter client
 openai>=1.0.0
+
+# OCR
+pytesseract
+Pillow

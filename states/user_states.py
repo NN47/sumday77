@@ -12,6 +12,7 @@ class MealEntryStates(StatesGroup):
     confirming_openrouter_meal = State()  # Подтверждение сохранения OpenRouter результата
     waiting_for_photo = State()  # Фото еды
     waiting_for_label_photo = State()  # Фото этикетки
+    waiting_for_ocr_label_photo = State()  # Фото этикетки для OCR + OpenRouter (тест)
     waiting_for_barcode_photo = State()  # Фото штрих-кода
     waiting_for_weight_input = State()  # Вес продукта (для этикетки)
     choosing_edit_type = State()  # Выбор типа редактирования
