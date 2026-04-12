@@ -1638,7 +1638,6 @@ def _build_weight_products_keyboard(products: list[dict]) -> InlineKeyboardMarku
     rows.append(
         [
             InlineKeyboardButton(text="✅ Готово", callback_data="meal_wdone"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="meal_wcancel"),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
