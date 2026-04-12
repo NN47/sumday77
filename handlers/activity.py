@@ -8,7 +8,14 @@ from collections import Counter
 from aiogram import Router
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
-from utils.keyboards import activity_analysis_menu, push_menu_stack
+from utils.keyboards import (
+    activity_analysis_menu,
+    push_menu_stack,
+    ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT,
+    ACTIVITY_ANALYSIS_MONTH_BUTTON_ALIASES,
+    ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES,
+    ACTIVITY_ANALYSIS_WEEK_BUTTON_ALIASES,
+)
 from utils.emoji_map import EMOJI_MAP
 from utils.calendar_utils import (
     build_activity_analysis_calendar_keyboard,
@@ -765,13 +772,12 @@ async def analyze_activity(message: Message):
     AnalyticsRepository.track_event(user_id, "open_activity", section="activity")
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(
-        "📊 <b>ИИ анализ</b>\n\nВыбери период для анализа:",
-        parse_mode="HTML",
+        "📊 ИИ анализ\n\n🔥 Быстрый анализ:\n[📅 Сегодня]\n\n📈 Динамика:\n[📊 Неделя] [📈 Месяц]\n\n🗓 История:\n[🗓 Календарь]\n\n[⬅️ Назад] [🏠 Главное меню]",
         reply_markup=activity_analysis_menu,
     )
 
 
-@router.message(lambda m: m.text == "🗓 Календарь")
+@router.message(lambda m: m.text == ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT)
 async def show_activity_analysis_calendar(message: Message, state: FSMContext):
     """Открывает календарь сохранённых анализов деятельности."""
     await state.clear()
@@ -936,7 +942,7 @@ async def save_manual_activity_analysis(message: Message, state: FSMContext):
     await show_activity_analysis_day(message, user_id, entry_date)
 
 
-@router.message(lambda m: m.text in {"🔍 Проанализировать день", "📅 Анализ за день", "Проанализировать день"})
+@router.message(lambda m: m.text in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES)
 async def analyze_activity_day(message: Message):
     """Анализ за день."""
     user_id = str(message.from_user.id)
@@ -998,7 +1004,7 @@ async def analyze_activity_day_openrouter(message: Message):
     await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
 
 
-@router.message(lambda m: m.text in {"🔍 Проанализировать\nнеделю", "🔍 Проанализировать неделю", "📆 Анализ за неделю", "проанализировать неделю"})
+@router.message(lambda m: m.text in ACTIVITY_ANALYSIS_WEEK_BUTTON_ALIASES)
 async def analyze_activity_week(message: Message):
     """Анализ за неделю."""
     user_id = str(message.from_user.id)
@@ -1019,7 +1025,7 @@ async def analyze_activity_week(message: Message):
     await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
 
 
-@router.message(lambda m: m.text in {"🔍 Проанализировать\nмесяц", "🔍 Проанализировать месяц", "📊 Анализ за месяц", "проанализировать месяц"})
+@router.message(lambda m: m.text in ACTIVITY_ANALYSIS_MONTH_BUTTON_ALIASES)
 async def analyze_activity_month(message: Message):
     """Анализ за месяц."""
     user_id = str(message.from_user.id)
