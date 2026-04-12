@@ -60,7 +60,12 @@ class OpenRouterService:
                         "role": "system",
                         "content": (
                             "Ты нутрициолог. Верни строго JSON без markdown и текста. "
-                            "Обязательно поля items и total. Если нет точных данных — оцени приблизительно."
+                            "Формат ответа: "
+                            '{"items":[{"name":"...", "grams":123, "kcal":100, "protein":10, "fat":5, "carbs":12}],'
+                            '"total":{"kcal":200,"protein":20,"fat":10,"carbs":24}}. '
+                            "Обязательно поля items и total. "
+                            "Для КАЖДОГО элемента в items укажи grams, kcal, protein, fat, carbs числами (не null, не строки). "
+                            "Если нет точных данных — оцени приблизительно, но не оставляй поля пустыми."
                         ),
                     },
                     {"role": "user", "content": text},
@@ -156,20 +161,52 @@ class OpenRouterService:
             normalized_items.append(
                 {
                     "name": item.get("name") or "продукт",
-                    "grams": pick(item, "grams", "weight_g", "weight"),
-                    "kcal": pick(item, "kcal", "calories"),
-                    "protein": pick(item, "protein", "protein_g"),
-                    "fat": pick(item, "fat", "fat_g"),
-                    "carbs": pick(item, "carbs", "carbohydrates", "carbohydrates_g"),
+                    "grams": pick(
+                        item,
+                        "grams",
+                        "weight_g",
+                        "weight",
+                        "amount_g",
+                        "weight_grams",
+                        "mass_g",
+                        "portion_g",
+                        "g",
+                        "mass",
+                        "amount",
+                        "вес",
+                        "граммы",
+                    ),
+                    "kcal": pick(item, "kcal", "calories", "kcalories", "ккал", "калории"),
+                    "protein": pick(item, "protein", "protein_g", "proteins", "p", "б", "белки"),
+                    "fat": pick(item, "fat", "fat_g", "fats", "f", "ж", "жиры"),
+                    "carbs": pick(
+                        item,
+                        "carbs",
+                        "carbohydrates",
+                        "carbohydrates_g",
+                        "carb",
+                        "углеводы",
+                        "у",
+                        "c",
+                    ),
                 }
             )
 
         total_raw = payload.get("total") if isinstance(payload.get("total"), dict) else {}
         total = {
-            "kcal": pick(total_raw, "kcal", "calories"),
-            "protein": pick(total_raw, "protein", "protein_g"),
-            "fat": pick(total_raw, "fat", "fat_g"),
-            "carbs": pick(total_raw, "carbs", "carbohydrates", "carbohydrates_g"),
+            "kcal": pick(total_raw, "kcal", "calories", "kcalories", "ккал", "калории"),
+            "protein": pick(total_raw, "protein", "protein_g", "proteins", "p", "б", "белки"),
+            "fat": pick(total_raw, "fat", "fat_g", "fats", "f", "ж", "жиры"),
+            "carbs": pick(
+                total_raw,
+                "carbs",
+                "carbohydrates",
+                "carbohydrates_g",
+                "carb",
+                "углеводы",
+                "у",
+                "c",
+            ),
         }
 
         if not any(total.values()) and normalized_items:
