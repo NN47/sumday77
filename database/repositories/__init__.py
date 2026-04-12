@@ -14,6 +14,7 @@ from .analytics_repository import AnalyticsRepository
 from .support_repository import SupportRepository
 from .error_log_repository import ErrorLogRepository
 from .gemini_repository import GeminiRepository
+from .openrouter_repository import OpenRouterRepository
 
 __all__ = [
     "MealRepository",
@@ -31,4 +32,5 @@ __all__ = [
     "SupportRepository",
     "ErrorLogRepository",
     "GeminiRepository",
+    "OpenRouterRepository",
 ]

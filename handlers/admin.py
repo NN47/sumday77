@@ -16,6 +16,7 @@ from utils.admin_formatters import (
     format_recent_events,
     format_users,
     format_gemini,
+    format_openrouter,
 )
 
 router = Router()
@@ -36,6 +37,7 @@ def _admin_menu_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="👤 Пользователи", callback_data="admin:users")],
             [InlineKeyboardButton(text="⚠️ Ошибки", callback_data="admin:errors")],
             [InlineKeyboardButton(text="🤖 Gemini / AI", callback_data="admin:gemini")],
+            [InlineKeyboardButton(text="🤖 OpenRouter / AI", callback_data="admin:openrouter")],
             [InlineKeyboardButton(text="🕘 Последние события", callback_data="admin:events")],
             [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin:refresh")],
         ]
@@ -127,6 +129,12 @@ async def admin_callbacks(callback: CallbackQuery):
     if action == "gemini":
         text = format_gemini(AdminStatsService.get_gemini_metrics())
         await _edit_or_answer(callback.message, text, _back_kb())
+        return
+
+    if action == "openrouter":
+        text = format_openrouter(AdminStatsService.get_openrouter_metrics())
+        await _edit_or_answer(callback.message, text, _back_kb())
+        return
 
 
 def register_admin_handlers(dp):

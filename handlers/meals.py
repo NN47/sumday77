@@ -20,6 +20,7 @@ from utils.keyboards import (
     kbju_meal_type_menu,
     kbju_after_meal_menu,
     kbju_weight_input_menu,
+    openrouter_confirm_menu,
     kbju_edit_type_menu,
     push_menu_stack,
 )
@@ -30,6 +31,10 @@ from services.gemini_service import (
     GeminiServiceTemporaryUnavailableError,
     GeminiServiceQuotaError,
     GeminiServiceAuthError,
+)
+from services.openrouter_service import (
+    openrouter_service,
+    OpenRouterServiceError,
 )
 from utils.validators import parse_date
 from datetime import datetime
@@ -51,6 +56,7 @@ BACK_BUTTON_TEXTS = {"⬅️ Назад", "↩️ Назад", "Назад"}
 ADD_METHOD_TEXTS = {
     "calorieninjas": "➕ Через CalorieNinjas",
     "ai": "📝 Ввести приём пищи текстом (AI-анализ)",
+    "openrouter": "🧪 Ввести текст через OpenRouter",
     "photo": "📷 Анализ еды по фото",
     "label": "📋 Анализ этикетки",
     "barcode": "📷 Скан штрих-кода",
@@ -313,6 +319,7 @@ async def _show_input_methods(message: Message, state: FSMContext) -> None:
     text = (
         "<b>Теперь выбери, как добавить еду:</b>\n"
         "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
+        "• 🧪 Ввести текст через OpenRouter\n"
         "• 📷 Анализ еды по фото\n"
         "• 📋 Анализ этикетки"
     )
@@ -454,6 +461,9 @@ async def select_meal_type(message: Message, state: FSMContext):
         if pending_method == "ai":
             await kbju_add_via_ai(message, state)
             return
+        if pending_method == "openrouter":
+            await kbju_add_via_openrouter(message, state)
+            return
         if pending_method == "photo":
             await kbju_add_via_photo(message, state)
             return
@@ -536,6 +546,148 @@ async def kbju_add_via_ai(message: Message, state: FSMContext):
     
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(text, reply_markup=kbju_add_menu)
+
+
+@router.message(lambda m: m.text == "🧪 Ввести текст через OpenRouter")
+async def kbju_add_via_openrouter(message: Message, state: FSMContext):
+    """Обработчик отдельного сценария OpenRouter (free)."""
+    if not await _ensure_meal_type_selected(message, state, "openrouter"):
+        return
+    await state.update_data(pending_add_method=None)
+    await state.set_state(MealEntryStates.waiting_for_openrouter_food_input)
+
+    push_menu_stack(message.bot, kbju_add_menu)
+    await message.answer(
+        "🧪 OpenRouter (free)\n\nОтправь продукты и количество одним сообщением.",
+        reply_markup=kbju_add_menu,
+    )
+
+
+@router.message(MealEntryStates.waiting_for_openrouter_food_input)
+async def handle_openrouter_food_input(message: Message, state: FSMContext):
+    """Обрабатывает текст пользователя через OpenRouter без автосохранения."""
+    user_text = (message.text or "").strip()
+    if not user_text:
+        await message.answer("Напиши, пожалуйста, что ты съел(а) 🙏")
+        return
+
+    await message.answer("Обрабатываю…")
+    try:
+        raw = await asyncio.to_thread(openrouter_service.analyze_food_text, user_text)
+        kbju_data = openrouter_service.parse_kbju_json(raw)
+    except (OpenRouterServiceError, ValueError, json.JSONDecodeError):
+        await message.answer("Не удалось обработать через OpenRouter. Попробуй позже.")
+        await message.answer("Можешь отправить текст ещё раз.")
+        return
+
+    if not kbju_data or "total" not in kbju_data:
+        await message.answer("Не удалось обработать через OpenRouter. Попробуй позже.")
+        await message.answer("Можешь отправить текст ещё раз.")
+        return
+
+    items = kbju_data.get("items", [])
+    total = kbju_data.get("total", {})
+
+    lines = ["🧪 OpenRouter (free): оценка приёма пищи\n"]
+    for item in items:
+        lines.append(
+            f"• {item.get('name', 'продукт')} ({float(item.get('grams', 0)):.0f} г) — "
+            f"{float(item.get('kcal', 0)):.0f} ккал "
+            f"(Б {float(item.get('protein', 0)):.1f} / Ж {float(item.get('fat', 0)):.1f} / У {float(item.get('carbs', 0)):.1f})"
+        )
+
+    lines.append("\nИТОГО:")
+    lines.append(
+        f"🔥 Калории: {float(total.get('kcal', 0)):.0f} ккал\n"
+        f"💪 Белки: {float(total.get('protein', 0)):.1f} г\n"
+        f"🥑 Жиры: {float(total.get('fat', 0)):.1f} г\n"
+        f"🍩 Углеводы: {float(total.get('carbs', 0)):.1f} г"
+    )
+    lines.append("\nВыбери действие ниже 👇")
+
+    await state.update_data(
+        openrouter_pending_meal={
+            "raw_query": user_text,
+            "items": items,
+            "total": total,
+        }
+    )
+    await state.set_state(MealEntryStates.confirming_openrouter_meal)
+    push_menu_stack(message.bot, openrouter_confirm_menu)
+    await message.answer("\n".join(lines), reply_markup=openrouter_confirm_menu)
+
+
+@router.message(MealEntryStates.confirming_openrouter_meal)
+async def handle_openrouter_confirm(message: Message, state: FSMContext):
+    """Подтверждение сохранения результата OpenRouter."""
+    text = (message.text or "").strip()
+
+    if text in MAIN_MENU_BUTTON_ALIASES:
+        await state.clear()
+        from handlers.common import go_main_menu
+
+        await go_main_menu(message, state)
+        return
+
+    if text == "⬅️ Назад":
+        await state.set_state(MealEntryStates.waiting_for_openrouter_food_input)
+        push_menu_stack(message.bot, kbju_add_menu)
+        await message.answer("Ок, отправь продукты и количество ещё раз.", reply_markup=kbju_add_menu)
+        return
+
+    if text == "❌ Отмена":
+        await state.set_state(MealEntryStates.waiting_for_openrouter_food_input)
+        await state.update_data(openrouter_pending_meal=None)
+        push_menu_stack(message.bot, kbju_add_menu)
+        await message.answer("Отменил сохранение. Можешь отправить новый текст.", reply_markup=kbju_add_menu)
+        return
+
+    if text != "💾 Сохранить":
+        await message.answer("Выбери действие кнопкой: сохранить, отмена или назад.")
+        return
+
+    data = await state.get_data()
+    pending = data.get("openrouter_pending_meal") or {}
+    total = pending.get("total") or {}
+    items = pending.get("items") or []
+    raw_query = pending.get("raw_query") or "[OpenRouter]"
+
+    user_id = str(message.from_user.id)
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date_str = data.get("entry_date")
+    try:
+        entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
+    except ValueError:
+        entry_date = date.today()
+
+    saved_meal = MealRepository.save_meal(
+        user_id=user_id,
+        raw_query=raw_query,
+        calories=float(total.get("kcal", 0)),
+        protein=float(total.get("protein", 0)),
+        fat=float(total.get("fat", 0)),
+        carbs=float(total.get("carbs", 0)),
+        entry_date=entry_date,
+        products_json=json.dumps(items),
+        meal_type=meal_type,
+    )
+
+    if not hasattr(message.bot, "last_meal_ids"):
+        message.bot.last_meal_ids = {}
+    message.bot.last_meal_ids[user_id] = saved_meal.id
+
+    daily_totals = MealRepository.get_daily_totals(user_id, entry_date)
+    await state.clear()
+    push_menu_stack(message.bot, kbju_after_meal_menu)
+    await message.answer(
+        "✅ Сохранил приём пищи через OpenRouter.\n\n"
+        "СУММА ЗА СЕГОДНЯ:\n"
+        f"🔥 Калории: {daily_totals.get('calories', 0):.0f} ккал\n"
+        f"💪 Белки: {daily_totals.get('protein', 0):.1f} г\n"
+        f"🥑 Жиры: {daily_totals.get('fat', 0):.1f} г\n"
+        f"🍩 Углеводы: {daily_totals.get('carbs', 0):.1f} г",
+        reply_markup=kbju_after_meal_menu,
+    )
 
 
 @router.message(lambda m: m.text == "📷 Анализ еды по фото")
