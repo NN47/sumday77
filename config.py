@@ -65,3 +65,17 @@ MONTH_NAMES = [
     "Ноябрь",
     "Декабрь",
 ]
+
+
+
+def _get_bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+OCR_ENABLED = _get_bool_env("OCR_ENABLED", True)
+OCR_TIMEOUT_SECONDS = int(os.getenv("OCR_TIMEOUT_SECONDS", "5"))
+OCR_MAX_SIDE_PX = int(os.getenv("OCR_MAX_SIDE_PX", "1600"))
+OCR_MIN_TEXT_LENGTH = int(os.getenv("OCR_MIN_TEXT_LENGTH", "40"))
