@@ -87,25 +87,25 @@ def _bump_ocr_counter(key: str) -> None:
 
 async def _reroute_add_method_button_if_needed(message: Message, state: FSMContext, text: str) -> bool:
     """Перенаправляет на выбранный способ добавления, даже если активен другой state."""
-    if text == ADD_METHOD_BUTTONS["manual"]:
-        await kbju_add_via_text(message, state)
+    if text == ADD_METHOD_TEXTS["calorieninjas"]:
+        await kbju_add_via_calorieninjas(message, state)
         return True
-    if text == ADD_METHOD_BUTTONS["ai"]:
-        await kbju_add_via_ai_text(message, state)
+    if text == ADD_METHOD_TEXTS["ai"]:
+        await kbju_add_via_ai(message, state)
         return True
-    if text == ADD_METHOD_BUTTONS["openrouter"]:
+    if text == ADD_METHOD_TEXTS["openrouter"]:
         await kbju_add_via_openrouter(message, state)
         return True
-    if text == ADD_METHOD_BUTTONS["photo"]:
+    if text == ADD_METHOD_TEXTS["photo"]:
         await kbju_add_via_photo(message, state)
         return True
-    if text == ADD_METHOD_BUTTONS["label"]:
+    if text == ADD_METHOD_TEXTS["label"]:
         await kbju_add_via_label(message, state)
         return True
-    if text == ADD_METHOD_BUTTONS["ocr_label_test"]:
+    if text == ADD_METHOD_TEXTS["ocr_label_test"]:
         await kbju_add_via_ocr_label_test(message, state)
         return True
-    if text == ADD_METHOD_BUTTONS["barcode"]:
+    if text == ADD_METHOD_TEXTS["barcode"]:
         await kbju_add_via_barcode(message, state)
         return True
     return False
