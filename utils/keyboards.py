@@ -659,6 +659,7 @@ kbju_weight_input_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="10"), KeyboardButton(text="20"), KeyboardButton(text="30"), KeyboardButton(text="40")],
         [KeyboardButton(text="50"), KeyboardButton(text="60"), KeyboardButton(text="70"), KeyboardButton(text="80")],
         [KeyboardButton(text="90"), KeyboardButton(text="100"), KeyboardButton(text="150"), KeyboardButton(text="200")],
+        [KeyboardButton(text="250"), KeyboardButton(text="300"), KeyboardButton(text="350"), KeyboardButton(text="500")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,
