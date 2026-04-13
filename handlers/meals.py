@@ -85,6 +85,32 @@ def _bump_ocr_counter(key: str) -> None:
     OCR_TEST_COUNTERS[key] = OCR_TEST_COUNTERS.get(key, 0) + 1
 
 
+async def _reroute_add_method_button_if_needed(message: Message, state: FSMContext, text: str) -> bool:
+    """Перенаправляет на выбранный способ добавления, даже если активен другой state."""
+    if text == ADD_METHOD_BUTTONS["manual"]:
+        await kbju_add_via_text(message, state)
+        return True
+    if text == ADD_METHOD_BUTTONS["ai"]:
+        await kbju_add_via_ai_text(message, state)
+        return True
+    if text == ADD_METHOD_BUTTONS["openrouter"]:
+        await kbju_add_via_openrouter(message, state)
+        return True
+    if text == ADD_METHOD_BUTTONS["photo"]:
+        await kbju_add_via_photo(message, state)
+        return True
+    if text == ADD_METHOD_BUTTONS["label"]:
+        await kbju_add_via_label(message, state)
+        return True
+    if text == ADD_METHOD_BUTTONS["ocr_label_test"]:
+        await kbju_add_via_ocr_label_test(message, state)
+        return True
+    if text == ADD_METHOD_BUTTONS["barcode"]:
+        await kbju_add_via_barcode(message, state)
+        return True
+    return False
+
+
 def _get_food_diary_message_store(bot) -> dict:
     """Возвращает хранилище message_id для дневника питания."""
     if not hasattr(bot, "food_diary_message_ids"):
@@ -588,6 +614,8 @@ async def kbju_add_via_openrouter(message: Message, state: FSMContext):
 async def handle_openrouter_food_input(message: Message, state: FSMContext):
     """Обрабатывает текст пользователя через OpenRouter без автосохранения."""
     user_text = (message.text or "").strip()
+    if await _reroute_add_method_button_if_needed(message, state, user_text):
+        return
     if not user_text:
         await message.answer("Напиши, пожалуйста, что ты съел(а) 🙏")
         return
@@ -733,7 +761,9 @@ async def kbju_add_via_photo(message: Message, state: FSMContext):
 @router.message(MealEntryStates.waiting_for_food_input)
 async def handle_food_input(message: Message, state: FSMContext):
     """Обрабатывает ввод текста для CalorieNinjas."""
-    user_text = message.text.strip()
+    user_text = (message.text or "").strip()
+    if await _reroute_add_method_button_if_needed(message, state, user_text):
+        return
     if not user_text:
         await message.answer("Напиши, пожалуйста, что ты съел(а) 🙏")
         return
@@ -838,7 +868,9 @@ async def handle_food_input(message: Message, state: FSMContext):
 @router.message(MealEntryStates.waiting_for_ai_food_input)
 async def handle_ai_food_input(message: Message, state: FSMContext):
     """Обрабатывает ввод текста для Gemini AI."""
-    user_text = message.text.strip()
+    user_text = (message.text or "").strip()
+    if await _reroute_add_method_button_if_needed(message, state, user_text):
+        return
     if not user_text:
         await message.answer("Напиши, пожалуйста, что ты съел(а) 🙏")
         return
