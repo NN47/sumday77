@@ -88,8 +88,14 @@ def _goal_label_ru(goal: str | None) -> str:
     return mapping.get((goal or "").lower(), "Не указана")
 
 
-async def generate_activity_analysis(user_id: str, start_date: date, end_date: date, period_name: str) -> str:
-    """Генерирует анализ активности за указанный период через Gemini."""
+async def generate_activity_analysis(
+    user_id: str,
+    start_date: date,
+    end_date: date,
+    period_name: str,
+    backend: str = "gemini",
+) -> str:
+    """Генерирует анализ активности за указанный период через выбранный AI-бэкенд."""
     from database.repositories import (
         WorkoutRepository, MealRepository, WeightRepository,
         WaterRepository, SupplementRepository, ProcedureRepository,
@@ -733,34 +739,19 @@ async def generate_activity_analysis(user_id: str, start_date: date, end_date: d
 Рекомендации делай в стиле кнопки "🔥 Философия Sumday77", учитывай её принципы, но не вставляй текст или списки из неё дословно.
 """
     
-    if gemini_service is None:
-        raise GeminiServiceTemporaryUnavailableError("Gemini service is not initialized")
-    result = await asyncio.wait_for(asyncio.to_thread(gemini_service.analyze, prompt), timeout=60.0)
-    
+    if backend == "gemini":
+        if gemini_service is None:
+            raise GeminiServiceTemporaryUnavailableError("Gemini service is not initialized")
+        result = await asyncio.wait_for(asyncio.to_thread(gemini_service.analyze, prompt), timeout=60.0)
+    elif backend == "openrouter":
+        result = await asyncio.wait_for(
+            asyncio.to_thread(openrouter_service.analyze_activity_prompt, prompt),
+            timeout=60.0,
+        )
+    else:
+        raise ValueError(f"Unknown activity analysis backend: {backend}")
+
     # Заменяем markdown звездочки на HTML-теги для жирного шрифта
-    # Заменяем **текст** на <b>текст</b>
-    result = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', result)
-    # Заменяем оставшиеся одиночные звездочки в конце (если есть)
-    result = re.sub(r'\*+$', '', result)
-    
-    return result
-
-
-async def generate_activity_analysis_openrouter(user_id: str, target_date: date) -> str:
-    """Генерирует анализ за день через OpenRouter."""
-    analysis = await generate_activity_analysis(user_id, target_date, target_date, "за день")
-    prompt = (
-        "Перепиши этот анализ дня, сохрани структуру и HTML-теги, "
-        "сделай стиль более живым и персонализированным. "
-        "В рекомендациях по питанию сохрани фокус на калориях и белке: "
-        "не продвигай контроль жиров и углеводов как отдельную главную задачу, "
-        "если нет специальной причины.\n\n"
-        f"{analysis}"
-    )
-    result = await asyncio.wait_for(
-        asyncio.to_thread(openrouter_service.analyze_activity_prompt, prompt),
-        timeout=60.0,
-    )
     result = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', result)
     result = re.sub(r'\*+$', '', result)
     return result
@@ -989,7 +980,7 @@ async def analyze_activity_day_openrouter(message: Message):
     AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
     await message.answer("⏳ Подожди немного, бот анализирует твой день через OpenRouter...")
     try:
-        analysis = await generate_activity_analysis_openrouter(user_id, today)
+        analysis = await generate_activity_analysis(user_id, today, today, "за день", backend="openrouter")
         ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="generated")
         AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
     except Exception as e:
