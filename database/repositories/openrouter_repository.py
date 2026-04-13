@@ -1,12 +1,11 @@
 """Репозиторий статистики запросов OpenRouter."""
 from __future__ import annotations
 
-from datetime import datetime
-
 from sqlalchemy import func
 
 from database.models import OpenRouterRequestLog
 from database.session import get_db_session
+from time_utils import UTC_TZ, now_moscow
 
 
 class OpenRouterRepository:
@@ -41,7 +40,8 @@ class OpenRouterRepository:
     @staticmethod
     def get_metrics() -> dict:
         with get_db_session() as session:
-            today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            today_start_msk = now_moscow().replace(hour=0, minute=0, second=0, microsecond=0)
+            today_start = today_start_msk.astimezone(UTC_TZ).replace(tzinfo=None)
 
             requests_today = (
                 session.query(func.count(OpenRouterRequestLog.id))
