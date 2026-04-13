@@ -202,8 +202,21 @@ def parse_label_via_ocr_pipeline(path: str | Path) -> OCRResult:
         used_preprocessing = True
         raw_text = extract_text_with_tesseract(processed_path)
         cleaned_text = _clean_ocr_text(raw_text)
-        text_len = len(cleaned_text)
-        logger.info("OCR pipeline text stats: text_len=%s", text_len)
+        logger.info("OCR pipeline text stats: text_len=%s", len(cleaned_text))
+
+        # Фолбэк: если агрессивная предобработка испортила символы,
+        # пробуем распознавание с исходного изображения.
+        if not cleaned_text or not is_ocr_text_good_enough(cleaned_text):
+            logger.info(
+                "OCR pipeline fallback to original image: initial_text_len=%s initial_good=%s",
+                len(cleaned_text),
+                is_ocr_text_good_enough(cleaned_text) if cleaned_text else False,
+            )
+            fallback_raw_text = extract_text_with_tesseract(source)
+            fallback_cleaned_text = _clean_ocr_text(fallback_raw_text)
+            if len(fallback_cleaned_text) > len(cleaned_text):
+                cleaned_text = fallback_cleaned_text
+            logger.info("OCR pipeline fallback stats: text_len=%s", len(fallback_cleaned_text))
 
         if not cleaned_text:
             return OCRResult(
