@@ -774,7 +774,12 @@ async def analyze_activity(message: Message):
     AnalyticsRepository.track_event(user_id, "open_activity", section="activity")
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(
-        "📊 ИИ анализ\n\n🔥 Быстрый анализ:\n[📅 Сегодня]\n\n📈 Динамика:\n[📊 Неделя] [📈 Месяц]\n\n🗓 История:\n[🗓 Календарь]\n\n[⬅️ Назад] [🏠 Главное меню]",
+        "📊 ИИ-анализ\n\n"
+        "Выбери формат:\n"
+        "• 📅 Сегодня — быстрый отчёт за день\n"
+        "• 🪄 ИИ-разбор дня — расширенный персональный фидбек\n"
+        "• 📊 Неделя / 📈 Месяц — динамика прогресса\n"
+        "• 🗓 Календарь — история прошлых анализов",
         reply_markup=activity_analysis_menu,
     )
 
