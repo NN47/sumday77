@@ -1345,6 +1345,22 @@ async def handle_ocr_label_photo(message: Message, state: FSMContext):
                 logger.warning("OCR source cleanup_error: path=%s error=%s", temp_image_path, cleanup_exc)
 
     if not ocr_result.success:
+        low_quality_with_text = ocr_result.error_type == "low_quality_text" and bool((ocr_result.text or "").strip())
+        if low_quality_with_text:
+            _bump_ocr_counter("ocr_success")
+            try:
+                chunks = split_telegram_message(ocr_result.text, limit=3900)
+                await message.answer(
+                    "Текст распознан частично, поэтому в нём могут быть ошибки. "
+                    "Проверь результат вручную:"
+                )
+                for chunk in chunks:
+                    await message.answer(chunk)
+            except Exception as send_exc:
+                logger.error("OCR label test send result failed: user_id=%s error=%s", user_id, send_exc, exc_info=True)
+                await message.answer("OCR отработал, но не удалось отправить результат. Попробуй ещё раз.")
+            return
+
         _bump_ocr_counter("ocr_failed")
         try:
             await message.answer(
