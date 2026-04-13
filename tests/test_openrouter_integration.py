@@ -15,7 +15,7 @@ def test_kbju_add_menu_has_openrouter_button():
 
 def test_activity_analysis_menu_has_openrouter_day_button():
     texts = _reply_keyboard_texts(activity_analysis_menu)
-    assert "🧪 Анализ дня через OpenRouter" in texts
+    assert "🪄 ИИ-разбор дня" in texts
 
 
 def test_openrouter_formatter_shows_free_model():
