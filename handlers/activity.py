@@ -13,6 +13,7 @@ from utils.keyboards import (
     push_menu_stack,
     ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT,
     ACTIVITY_ANALYSIS_MONTH_BUTTON_ALIASES,
+    ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES,
     ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES,
     ACTIVITY_ANALYSIS_WEEK_BUTTON_ALIASES,
 )
@@ -973,7 +974,7 @@ async def analyze_activity_day(message: Message):
     await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
 
 
-@router.message(lambda m: m.text in {"🧪 Анализ дня через OpenRouter"})
+@router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES)
 async def analyze_activity_day_openrouter(message: Message):
     """Анализ дня через OpenRouter."""
     user_id = str(message.from_user.id)
