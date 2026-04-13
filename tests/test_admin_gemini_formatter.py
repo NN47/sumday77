@@ -81,14 +81,16 @@ def test_translate_gemini_admin_stats_full_russian_output() -> None:
     result = translate_gemini_admin_stats(stats)
 
     assert "Переключений из-за временных ошибок" in result
-    assert "User requests сегодня" in result
-    assert "API attempts сегодня" in result
+    assert "Пользовательские запросы сегодня" in result
+    assert "Попытки API сегодня" in result
     assert "Последнее сообщение об ошибке" in result
-    assert "Временная ошибка Gemini (503 / model overloaded)" in result
-    assert "🟢 Active" in result
-    assert "🟠 Cooldown" in result
+    assert "Временная ошибка Gemini (503: модель перегружена)" in result
+    assert "🟢 Активен" in result
+    assert "🟠 Ожидание / Кулдаун" in result
     assert "limit_switches" not in result
     assert "temporary_failover" not in result
+    assert "Сегодня:" in result
+    assert "• Попытки API: —" in result
 
 
 def test_translate_gemini_admin_stats_compact_mode() -> None:

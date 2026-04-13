@@ -1,12 +1,13 @@
 """Репозиторий статистики и состояния Gemini-аккаунтов."""
 from __future__ import annotations
 
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 
-from sqlalchemy import func
+from sqlalchemy import func, case
 
 from database.models import GeminiAccount, GeminiRequestLog
 from database.session import get_db_session
+from time_utils import UTC_TZ, now_moscow, to_moscow
 
 
 class GeminiRepository:
@@ -480,7 +481,9 @@ class GeminiRepository:
 
     @staticmethod
     def get_metrics() -> dict:
-        today_start = datetime.combine(date.today(), datetime.min.time())
+        now_msk = now_moscow()
+        today_start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start_utc = today_start_msk.astimezone(UTC_TZ).replace(tzinfo=None)
 
         with get_db_session() as session:
             accounts = (
@@ -495,60 +498,97 @@ class GeminiRepository:
 
             total_user_requests_today = (
                 session.query(func.count(GeminiRequestLog.id))
-                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.created_at >= today_start_utc)
                 .filter(GeminiRequestLog.event_type == "user_request_started")
                 .scalar()
                 or 0
             )
             total_api_attempts_today = (
                 session.query(func.count(GeminiRequestLog.id))
-                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.created_at >= today_start_utc)
                 .filter(GeminiRequestLog.event_type == "api_attempt")
                 .scalar()
                 or 0
             )
             retries_today = (
                 session.query(func.count(GeminiRequestLog.id))
-                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.created_at >= today_start_utc)
                 .filter(GeminiRequestLog.event_type == "retry_temporary_error")
                 .scalar()
                 or 0
             )
             successful_requests_today = (
                 session.query(func.count(GeminiRequestLog.id))
-                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.created_at >= today_start_utc)
                 .filter(GeminiRequestLog.event_type == "request_success")
                 .scalar()
                 or 0
             )
             failed_requests_today = (
                 session.query(func.count(GeminiRequestLog.id))
-                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.created_at >= today_start_utc)
                 .filter(GeminiRequestLog.event_type == "request_failed")
                 .scalar()
                 or 0
             )
             failovers_due_to_quota_today = (
                 session.query(func.count(GeminiRequestLog.id))
-                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.created_at >= today_start_utc)
                 .filter(GeminiRequestLog.event_type == "switch_due_to_quota")
                 .scalar()
                 or 0
             )
             failovers_due_to_temporary_today = (
                 session.query(func.count(GeminiRequestLog.id))
-                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.created_at >= today_start_utc)
                 .filter(GeminiRequestLog.event_type == "switch_due_to_temporary_failure")
                 .scalar()
                 or 0
             )
             failovers_due_to_auth_today = (
                 session.query(func.count(GeminiRequestLog.id))
-                .filter(GeminiRequestLog.created_at >= today_start)
+                .filter(GeminiRequestLog.created_at >= today_start_utc)
                 .filter(GeminiRequestLog.event_type == "switch_due_to_auth_error")
                 .scalar()
                 or 0
             )
+            account_today_rows = (
+                session.query(
+                    GeminiRequestLog.account_id,
+                    func.sum(case((GeminiRequestLog.event_type == "api_attempt", 1), else_=0)).label("api_attempts"),
+                    func.sum(case((GeminiRequestLog.event_type == "request_success", 1), else_=0)).label("success"),
+                    func.sum(case((GeminiRequestLog.event_type == "request_failed", 1), else_=0)).label("failed"),
+                    func.sum(case((GeminiRequestLog.event_type == "retry_temporary_error", 1), else_=0)).label("retries"),
+                    func.count(GeminiRequestLog.id).label("total_events"),
+                )
+                .filter(GeminiRequestLog.created_at >= today_start_utc)
+                .group_by(GeminiRequestLog.account_id)
+                .all()
+            )
+            account_today_metrics = {
+                int(row.account_id): {
+                    "api_attempts_today": int(row.api_attempts or 0),
+                    "success_today": int(row.success or 0),
+                    "errors_today": int(row.failed or 0),
+                    "retries_today": int(row.retries or 0),
+                    "has_data_today": int(row.total_events or 0) > 0,
+                }
+                for row in account_today_rows
+            }
+            for account in accounts:
+                snapshot = account_today_metrics.get(account.id)
+                if not snapshot:
+                    account.today_metrics = None
+                    continue
+                account.today_metrics = snapshot
+
+                last_error_at = getattr(account, "last_error_at", None)
+                cooldown_until = getattr(account, "temporary_unavailable_until", None)
+                rate_limited_until = getattr(account, "rate_limited_until", None)
+                if last_error_at and cooldown_until and cooldown_until < last_error_at:
+                    account.temporary_unavailable_until = last_error_at
+                if last_error_at and rate_limited_until and rate_limited_until < last_error_at:
+                    account.rate_limited_until = last_error_at
 
             recent_events = (
                 session.query(GeminiRequestLog, GeminiAccount.account_name)
@@ -595,7 +635,7 @@ class GeminiRepository:
                     "reason": log.reason,
                     "model_name": log.model_name,
                     "error_message": log.error_message,
-                    "created_at": log.created_at,
+                    "created_at": to_moscow(log.created_at),
                 }
                 for log, account_name in recent_events
             ],
