@@ -6,6 +6,7 @@ import json
 from datetime import date, timedelta
 from collections import Counter
 from aiogram import Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
@@ -1002,7 +1003,11 @@ async def analyze_activity_day_openrouter(message: Message):
         await message.answer("⚠️ Не удалось сгенерировать анализ дня через OpenRouter. Попробуй позже.")
         return
     push_menu_stack(message.bot, activity_analysis_menu)
-    await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
+    try:
+        await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
+    except TelegramBadRequest as e:
+        logger.warning("Failed to send OpenRouter analysis as HTML, fallback to plain text: %s", e)
+        await message.answer(analysis, reply_markup=activity_analysis_menu)
 
 
 @router.message(lambda m: m.text in ACTIVITY_ANALYSIS_WEEK_BUTTON_ALIASES)
