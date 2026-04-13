@@ -2,6 +2,7 @@
 import json
 import logging
 import random
+import re
 import time
 from typing import Literal, Optional
 
@@ -412,12 +413,8 @@ class GeminiService:
             return None
 
         def safe_float(value) -> float:
-            try:
-                if value is None:
-                    return 0.0
-                return float(value)
-            except (TypeError, ValueError):
-                return 0.0
+            parsed = self._to_float(value)
+            return parsed if parsed is not None else 0.0
 
         def get_num(source: dict, *keys: str) -> float:
             for key in keys:
@@ -430,18 +427,73 @@ class GeminiService:
         for item in items:
             if not isinstance(item, dict):
                 continue
+            nutrition_total = item.get("nutrition_total") if isinstance(item.get("nutrition_total"), dict) else {}
+            nutrition = item.get("nutrition") if isinstance(item.get("nutrition"), dict) else {}
+            kbju_per_100g = item.get("kbju_per_100g") if isinstance(item.get("kbju_per_100g"), dict) else {}
+            nutrition_per_100g = (
+                item.get("nutrition_per_100g") if isinstance(item.get("nutrition_per_100g"), dict) else {}
+            )
+
+            grams = get_num(item, "grams", "weight_g", "weight")
+            kcal = (
+                get_num(item, "kcal", "calories")
+                or get_num(nutrition_total, "kcal", "calories")
+                or get_num(nutrition, "kcal", "calories")
+            )
+            protein = (
+                get_num(item, "protein", "protein_g")
+                or get_num(nutrition_total, "protein", "protein_g")
+                or get_num(nutrition, "protein", "protein_g")
+            )
+            fat = (
+                get_num(item, "fat", "fat_g")
+                or get_num(nutrition_total, "fat", "fat_g")
+                or get_num(nutrition, "fat", "fat_g")
+            )
+            carbs = (
+                get_num(item, "carbs", "carbohydrates", "carbohydrates_g")
+                or get_num(nutrition_total, "carbs", "carbohydrates", "carbohydrates_g")
+                or get_num(nutrition, "carbs", "carbohydrates", "carbohydrates_g")
+            )
+
+            if grams > 0:
+                kcal_per_100g = get_num(kbju_per_100g, "kcal", "calories") or get_num(
+                    nutrition_per_100g, "kcal", "calories"
+                )
+                protein_per_100g = get_num(kbju_per_100g, "protein", "protein_g") or get_num(
+                    nutrition_per_100g, "protein", "protein_g"
+                )
+                fat_per_100g = get_num(kbju_per_100g, "fat", "fat_g") or get_num(
+                    nutrition_per_100g, "fat", "fat_g"
+                )
+                carbs_per_100g = get_num(kbju_per_100g, "carbs", "carbohydrates", "carbohydrates_g") or get_num(
+                    nutrition_per_100g, "carbs", "carbohydrates", "carbohydrates_g"
+                )
+                if not kcal and kcal_per_100g:
+                    kcal = kcal_per_100g * grams / 100
+                if not protein and protein_per_100g:
+                    protein = protein_per_100g * grams / 100
+                if not fat and fat_per_100g:
+                    fat = fat_per_100g * grams / 100
+                if not carbs and carbs_per_100g:
+                    carbs = carbs_per_100g * grams / 100
+
             normalized_items.append(
                 {
-                    "name": item.get("name") or item.get("title") or "продукт",
-                    "grams": get_num(item, "grams", "weight_g", "weight"),
-                    "kcal": get_num(item, "kcal", "calories"),
-                    "protein": get_num(item, "protein", "protein_g"),
-                    "fat": get_num(item, "fat", "fat_g"),
-                    "carbs": get_num(item, "carbs", "carbohydrates", "carbohydrates_g"),
+                    "name": item.get("name") or item.get("title") or item.get("dish") or "продукт",
+                    "grams": grams,
+                    "kcal": kcal,
+                    "protein": protein,
+                    "fat": fat,
+                    "carbs": carbs,
                 }
             )
 
         total_dict = payload.get("total") if isinstance(payload.get("total"), dict) else {}
+        if not total_dict:
+            total_dict = payload.get("nutrition_total") if isinstance(payload.get("nutrition_total"), dict) else {}
+        if not total_dict:
+            total_dict = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
         total = {
             "kcal": get_num(total_dict, "kcal", "calories"),
             "protein": get_num(total_dict, "protein", "protein_g"),
@@ -481,13 +533,15 @@ class GeminiService:
             )
             raw = response.text.strip()
             try:
-                return json.loads(raw)
+                parsed = json.loads(raw)
             except json.JSONDecodeError:
                 start = raw.find("{")
                 end = raw.rfind("}")
                 if start != -1 and end != -1 and end > start:
-                    return json.loads(raw[start : end + 1])
-                raise
+                    parsed = json.loads(raw[start : end + 1])
+                else:
+                    raise
+            return self._normalize_kbju_payload(parsed)
         except GeminiServiceError:
             raise
         except Exception as e:
@@ -571,6 +625,12 @@ class GeminiService:
             try:
                 return float(cleaned)
             except ValueError:
+                match = re.search(r"-?\d+(?:\.\d+)?", cleaned)
+                if match:
+                    try:
+                        return float(match.group(0))
+                    except ValueError:
+                        return None
                 return None
         return None
 
