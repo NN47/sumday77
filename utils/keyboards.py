@@ -24,6 +24,7 @@ MEALS_BUTTON_ALIASES = {
 AI_ANALYSIS_BUTTON_TEXT = "🧠 ИИ анализ"
 
 ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT = "📅 Сегодня"
+ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_TEXT = "🧪 Анализ дня через OpenRouter"
 ACTIVITY_ANALYSIS_WEEK_BUTTON_TEXT = "📊 Неделя"
 ACTIVITY_ANALYSIS_MONTH_BUTTON_TEXT = "📈 Месяц"
 ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT = "🗓 Календарь"
@@ -33,6 +34,13 @@ ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES = {
     "🔍 Проанализировать день",
     "📅 Анализ за день",
     "Проанализировать день",
+}
+ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES = {
+    ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_TEXT,
+    "🧪 Анализ дня через опен роутер",
+    "🧪 анализ дня через openrouter",
+    "анализ дня через openrouter",
+    "анализ дня через опен роутер",
 }
 ACTIVITY_ANALYSIS_WEEK_BUTTON_ALIASES = {
     ACTIVITY_ANALYSIS_WEEK_BUTTON_TEXT,
@@ -750,6 +758,7 @@ water_quick_add_inline = InlineKeyboardMarkup(
 activity_analysis_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT)],
+        [KeyboardButton(text=ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_TEXT)],
         [KeyboardButton(text=ACTIVITY_ANALYSIS_WEEK_BUTTON_TEXT), KeyboardButton(text=ACTIVITY_ANALYSIS_MONTH_BUTTON_TEXT)],
         [KeyboardButton(text=ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT)],
         [KeyboardButton(text="⬅️ Назад"), KeyboardButton(text="🏠 Главное меню")],
