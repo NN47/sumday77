@@ -986,7 +986,7 @@ async def analyze_activity_day_openrouter(message: Message):
         AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
     except Exception as e:
         AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
-        if _is_gemini_temporarily_unavailable_error(e) or isinstance(e, OpenRouterServiceTemporaryError):
+        if isinstance(e, (OpenRouterServiceTemporaryError, asyncio.TimeoutError)):
             push_menu_stack(message.bot, activity_analysis_menu)
             await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
             return
