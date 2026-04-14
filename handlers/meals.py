@@ -589,7 +589,7 @@ async def kbju_add_via_openrouter(message: Message, state: FSMContext):
 
 @router.message(MealEntryStates.waiting_for_openrouter_food_input)
 async def handle_openrouter_food_input(message: Message, state: FSMContext):
-    """Обрабатывает текст пользователя через OpenRouter без автосохранения."""
+    """Обрабатывает текст пользователя через OpenRouter с автосохранением."""
     user_text = (message.text or "").strip()
     if await _reroute_add_method_button_if_needed(message, state, user_text):
         return
@@ -629,18 +629,43 @@ async def handle_openrouter_food_input(message: Message, state: FSMContext):
         f"🥑 Жиры: {float(total.get('fat', 0)):.1f} г\n"
         f"🍩 Углеводы: {float(total.get('carbs', 0)):.1f} г"
     )
-    lines.append("\nВыбери действие ниже 👇")
+    user_id = str(message.from_user.id)
+    data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date_str = data.get("entry_date")
+    try:
+        entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
+    except ValueError:
+        entry_date = date.today()
 
-    await state.update_data(
-        openrouter_pending_meal={
-            "raw_query": user_text,
-            "items": items,
-            "total": total,
-        }
+    saved_meal = MealRepository.save_meal(
+        user_id=user_id,
+        raw_query=user_text,
+        calories=float(total.get("kcal", 0)),
+        protein=float(total.get("protein", 0)),
+        fat=float(total.get("fat", 0)),
+        carbs=float(total.get("carbs", 0)),
+        entry_date=entry_date,
+        products_json=json.dumps(items),
+        meal_type=meal_type,
     )
-    await state.set_state(MealEntryStates.confirming_openrouter_meal)
-    push_menu_stack(message.bot, openrouter_confirm_menu)
-    await message.answer("\n".join(lines), reply_markup=openrouter_confirm_menu)
+
+    if not hasattr(message.bot, "last_meal_ids"):
+        message.bot.last_meal_ids = {}
+    message.bot.last_meal_ids[user_id] = saved_meal.id
+
+    daily_totals = MealRepository.get_daily_totals(user_id, entry_date)
+    await state.clear()
+    push_menu_stack(message.bot, kbju_after_meal_menu)
+    lines.append("\n✅ Приём пищи автоматически сохранён.")
+    lines.append(
+        "\nСУММА ЗА СЕГОДНЯ:\n"
+        f"🔥 Калории: {daily_totals.get('calories', 0):.0f} ккал\n"
+        f"💪 Белки: {daily_totals.get('protein', 0):.1f} г\n"
+        f"🥑 Жиры: {daily_totals.get('fat', 0):.1f} г\n"
+        f"🍩 Углеводы: {daily_totals.get('carbs', 0):.1f} г"
+    )
+    await message.answer("\n".join(lines), reply_markup=kbju_after_meal_menu)
 
 
 @router.message(MealEntryStates.confirming_openrouter_meal)
@@ -913,20 +938,46 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
         f"🥑 Жиры: {totals_for_db['fat']:.1f} г\n"
         f"🍩 Углеводы: {totals_for_db['carbs']:.1f} г"
     )
-    lines.append("\nВыбери действие ниже 👇")
+    user_id = str(message.from_user.id)
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date_str = data.get("entry_date")
+    if entry_date_str and isinstance(entry_date_str, str):
+        try:
+            entry_date = date.fromisoformat(entry_date_str)
+        except ValueError:
+            parsed = parse_date(entry_date_str)
+            entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
+    else:
+        entry_date = date.today()
 
-    await state.update_data(
-        ai_pending_meal={
-            "raw_query": user_text,
-            "items": items,
-            "total": totals_for_db,
-            "meal_type": normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
-            "entry_date": data.get("entry_date"),
-        }
+    saved_meal = MealRepository.save_meal(
+        user_id=user_id,
+        raw_query=user_text,
+        calories=float(totals_for_db.get("calories", 0)),
+        protein=float(totals_for_db.get("protein", 0)),
+        fat=float(totals_for_db.get("fat", 0)),
+        carbs=float(totals_for_db.get("carbs", 0)),
+        entry_date=entry_date,
+        products_json=json.dumps(items),
+        meal_type=meal_type,
     )
-    await state.set_state(MealEntryStates.confirming_ai_meal)
-    push_menu_stack(message.bot, openrouter_confirm_menu)
-    await message.answer("\n".join(lines), reply_markup=openrouter_confirm_menu)
+
+    if not hasattr(message.bot, "last_meal_ids"):
+        message.bot.last_meal_ids = {}
+    message.bot.last_meal_ids[user_id] = saved_meal.id
+
+    daily_totals = MealRepository.get_daily_totals(user_id, entry_date)
+    await state.clear()
+    push_menu_stack(message.bot, kbju_after_meal_menu)
+    lines.append("\n✅ Приём пищи автоматически сохранён.")
+    lines.append(
+        "\nСУММА ЗА СЕГОДНЯ:\n"
+        f"🔥 Калории: {daily_totals.get('calories', 0):.0f} ккал\n"
+        f"💪 Белки: {daily_totals.get('protein', 0):.1f} г\n"
+        f"🥑 Жиры: {daily_totals.get('fat', 0):.1f} г\n"
+        f"🍩 Углеводы: {daily_totals.get('carbs', 0):.1f} г"
+    )
+    await message.answer("\n".join(lines), reply_markup=kbju_after_meal_menu)
 
 
 @router.message(MealEntryStates.confirming_ai_meal)
