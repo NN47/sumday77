@@ -616,7 +616,6 @@ kbju_add_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="🧪 Ввести текст через OpenRouter")],
         [KeyboardButton(text="📷 Анализ еды по фото")],
         [KeyboardButton(text="📋 Анализ этикетки")],
-        [KeyboardButton(text="📷 Этикетка через OCR (тест)")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,
