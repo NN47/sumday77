@@ -10,7 +10,6 @@ def _reply_keyboard_texts(markup) -> list[str]:
 def test_kbju_add_menu_has_openrouter_button():
     texts = _reply_keyboard_texts(kbju_add_menu)
     assert "🧪 Ввести текст через OpenRouter" in texts
-    assert "📷 Этикетка через OCR (тест)" in texts
 
 
 def test_activity_analysis_menu_has_openrouter_day_button():

@@ -37,12 +37,10 @@ from services.openrouter_service import (
     OpenRouterServiceError,
     OpenRouterServiceTemporaryError,
 )
-from services.ocr_service import ocr_service
 from utils.validators import parse_date
-from utils.telegram_text import split_telegram_message
 from datetime import datetime
 from utils.meal_types import MealType, MEAL_TYPE_ORDER, normalize_meal_type, display_meal_type
-from config import OPENROUTER_MODEL, OCR_ENABLED
+from config import OPENROUTER_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +61,6 @@ ADD_METHOD_TEXTS = {
     "openrouter": "🧪 Ввести текст через OpenRouter",
     "photo": "📷 Анализ еды по фото",
     "label": "📋 Анализ этикетки",
-    "ocr_label_test": "📷 Этикетка через OCR (тест)",
     "barcode": "📷 Скан штрих-кода",
 }
 
@@ -71,19 +68,6 @@ AI_TEMPORARY_UNAVAILABLE_TEXT = "🤖 Сервис AI сейчас времен�
 AI_QUOTA_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за лимита запросов."
 AI_CONFIG_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за ошибки настройки."
 AI_TIMEOUT_UNAVAILABLE_TEXT = "⏱️ AI отвечает слишком долго. Попробуй ещё раз чуть позже."
-
-OCR_TEST_COUNTERS = {
-    "requests": 0,
-    "ocr_success": 0,
-    "ocr_failed": 0,
-    "openrouter_success": 0,
-    "openrouter_failed": 0,
-}
-
-
-def _bump_ocr_counter(key: str) -> None:
-    OCR_TEST_COUNTERS[key] = OCR_TEST_COUNTERS.get(key, 0) + 1
-
 
 async def _reroute_add_method_button_if_needed(message: Message, state: FSMContext, text: str) -> bool:
     """Перенаправляет на выбранный способ добавления, даже если активен другой state."""
@@ -101,9 +85,6 @@ async def _reroute_add_method_button_if_needed(message: Message, state: FSMConte
         return True
     if text == ADD_METHOD_TEXTS["label"]:
         await kbju_add_via_label(message, state)
-        return True
-    if text == ADD_METHOD_TEXTS["ocr_label_test"]:
-        await kbju_add_via_ocr_label_test(message, state)
         return True
     if text == ADD_METHOD_TEXTS["barcode"]:
         await kbju_add_via_barcode(message, state)
@@ -364,8 +345,7 @@ async def _show_input_methods(message: Message, state: FSMContext) -> None:
         "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
         "• 🧪 Ввести текст через OpenRouter\n"
         "• 📷 Анализ еды по фото\n"
-        "• 📋 Анализ этикетки\n"
-        "• 📷 Этикетка через OCR (тест)"
+        "• 📋 Анализ этикетки"
     )
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
@@ -513,9 +493,6 @@ async def select_meal_type(message: Message, state: FSMContext):
             return
         if pending_method == "label":
             await kbju_add_via_label(message, state)
-            return
-        if pending_method == "ocr_label_test":
-            await kbju_add_via_ocr_label_test(message, state)
             return
         if pending_method == "barcode":
             await kbju_add_via_barcode(message, state)
@@ -1050,26 +1027,6 @@ async def kbju_add_via_label(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=kbju_add_menu)
 
 
-@router.message(lambda m: m.text == "📷 Этикетка через OCR (тест)")
-async def kbju_add_via_ocr_label_test(message: Message, state: FSMContext):
-    """Тестовый сценарий: только OCR через Tesseract, без AI."""
-    if not OCR_ENABLED:
-        await message.answer("⚠️ OCR-режим сейчас отключён в конфигурации.")
-        return
-    if not await _ensure_meal_type_selected(message, state, "ocr_label_test"):
-        return
-    reset_user_state(message)
-    await state.update_data(pending_add_method=None)
-    await state.set_state(MealEntryStates.waiting_for_ocr_label_photo)
-
-    push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(
-        "Отправь фото этикетки продукта. Я попробую распознать только OCR-текст "
-        "без AI-анализа.",
-        reply_markup=kbju_add_menu,
-    )
-
-
 @router.message(lambda m: m.text == "📷 Скан штрих-кода")
 async def kbju_add_via_barcode(message: Message, state: FSMContext):
     """Обработчик сканирования штрих-кода."""
@@ -1321,97 +1278,6 @@ async def handle_label_photo(message: Message, state: FSMContext):
             f"Можешь выбрать кнопку или ввести вес вручную.",
             reply_markup=kbju_weight_input_menu,
         )
-
-
-@router.message(MealEntryStates.waiting_for_ocr_label_photo, F.photo)
-async def handle_ocr_label_photo(message: Message, state: FSMContext):
-    """Обрабатывает фото этикетки в OCR-only тестовом потоке."""
-    user_id = str(message.from_user.id)
-    logger.info("OCR label test started: user_id=%s", user_id)
-    _bump_ocr_counter("requests")
-
-    if not OCR_ENABLED:
-        _bump_ocr_counter("ocr_failed")
-        await message.answer("⚠️ OCR-режим сейчас отключён в конфигурации.")
-        return
-
-    await message.answer("Пробую распознать текст с этикетки через OCR...")
-
-    temp_image_path: str | None = None
-    try:
-        photo = message.photo[-1]
-        file = await message.bot.get_file(photo.file_id)
-        image_bytes = await message.bot.download_file(file.file_path)
-
-        import tempfile
-        with tempfile.NamedTemporaryFile(prefix="ocr_label_", suffix=".jpg", delete=False) as tmp:
-            tmp.write(image_bytes.read())
-            temp_image_path = tmp.name
-
-        ocr_result = await asyncio.to_thread(ocr_service.parse_label_via_ocr_pipeline, temp_image_path)
-        logger.info(
-            "OCR label test finished: user_id=%s success=%s error_type=%s text_len=%s processing_ms=%s",
-            user_id,
-            ocr_result.success,
-            ocr_result.error_type,
-            len(ocr_result.text or ""),
-            ocr_result.processing_time_ms,
-        )
-    except Exception as exc:
-        _bump_ocr_counter("ocr_failed")
-        logger.error("OCR label test unexpected error: user_id=%s error=%s", user_id, exc, exc_info=True)
-        try:
-            await message.answer(
-                "Не удалось надёжно распознать текст с этикетки. "
-                "Попробуй фото, где текст снят ближе, ровнее и при хорошем освещении."
-            )
-        except Exception as send_exc:
-            logger.error("OCR label test reply failed: user_id=%s error=%s", user_id, send_exc, exc_info=True)
-        return
-    finally:
-        if temp_image_path:
-            try:
-                import os
-                os.remove(temp_image_path)
-            except OSError as cleanup_exc:
-                logger.warning("OCR source cleanup_error: path=%s error=%s", temp_image_path, cleanup_exc)
-
-    if not ocr_result.success:
-        low_quality_with_text = ocr_result.error_type == "low_quality_text" and bool((ocr_result.text or "").strip())
-        if low_quality_with_text:
-            _bump_ocr_counter("ocr_success")
-            try:
-                chunks = split_telegram_message(ocr_result.text, limit=3900)
-                await message.answer(
-                    "Текст распознан частично, поэтому в нём могут быть ошибки. "
-                    "Проверь результат вручную:"
-                )
-                for chunk in chunks:
-                    await message.answer(chunk)
-            except Exception as send_exc:
-                logger.error("OCR label test send result failed: user_id=%s error=%s", user_id, send_exc, exc_info=True)
-                await message.answer("OCR отработал, но не удалось отправить результат. Попробуй ещё раз.")
-            return
-
-        _bump_ocr_counter("ocr_failed")
-        try:
-            await message.answer(
-                "Не удалось надёжно распознать текст с этикетки. "
-                "Попробуй фото, где текст снят ближе, ровнее и при хорошем освещении."
-            )
-        except Exception as send_exc:
-            logger.error("OCR label test reply failed: user_id=%s error=%s", user_id, send_exc, exc_info=True)
-        return
-
-    _bump_ocr_counter("ocr_success")
-    try:
-        chunks = split_telegram_message(ocr_result.text, limit=3900)
-        await message.answer("Вот что удалось распознать с этикетки:")
-        for chunk in chunks:
-            await message.answer(chunk)
-    except Exception as send_exc:
-        logger.error("OCR label test send result failed: user_id=%s error=%s", user_id, send_exc, exc_info=True)
-        await message.answer("OCR отработал, но не удалось отправить результат. Попробуй ещё раз.")
 
 
 @router.message(MealEntryStates.waiting_for_barcode_photo, F.photo)
@@ -3164,4 +3030,3 @@ async def start_kbju_test_from_button(callback: CallbackQuery, state: FSMContext
 def register_meal_handlers(dp):
     """Регистрирует обработчики КБЖУ."""
     dp.include_router(router)
-    _bump_ocr_counter("openrouter_success")
