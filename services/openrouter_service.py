@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import traceback
 from typing import Optional
 
 from openai import OpenAI
@@ -126,6 +127,8 @@ class OpenRouterService:
         """Отправляет промпт анализа активности в OpenRouter и возвращает текстовый ответ."""
         started = time.perf_counter()
         logger.info("OpenRouter activity: sending request model=%s", OPENROUTER_MODEL)
+        raw_api_response = ""
+        extracted_content = ""
 
         try:
             client = self._get_client()
@@ -143,8 +146,15 @@ class OpenRouterService:
                     "X-Title": OPENROUTER_APP_TITLE,
                 },
             )
+            try:
+                raw_api_response = response.model_dump_json(indent=2)
+            except Exception:
+                raw_api_response = str(response)
+            logger.info("OpenRouter activity: raw API response=%s", raw_api_response)
 
             content = ((response.choices or [None])[0].message.content or "").strip()
+            extracted_content = content
+            logger.info("OpenRouter activity: extracted choices[0].message.content=%s", extracted_content)
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             if not content:
                 raise OpenRouterServiceTemporaryError("OpenRouter returned empty activity response")
@@ -158,6 +168,12 @@ class OpenRouterService:
             return content
         except OpenRouterServiceError as exc:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
+            logger.error(
+                "OpenRouter activity error: %s\ntraceback=%s\nresponse_snippet=%s",
+                exc,
+                traceback.format_exc(),
+                self._response_edge_snippet(extracted_content or raw_api_response),
+            )
             OpenRouterRepository.log_error(
                 model_name=OPENROUTER_MODEL,
                 input_text=prompt,
@@ -173,6 +189,12 @@ class OpenRouterService:
             else:
                 wrapped = OpenRouterServiceError(str(exc))
 
+            logger.error(
+                "OpenRouter activity unexpected error: %s\ntraceback=%s\nresponse_snippet=%s",
+                exc,
+                traceback.format_exc(),
+                self._response_edge_snippet(extracted_content or raw_api_response),
+            )
             OpenRouterRepository.log_error(
                 model_name=OPENROUTER_MODEL,
                 input_text=prompt,
@@ -258,19 +280,10 @@ class OpenRouterService:
         if not raw:
             return None
 
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.strip("`")
-            cleaned = cleaned.replace("json\n", "", 1).replace("JSON\n", "", 1).strip()
-
-        payload = None
         try:
-            payload = json.loads(cleaned)
+            payload = OpenRouterService.parse_ai_response(raw, mode="json")
         except json.JSONDecodeError:
-            start = cleaned.find("{")
-            end = cleaned.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                payload = json.loads(cleaned[start : end + 1])
+            return None
 
         if not isinstance(payload, dict):
             return None
@@ -356,6 +369,53 @@ class OpenRouterService:
         if not normalized_items and not any(total.values()):
             return None
         return {"items": normalized_items, "total": total}
+
+    @staticmethod
+    def parse_ai_response(raw: str, mode: str = "text") -> str | dict | list:
+        """Универсальный парсер AI-ответов: text|json."""
+        if mode == "text":
+            return raw or ""
+        if mode != "json":
+            raise ValueError(f"Unsupported parse mode: {mode}")
+
+        cleaned = (raw or "").strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            cleaned = cleaned.replace("json\n", "", 1).replace("JSON\n", "", 1).strip()
+
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                candidate = cleaned[start : end + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError as exc:
+                    OpenRouterService._log_response_parse_error(exc, raw)
+                    raise
+            exc = json.JSONDecodeError("No JSON object found in response", cleaned, 0)
+            OpenRouterService._log_response_parse_error(exc, raw)
+            raise exc
+
+    @staticmethod
+    def _response_edge_snippet(response_text: str, edge_size: int = 500) -> str:
+        if not response_text:
+            return "empty"
+        if len(response_text) <= edge_size * 2:
+            return response_text
+        return f"{response_text[:edge_size]}\n...\n{response_text[-edge_size:]}"
+
+    @staticmethod
+    def _log_response_parse_error(exc: Exception, response_text: str) -> None:
+        trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        logger.error(
+            "OpenRouter parse error: %s\ntraceback=%s\nresponse_snippet=%s",
+            exc,
+            trace,
+            OpenRouterService._response_edge_snippet(response_text),
+        )
 
 
 openrouter_service = OpenRouterService()

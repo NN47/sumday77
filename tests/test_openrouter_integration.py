@@ -56,3 +56,15 @@ def test_openrouter_parse_kbju_json_normalizes_synonym_keys():
     assert parsed["total"]["protein"] == 13
     assert parsed["total"]["fat"] == 11
     assert parsed["total"]["carbs"] == 1.1
+
+
+def test_openrouter_parse_ai_response_text_mode_returns_raw_text():
+    raw_text = "<b>Отчёт за день</b>\nОбычный текст без JSON."
+    parsed = OpenRouterService.parse_ai_response(raw_text, mode="text")
+    assert parsed == raw_text
+
+
+def test_openrouter_parse_kbju_json_returns_none_for_plain_text_response():
+    raw_text = "<b>Отчёт за день</b>\nОбычный текст без JSON."
+    parsed = OpenRouterService.parse_kbju_json(raw_text)
+    assert parsed is None
