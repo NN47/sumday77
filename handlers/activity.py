@@ -29,6 +29,7 @@ from states.user_states import ActivityAnalysisStates
 from services.gemini_service import gemini_service, GeminiServiceTemporaryUnavailableError
 from services.openrouter_service import OpenRouterServiceTemporaryError, openrouter_service
 from services.error_logging_service import log_app_error
+from utils.telegram_text import split_telegram_message
 
 logger = logging.getLogger(__name__)
 
@@ -999,11 +1000,15 @@ async def analyze_activity_day_openrouter(message: Message):
         await message.answer("⚠️ Не удалось сгенерировать анализ дня через OpenRouter. Попробуй позже.")
         return
     push_menu_stack(message.bot, activity_analysis_menu)
-    try:
-        await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
-    except TelegramBadRequest as e:
-        logger.warning("Failed to send OpenRouter analysis as HTML, fallback to plain text: %s", e)
-        await message.answer(analysis, reply_markup=activity_analysis_menu)
+    chunks = split_telegram_message(analysis, limit=3900)
+
+    for i, chunk in enumerate(chunks):
+        reply_markup = activity_analysis_menu if i == len(chunks) - 1 else None
+        try:
+            await message.answer(chunk, parse_mode="HTML", reply_markup=reply_markup)
+        except TelegramBadRequest as e:
+            logger.warning("Failed to send OpenRouter analysis chunk as HTML, fallback to plain text: %s", e)
+            await message.answer(chunk, reply_markup=reply_markup)
 
 
 @router.message(lambda m: m.text in ACTIVITY_ANALYSIS_WEEK_BUTTON_ALIASES)
