@@ -9,6 +9,7 @@ class MealEntryStates(StatesGroup):
     waiting_for_ai_food_input = State()  # Gemini AI
     confirming_ai_meal = State()  # Подтверждение сохранения Gemini результата
     waiting_for_openrouter_food_input = State()  # OpenRouter free
+    waiting_for_gigachat_food_input = State()  # GigaChat
     confirming_openrouter_meal = State()  # Подтверждение сохранения OpenRouter результата
     waiting_for_photo = State()  # Фото еды
     waiting_for_label_photo = State()  # Фото этикетки
