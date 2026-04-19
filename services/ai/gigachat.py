@@ -9,13 +9,17 @@ from datetime import datetime, timezone
 from typing import Any
 
 import requests
+import urllib3
+from urllib3.exceptions import InsecureRequestWarning
 
 from config import GIGACHAT_API_KEY, GIGACHAT_API_URL, GIGACHAT_MODEL, GIGACHAT_OAUTH_URL
 
 logger = logging.getLogger(__name__)
+urllib3.disable_warnings(InsecureRequestWarning)
 
 _TOKEN_SCOPE = "GIGACHAT_API_PERS"
-_REQUEST_TIMEOUT_SECONDS = 45
+_OAUTH_REQUEST_TIMEOUT_SECONDS = 30
+_CHAT_REQUEST_TIMEOUT_SECONDS = 60
 _TOKEN_REFRESH_MARGIN_SECONDS = 180
 _DEFAULT_TOKEN_TTL_SECONDS = 25 * 60
 
@@ -136,7 +140,8 @@ class GigaChatService:
                     "messages": messages,
                     "temperature": 0.1,
                 },
-                timeout=_REQUEST_TIMEOUT_SECONDS,
+                timeout=_CHAT_REQUEST_TIMEOUT_SECONDS,
+                verify=False,
             )
         except requests.RequestException as exc:
             logger.error("GigaChat: request exception=%s", exc)
@@ -175,7 +180,8 @@ class GigaChatService:
                     "RqUID": rq_uid,
                 },
                 data={"scope": _TOKEN_SCOPE},
-                timeout=_REQUEST_TIMEOUT_SECONDS,
+                timeout=_OAUTH_REQUEST_TIMEOUT_SECONDS,
+                verify=False,
             )
         except requests.RequestException as exc:
             logger.error("GigaChat: access token request failed, request_exception=%s", exc)
