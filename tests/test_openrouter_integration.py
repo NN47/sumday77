@@ -17,6 +17,11 @@ def test_activity_analysis_menu_has_openrouter_day_button():
     assert "🪄 ИИ-разбор дня" in texts
 
 
+def test_activity_analysis_menu_has_gigachat_day_button():
+    texts = _reply_keyboard_texts(activity_analysis_menu)
+    assert "📅 Сегодня через GigaChat" in texts
+
+
 def test_openrouter_formatter_shows_free_model():
     text = format_openrouter({"model_name": "openrouter/free", "tariff": "free"})
     assert "openrouter/free" in text

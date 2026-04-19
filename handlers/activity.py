@@ -16,6 +16,8 @@ from utils.keyboards import (
     ACTIVITY_ANALYSIS_MONTH_BUTTON_ALIASES,
     ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES,
     ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES,
+    ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES,
+    ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT,
     ACTIVITY_ANALYSIS_WEEK_BUTTON_ALIASES,
 )
 from utils.emoji_map import EMOJI_MAP
@@ -28,6 +30,12 @@ from database.repositories import AnalyticsRepository
 from states.user_states import ActivityAnalysisStates
 from services.gemini_service import gemini_service, GeminiServiceTemporaryUnavailableError
 from services.openrouter_service import OpenRouterServiceTemporaryError, openrouter_service
+from services.ai.gigachat import (
+    gigachat_service,
+    GigaChatServiceError,
+    GigaChatServiceTemporaryError,
+    GigaChatServiceConfigError,
+)
 from services.error_logging_service import log_app_error
 from utils.telegram_text import split_telegram_message
 
@@ -60,6 +68,15 @@ def _is_gemini_temporarily_unavailable_error(error: Exception) -> bool:
     """Проверяет, связана ли ошибка с временной недоступностью Gemini (ServerError/503)."""
     return (
         isinstance(error, (GeminiServiceTemporaryUnavailableError, asyncio.TimeoutError))
+        or "503" in str(error)
+        or "timeout" in str(error).lower()
+    )
+
+
+def _is_gigachat_temporarily_unavailable_error(error: Exception) -> bool:
+    """Проверяет, связана ли ошибка с временной недоступностью GigaChat."""
+    return (
+        isinstance(error, (GigaChatServiceTemporaryError, asyncio.TimeoutError))
         or "503" in str(error)
         or "timeout" in str(error).lower()
     )
@@ -898,18 +915,24 @@ async def generate_activity_analysis(
                 asyncio.to_thread(openrouter_service.analyze_activity_prompt, prompt),
                 timeout=60.0,
             )
+        elif backend == "gigachat":
+            response = await asyncio.wait_for(
+                asyncio.to_thread(gigachat_service.analyze_activity_prompt, prompt),
+                timeout=60.0,
+            )
         else:
             raise ValueError(f"Unknown activity analysis backend: {backend}")
         response = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', response)
         return re.sub(r'\*+$', '', response).strip()
 
     result = await _run_backend()
-    if days_count == 1 and backend == "openrouter":
+    if days_count == 1 and backend in {"openrouter", "gigachat"}:
         for _ in range(2):
             if _is_valid_daily_analysis_text(result):
                 break
             result = await _run_backend()
         if not _is_valid_daily_analysis_text(result):
+            logger.warning("Activity daily analysis validation failed for backend=%s, fallback will be used", backend)
             result = _build_daily_analysis_fallback(
                 total_calories=total_calories,
                 total_protein=total_protein,
@@ -938,6 +961,7 @@ async def analyze_activity(message: Message):
         "📊 ИИ-анализ\n\n"
         "Выбери формат:\n"
         "• 📅 Сегодня — быстрый отчёт за день\n"
+        f"• {ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT} — тот же отчёт через GigaChat\n"
         "• 🪄 ИИ-разбор дня — расширенный персональный фидбек\n"
         "• 📊 Неделя / 📈 Месяц — динамика прогресса\n"
         "• 🗓 Календарь — история прошлых анализов",
@@ -1139,6 +1163,56 @@ async def analyze_activity_day(message: Message):
         return
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
+
+
+@router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES)
+async def analyze_activity_day_gigachat(message: Message):
+    """Анализ за день через GigaChat."""
+    user_id = str(message.from_user.id)
+    today = date.today()
+    logger.info("Starting daily activity analysis via GigaChat, user_id=%s", user_id)
+    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
+    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
+    AnalyticsRepository.track_event(user_id, "daily_analysis_gigachat_started", section="activity")
+    await message.answer("⏳ Подожди немного, бот анализирует твой день через GigaChat...")
+    try:
+        analysis = await generate_activity_analysis(user_id, today, today, "за день", backend="gigachat")
+        ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="generated")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_gigachat_sent", section="activity")
+        logger.info("Daily activity analysis via GigaChat sent successfully, user_id=%s", user_id)
+    except Exception as e:
+        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_gigachat_failed", section="activity")
+        if _is_gigachat_temporarily_unavailable_error(e):
+            push_menu_stack(message.bot, activity_analysis_menu)
+            await message.answer(
+                "🤖 GigaChat сейчас временно недоступен.\n\nПопробуй чуть позже — и всё снова заработает.",
+                reply_markup=activity_analysis_menu,
+            )
+            return
+        if isinstance(e, GigaChatServiceConfigError):
+            logger.error("GigaChat token/config error during daily analysis, user_id=%s error=%s", user_id, e)
+        elif isinstance(e, GigaChatServiceError):
+            logger.error("GigaChat request error during daily analysis, user_id=%s error=%s", user_id, e)
+        log_app_error(
+            source="gigachat",
+            error=e,
+            user_id=user_id,
+            context="daily_analysis_gigachat",
+            extra={"handler": "analyze_activity_day_gigachat"},
+        )
+        await message.answer("⚠️ Не удалось сгенерировать анализ дня через GigaChat. Попробуй позже.")
+        return
+    push_menu_stack(message.bot, activity_analysis_menu)
+    chunks = split_telegram_message(analysis, limit=3900)
+    for i, chunk in enumerate(chunks):
+        reply_markup = activity_analysis_menu if i == len(chunks) - 1 else None
+        try:
+            await message.answer(chunk, parse_mode="HTML", reply_markup=reply_markup)
+        except TelegramBadRequest as e:
+            logger.warning("Failed to send GigaChat analysis chunk as HTML, fallback to plain text: %s", e)
+            await message.answer(chunk, reply_markup=reply_markup)
 
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES)
