@@ -24,6 +24,7 @@ MEALS_BUTTON_ALIASES = {
 AI_ANALYSIS_BUTTON_TEXT = "🧠 ИИ анализ"
 
 ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT = "📅 Сегодня"
+ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT = "📅 Сегодня через GigaChat"
 ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_TEXT = "🪄 ИИ-разбор дня"
 ACTIVITY_ANALYSIS_WEEK_BUTTON_TEXT = "📊 Неделя"
 ACTIVITY_ANALYSIS_MONTH_BUTTON_TEXT = "📈 Месяц"
@@ -34,6 +35,12 @@ ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES = {
     "🔍 Проанализировать день",
     "📅 Анализ за день",
     "Проанализировать день",
+}
+ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES = {
+    ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT,
+    "📅 Анализ за день через GigaChat",
+    "анализ за день через gigachat",
+    "сегодня через gigachat",
 }
 ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES = {
     ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_TEXT,
@@ -759,7 +766,10 @@ water_quick_add_inline = InlineKeyboardMarkup(
 # Меню анализа
 activity_analysis_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text=ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT)],
+        [
+            KeyboardButton(text=ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT),
+            KeyboardButton(text=ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT),
+        ],
         [KeyboardButton(text=ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_TEXT)],
         [KeyboardButton(text=ACTIVITY_ANALYSIS_WEEK_BUTTON_TEXT), KeyboardButton(text=ACTIVITY_ANALYSIS_MONTH_BUTTON_TEXT)],
         [KeyboardButton(text=ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT)],

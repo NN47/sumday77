@@ -74,6 +74,29 @@ class GigaChatService:
                 raise GigaChatServiceTemporaryError(str(exc)) from exc
             raise GigaChatServiceError(str(exc)) from exc
 
+    def analyze_activity_prompt(self, prompt: str) -> str:
+        """Отправляет промпт анализа активности в GigaChat и возвращает текстовый ответ."""
+        if not prompt:
+            raise ValueError("Prompt is empty")
+
+        started = time.perf_counter()
+        messages = [
+            {"role": "system", "content": "Ты фитнес-ассистент. Следуй инструкциям пользователя и верни только итоговый анализ."},
+            {"role": "user", "content": prompt},
+        ]
+        try:
+            content = self._request_chat_completion(messages)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            logger.info("GigaChat: successful activity analysis request in %sms", elapsed_ms)
+            return content
+        except GigaChatServiceError:
+            raise
+        except Exception as exc:  # pragma: no cover - network/SDK-level safety
+            message = str(exc).lower()
+            if any(token in message for token in ("timeout", "timed out", "429", "rate", "network", "connection")):
+                raise GigaChatServiceTemporaryError(str(exc)) from exc
+            raise GigaChatServiceError(str(exc)) from exc
+
     def _request_chat_completion(self, messages: list[dict[str, Any]]) -> str:
         token = self._get_access_token()
         response = self._chat_completion(token, messages)
@@ -206,4 +229,3 @@ class GigaChatService:
 
 
 gigachat_service = GigaChatService()
-
