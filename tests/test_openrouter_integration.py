@@ -1,10 +1,15 @@
 from utils.keyboards import kbju_add_menu, activity_analysis_menu
-from utils.admin_formatters import format_openrouter
+from handlers.admin import _admin_menu_kb
+from utils.admin_formatters import format_openrouter, format_gigachat
 from services.openrouter_service import OpenRouterService
 
 
 def _reply_keyboard_texts(markup) -> list[str]:
     return [button.text for row in markup.keyboard for button in row]
+
+
+def _inline_keyboard_texts(markup) -> list[str]:
+    return [button.text for row in markup.inline_keyboard for button in row]
 
 
 def test_kbju_add_menu_has_openrouter_button():
@@ -26,6 +31,17 @@ def test_openrouter_formatter_shows_free_model():
     text = format_openrouter({"model_name": "openrouter/free", "tariff": "free"})
     assert "openrouter/free" in text
     assert "free" in text
+
+
+def test_admin_menu_has_gigachat_button():
+    texts = _inline_keyboard_texts(_admin_menu_kb())
+    assert "🤖 GigaChat / AI" in texts
+
+
+def test_gigachat_formatter_shows_ranges():
+    text = format_gigachat({"started_today": 3, "sent_today": 2, "failed_today": 1, "success_rate_today": 66.7})
+    assert "GigaChat / AI" in text
+    assert "66.7%" in text
 
 
 def test_openrouter_parse_kbju_json_normalizes_synonym_keys():
