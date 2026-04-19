@@ -37,6 +37,10 @@ from services.openrouter_service import (
     OpenRouterServiceError,
     OpenRouterServiceTemporaryError,
 )
+from services.ai.gigachat import (
+    gigachat_service,
+    GigaChatServiceError,
+)
 from utils.validators import parse_date
 from datetime import datetime
 from utils.meal_types import MealType, MEAL_TYPE_ORDER, normalize_meal_type, display_meal_type
@@ -59,6 +63,7 @@ ADD_METHOD_TEXTS = {
     "calorieninjas": "➕ Через CalorieNinjas",
     "ai": "📝 Ввести приём пищи текстом (AI-анализ)",
     "openrouter": "🧪 Ввести текст через OpenRouter",
+    "gigachat": "🧠 Ввести текст через GigaChat",
     "photo": "📷 Анализ еды по фото",
     "label": "📋 Анализ этикетки",
     "barcode": "📷 Скан штрих-кода",
@@ -79,6 +84,9 @@ async def _reroute_add_method_button_if_needed(message: Message, state: FSMConte
         return True
     if text == ADD_METHOD_TEXTS["openrouter"]:
         await kbju_add_via_openrouter(message, state)
+        return True
+    if text == ADD_METHOD_TEXTS["gigachat"]:
+        await kbju_add_via_gigachat(message, state)
         return True
     if text == ADD_METHOD_TEXTS["photo"]:
         await kbju_add_via_photo(message, state)
@@ -587,9 +595,30 @@ async def kbju_add_via_openrouter(message: Message, state: FSMContext):
     )
 
 
-@router.message(MealEntryStates.waiting_for_openrouter_food_input)
-async def handle_openrouter_food_input(message: Message, state: FSMContext):
-    """Обрабатывает текст пользователя через OpenRouter с автосохранением."""
+@router.message(lambda m: m.text == "🧠 Ввести текст через GigaChat")
+async def kbju_add_via_gigachat(message: Message, state: FSMContext):
+    """Обработчик отдельного сценария GigaChat."""
+    if not await _ensure_meal_type_selected(message, state, "gigachat"):
+        return
+    await state.update_data(pending_add_method=None)
+    await state.set_state(MealEntryStates.waiting_for_gigachat_food_input)
+
+    push_menu_stack(message.bot, kbju_add_menu)
+    await message.answer(
+        "🧠 GigaChat\n\nОтправь продукты и количество одним сообщением.",
+        reply_markup=kbju_add_menu,
+    )
+
+
+async def _handle_provider_food_input(
+    message: Message,
+    state: FSMContext,
+    *,
+    provider_name: str,
+    provider_title: str,
+    analyzer,
+) -> None:
+    """Общая логика обработки текстового ввода еды через AI-провайдера."""
     user_text = (message.text or "").strip()
     if await _reroute_add_method_button_if_needed(message, state, user_text):
         return
@@ -599,22 +628,24 @@ async def handle_openrouter_food_input(message: Message, state: FSMContext):
 
     await message.answer("Обрабатываю…")
     try:
-        raw = await asyncio.to_thread(openrouter_service.analyze_food_text, user_text)
+        raw = await asyncio.to_thread(analyzer, user_text)
         kbju_data = openrouter_service.parse_kbju_json(raw)
-    except (OpenRouterServiceError, ValueError, json.JSONDecodeError):
-        await message.answer("Не удалось обработать через OpenRouter. Попробуй позже.")
+    except (OpenRouterServiceError, GigaChatServiceError, ValueError, json.JSONDecodeError):
+        logger.exception("%s: failed to process user text", provider_name)
+        await message.answer(f"Не удалось обработать через {provider_name}. Попробуй позже.")
         await message.answer("Можешь отправить текст ещё раз.")
         return
 
     if not kbju_data or "total" not in kbju_data:
-        await message.answer("Не удалось обработать через OpenRouter. Попробуй позже.")
+        logger.error("%s: parse error, empty or incompatible payload", provider_name)
+        await message.answer(f"Не удалось обработать через {provider_name}. Попробуй позже.")
         await message.answer("Можешь отправить текст ещё раз.")
         return
 
     items = kbju_data.get("items", [])
     total = kbju_data.get("total", {})
 
-    lines = ["🧪 OpenRouter (free): оценка приёма пищи\n"]
+    lines = [f"{provider_title}: оценка приёма пищи\n"]
     for item in items:
         lines.append(
             f"• {item.get('name', 'продукт')} ({float(item.get('grams', 0)):.0f} г) — "
@@ -666,6 +697,30 @@ async def handle_openrouter_food_input(message: Message, state: FSMContext):
         f"🍩 Углеводы: {daily_totals.get('carbs', 0):.1f} г"
     )
     await message.answer("\n".join(lines), reply_markup=kbju_after_meal_menu)
+
+
+@router.message(MealEntryStates.waiting_for_openrouter_food_input)
+async def handle_openrouter_food_input(message: Message, state: FSMContext):
+    """Обрабатывает текст пользователя через OpenRouter с автосохранением."""
+    await _handle_provider_food_input(
+        message,
+        state,
+        provider_name="OpenRouter",
+        provider_title="🧪 OpenRouter (free)",
+        analyzer=openrouter_service.analyze_food_text,
+    )
+
+
+@router.message(MealEntryStates.waiting_for_gigachat_food_input)
+async def handle_gigachat_food_input(message: Message, state: FSMContext):
+    """Обрабатывает текст пользователя через GigaChat с автосохранением."""
+    await _handle_provider_food_input(
+        message,
+        state,
+        provider_name="GigaChat",
+        provider_title="🧠 GigaChat",
+        analyzer=gigachat_service.analyze_food_text,
+    )
 
 
 @router.message(MealEntryStates.confirming_openrouter_meal)

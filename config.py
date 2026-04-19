@@ -38,6 +38,10 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 OPENROUTER_HTTP_REFERER = os.getenv("OPENROUTER_HTTP_REFERER", "https://your-render-url")
 OPENROUTER_APP_TITLE = os.getenv("OPENROUTER_APP_TITLE", "Sumday Bot")
+GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")
+GIGACHAT_MODEL = os.getenv("GIGACHAT_MODEL", "GigaChat-2")
+GIGACHAT_OAUTH_URL = os.getenv("GIGACHAT_OAUTH_URL", "https://ngw.devices.sberbank.ru:9443/api/v2/oauth")
+GIGACHAT_API_URL = os.getenv("GIGACHAT_API_URL", "https://gigachat.devices.sberbank.ru/api/v1")
 
 if not NUTRITION_API_KEY:
     print("⚠️ ВНИМАНИЕ: NUTRITION_API_KEY не найден. КБЖУ через CalorieNinjas работать не будет.")
