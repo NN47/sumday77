@@ -42,6 +42,19 @@ AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT = (
     "Можно продолжать пользоваться ботом — всё остальное работает нормально."
 )
 
+DAILY_ANALYSIS_REQUIRED_HEADERS = [
+    "🏋️ Тренировки",
+    "🍽️ Питание",
+    "⚖️ Вес",
+    "📈 Гипотеза",
+]
+DAILY_ANALYSIS_BANNED_PHRASES = [
+    "как ии",
+    "возможно я ошибаюсь",
+    "я могу ошибаться",
+    "как языковая модель",
+]
+
 
 def _is_gemini_temporarily_unavailable_error(error: Exception) -> bool:
     """Проверяет, связана ли ошибка с временной недоступностью Gemini (ServerError/503)."""
@@ -87,6 +100,130 @@ def _goal_label_ru(goal: str | None) -> str:
         "gain": "Набор",
     }
     return mapping.get((goal or "").lower(), "Не указана")
+
+
+def _build_daily_analysis_fallback(
+    total_calories: float,
+    total_protein: float,
+    total_fat: float,
+    total_carbs: float,
+    goal_cal: float,
+    goal_pro: float,
+    goal_fat: float,
+    goal_carb: float,
+    today_steps: int,
+    today_workouts_by_type: dict,
+    today_workout_kcal: float,
+    trend_weights: list,
+) -> str:
+    """Собирает fallback-отчёт в обязательном формате при провале валидации."""
+    workout_items = [item for item in today_workouts_by_type.values() if item["value"] > 0]
+    if workout_items or today_steps > 0:
+        workout_facts = []
+        if workout_items:
+            workout_facts.append(
+                "тренировка: " + ", ".join(f"{item['type']} {item['value']} {item['unit']}" for item in workout_items[:3])
+            )
+        if today_steps > 0:
+            workout_facts.append(f"шаги: {today_steps}")
+        workout_text = (
+            f"Выполнено: {', '.join(workout_facts)}; ориентировочный расход ~{round(today_workout_kcal)} ккал.\n"
+            f"Оценка: {'нормально' if today_steps >= 6000 or workout_items else 'недостаточно'}.\n"
+            "Рекомендация: добавь короткую прогулку 20–30 минут для стабильной активности."
+        )
+    else:
+        workout_text = (
+            "Данных по тренировке сегодня нет.\n"
+            "Оценка: недостаточно.\n"
+            "Рекомендация: запланируй минимум 20 минут ходьбы или лёгкую домашнюю тренировку."
+        )
+
+    cal_percent = _safe_percent(total_calories, goal_cal) if goal_cal > 0 else None
+    protein_percent = _safe_percent(total_protein, goal_pro) if goal_pro > 0 else None
+    if goal_cal > 0:
+        nutrition_text = (
+            f"Факт: {total_calories:.0f}/{goal_cal:.0f} ккал ({cal_percent}%), "
+            f"Б {total_protein:.1f}/{goal_pro:.1f} г ({protein_percent if protein_percent is not None else 'н/д'}%), "
+            f"Ж {total_fat:.1f}/{goal_fat:.1f} г, У {total_carbs:.1f}/{goal_carb:.1f} г.\n"
+            f"Отклонение от цели по калориям: {cal_percent - 100:+d}%.\n"
+            "Рекомендации: удерживай калораж в коридоре ±10% и добавь белок в первый приём пищи."
+        )
+    else:
+        nutrition_text = (
+            f"Факт: {total_calories:.0f} ккал, Б {total_protein:.1f} г, Ж {total_fat:.1f} г, У {total_carbs:.1f} г.\n"
+            "Оценка отклонения от цели: цель по КБЖУ не настроена.\n"
+            "Рекомендации: задай цель по калориям и фиксируй минимум 3 приёма пищи в день."
+        )
+
+    if trend_weights:
+        current_weight = trend_weights[0]
+        prev_weight = trend_weights[1] if len(trend_weights) > 1 else None
+        if prev_weight:
+            delta = float(str(current_weight.value).replace(",", ".")) - float(str(prev_weight.value).replace(",", "."))
+            weight_text = (
+                f"Текущий вес: {current_weight.value} кг; изменение к предыдущему замеру: {delta:+.1f} кг.\n"
+                "Интерпретация: суточное изменение может быть связано с водой, солью или углеводами.\n"
+                "Вывод: оценивай тренд по 7–14 дням, а не по одному дню."
+            )
+        else:
+            weight_text = (
+                f"Текущий вес: {current_weight.value} кг.\n"
+                "Данных для сравнения с вчера/неделей недостаточно для вывода.\n"
+                "Интерпретация: один замер не отражает реальную динамику."
+            )
+    else:
+        weight_text = (
+            "Данных по весу недостаточно для вывода.\n"
+            "Интерпретация: без регулярных замеров невозможно оценить тренд.\n"
+            "Рекомендация: добавь утренний замер веса завтра."
+        )
+
+    report = (
+        "<b>🏋️ Тренировки</b>\n"
+        f"{workout_text}\n\n"
+        "<b>🍽️ Питание</b>\n"
+        f"{nutrition_text}\n\n"
+        "<b>⚖️ Вес</b>\n"
+        f"{weight_text}\n\n"
+        "<b>📈 Гипотеза</b>\n"
+        "Если удерживать калории вблизи цели и закрывать белок не ниже плана, "
+        "то показатели веса будут снижаться или стабилизироваться без резких скачков, потому что дефицит станет управляемым.\n\n"
+        "<b>Краткий вывод</b>\n"
+        "Главный фокус — стабилизировать калории и добавить предсказуемую дневную активность.\n\n"
+        "<b>План на завтра</b>\n"
+        "1. Сделай минимум 8000 шагов и зафиксируй результат вечером.\n"
+        "2. Уложись в калораж в пределах ±10% от цели.\n"
+        "3. Добавь минимум 30 г белка в первый или второй приём пищи."
+    )
+    return report
+
+
+def _is_valid_daily_analysis_text(text: str) -> bool:
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    if len(stripped) < 600 or len(stripped) > 1500:
+        return False
+    lower = stripped.lower()
+    if any(phrase in lower for phrase in DAILY_ANALYSIS_BANNED_PHRASES):
+        return False
+    positions = []
+    for header in DAILY_ANALYSIS_REQUIRED_HEADERS:
+        idx = stripped.find(header)
+        if idx < 0:
+            return False
+        positions.append(idx)
+    if positions != sorted(positions):
+        return False
+    if "Краткий вывод" not in stripped or "План на завтра" not in stripped:
+        return False
+    if stripped.endswith(("…", "-", "—")):
+        return False
+    if re.search(r"[A-Za-zА-Яа-яЁё0-9]$", stripped) and not stripped.endswith((".", "!", "?")):
+        return False
+    if "Если " not in stripped or " то " not in lower or " потому что " not in lower:
+        return False
+    return True
 
 
 async def generate_activity_analysis(
@@ -698,10 +835,14 @@ async def generate_activity_analysis(
 {json.dumps(workout_ai_input, ensure_ascii=False, indent=2)}
 
 Сделай краткий отчёт по 4 блокам. ОБЯЗАТЕЛЬНО используй следующий формат для заголовков блоков (без решеток #, только жирный текст с эмодзи):
-<b>1) 🏋️ Тренировки</b>
-<b>2) 🍱 Питание (КБЖУ)</b>
-<b>3) ⚖️ Вес</b>
-<b>4) 📈 Общий прогресс и мотивация</b>
+<b>🏋️ Тренировки</b>
+<b>🍽️ Питание</b>
+<b>⚖️ Вес</b>
+<b>📈 Гипотеза</b>
+
+После 4 блоков ОБЯЗАТЕЛЬНО добавь:
+<b>Краткий вывод</b> — 1-2 предложения
+<b>План на завтра</b> — 3-5 нумерованных шагов с измеримыми действиями.
 
 Для блока <b>1) 🏋️ Тренировки</b> отвечай строго по шаблону (5-7 строк, без лишнего текста):
 • Тип дня: <силовая/кардио/смешанный/активность без тренировки>
@@ -728,33 +869,61 @@ async def generate_activity_analysis(
 - Обязательно учитывай оценку сожжённых калорий на тренировках в поле "Энергия" и выводах по нагрузке.
 
 Пиши структурированно, но компактно. Используй <b>жирный шрифт</b> для выделения важных цифр, фактов и процентов выполнения целей.
-Учитывай блок самочувствия и отражай его выводы в "Общий прогресс и мотивация" (или там, где это уместно).
+Учитывай блок самочувствия и отражай его выводы в рекомендациях и гипотезе.
 Учитывай блок заметок дня (оценка, факторы, комментарий) и отражай это в рекомендациях.
-В блоке "Общий прогресс и мотивация" дай конкретные рекомендации на основе данных: что улучшить, что работает хорошо, на что обратить внимание.
-Для блока "Общий прогресс и мотивация" по питанию используй логику:
+Для блока "Питание" используй логику:
 - если калории выше цели: главный совет — вернуться в целевой калораж;
 - если калории ниже цели: главный совет — стабилизировать калораж ближе к цели;
 - если белок в норме: похвали это отдельно;
 - жиры и углеводы можно упомянуть как факт или причину отклонения по калориям, но не как отдельный основной фокус без специальной причины.
 
+Жёсткие ограничения:
+1) Ответ строго по шаблону: 4 блока + вывод + план.
+2) Не обрывай слова и предложения.
+3) Гипотеза строго по формуле: «Если [действие], то [эффект], потому что [причина].»
+4) Без служебных фраз модели («как ИИ», «возможно я ошибаюсь»).
+5) Если данных по разделу нет — напиши это прямо и не выдумывай факты.
+6) Для отчёта за день целевая длина: 600–1500 символов.
+
 Рекомендации делай в стиле кнопки "🔥 Философия Sumday77", учитывай её принципы, но не вставляй текст или списки из неё дословно.
 """
-    
-    if backend == "gemini":
-        if gemini_service is None:
-            raise GeminiServiceTemporaryUnavailableError("Gemini service is not initialized")
-        result = await asyncio.wait_for(asyncio.to_thread(gemini_service.analyze, prompt), timeout=60.0)
-    elif backend == "openrouter":
-        result = await asyncio.wait_for(
-            asyncio.to_thread(openrouter_service.analyze_activity_prompt, prompt),
-            timeout=60.0,
-        )
-    else:
-        raise ValueError(f"Unknown activity analysis backend: {backend}")
 
-    # Заменяем markdown звездочки на HTML-теги для жирного шрифта
-    result = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', result)
-    result = re.sub(r'\*+$', '', result)
+    async def _run_backend() -> str:
+        if backend == "gemini":
+            if gemini_service is None:
+                raise GeminiServiceTemporaryUnavailableError("Gemini service is not initialized")
+            response = await asyncio.wait_for(asyncio.to_thread(gemini_service.analyze, prompt), timeout=60.0)
+        elif backend == "openrouter":
+            response = await asyncio.wait_for(
+                asyncio.to_thread(openrouter_service.analyze_activity_prompt, prompt),
+                timeout=60.0,
+            )
+        else:
+            raise ValueError(f"Unknown activity analysis backend: {backend}")
+        response = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', response)
+        return re.sub(r'\*+$', '', response).strip()
+
+    result = await _run_backend()
+    if days_count == 1 and backend == "openrouter":
+        for _ in range(2):
+            if _is_valid_daily_analysis_text(result):
+                break
+            result = await _run_backend()
+        if not _is_valid_daily_analysis_text(result):
+            result = _build_daily_analysis_fallback(
+                total_calories=total_calories,
+                total_protein=total_protein,
+                total_fat=total_fat,
+                total_carbs=total_carbs,
+                goal_cal=settings.calories if settings else 0,
+                goal_pro=settings.protein if settings else 0,
+                goal_fat=settings.fat if settings else 0,
+                goal_carb=settings.carbs if settings else 0,
+                today_steps=today_steps,
+                today_workouts_by_type=today_workouts_by_type,
+                today_workout_kcal=today_workout_kcal,
+                trend_weights=trend_weights,
+            )
     return result
 
 
