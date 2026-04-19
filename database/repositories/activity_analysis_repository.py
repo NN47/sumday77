@@ -2,6 +2,8 @@
 from datetime import date
 from typing import Optional
 
+from sqlalchemy import func
+
 from database.models import ActivityAnalysisEntry
 from database.session import get_db_session
 
@@ -31,7 +33,7 @@ class ActivityAnalysisRepository:
             return (
                 session.query(ActivityAnalysisEntry)
                 .filter(ActivityAnalysisEntry.user_id == str(user_id))
-                .filter(ActivityAnalysisEntry.date == target_date)
+                .filter(func.date(ActivityAnalysisEntry.date) == target_date.isoformat())
                 .order_by(ActivityAnalysisEntry.created_at.asc())
                 .all()
             )
@@ -76,8 +78,14 @@ class ActivityAnalysisRepository:
             rows = (
                 session.query(ActivityAnalysisEntry.date)
                 .filter(ActivityAnalysisEntry.user_id == str(user_id))
-                .filter(ActivityAnalysisEntry.date >= start_date)
-                .filter(ActivityAnalysisEntry.date < end_date)
+                .filter(func.date(ActivityAnalysisEntry.date) >= start_date.isoformat())
+                .filter(func.date(ActivityAnalysisEntry.date) < end_date.isoformat())
                 .all()
             )
-            return {row[0].day for row in rows}
+            days: set[int] = set()
+            for (stored_date,) in rows:
+                if hasattr(stored_date, "day"):
+                    days.add(stored_date.day)
+                elif isinstance(stored_date, str) and stored_date:
+                    days.add(date.fromisoformat(stored_date[:10]).day)
+            return days
