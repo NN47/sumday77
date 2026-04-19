@@ -467,3 +467,23 @@ def format_openrouter(metrics: dict) -> str:
         f"• Текст последней ошибки: <b>{clean_text(metrics.get('last_error_message'), max_length=120)}</b>\n"
         f"• Последний запрос (вход): <b>{clean_text(metrics.get('last_request'), max_length=120)}</b>"
     )
+
+
+def format_gigachat(metrics: dict) -> str:
+    return (
+        "🤖 <b>GigaChat / AI</b>\n\n"
+        "📅 <b>Сегодня</b>\n"
+        f"• Запущено: <b>{metrics.get('started_today', 0)}</b>\n"
+        f"• Отправлено: <b>{metrics.get('sent_today', 0)}</b>\n"
+        f"• Ошибок: <b>{metrics.get('failed_today', 0)}</b>\n"
+        f"• Успешность: <b>{metrics.get('success_rate_today', 0):.1f}%</b>\n\n"
+        "🗓 <b>За 7 дней</b>\n"
+        f"• Запущено: <b>{metrics.get('started_7d', 0)}</b>\n"
+        f"• Отправлено: <b>{metrics.get('sent_7d', 0)}</b>\n"
+        f"• Ошибок: <b>{metrics.get('failed_7d', 0)}</b>\n"
+        f"• Успешность: <b>{metrics.get('success_rate_7d', 0):.1f}%</b>\n\n"
+        "🧾 <b>За всё время</b>\n"
+        f"• Запущено: <b>{metrics.get('requests_total', 0)}</b>\n"
+        f"• Отправлено: <b>{metrics.get('sent_total', 0)}</b>\n"
+        f"• Ошибок: <b>{metrics.get('failed_total', 0)}</b>"
+    )
