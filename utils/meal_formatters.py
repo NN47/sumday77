@@ -97,11 +97,11 @@ def _extract_product_lines(meal: Meal) -> list[str]:
             getattr(meal, "description", None) or getattr(meal, "raw_query", None)
         )
         return [
-            f"• {html.escape(fallback_name)}",
-            f"{float(getattr(meal, 'calories', 0) or 0):.0f} ккал "
-            f"(Б {float(getattr(meal, 'protein', 0) or 0):.1f} / "
+            f"• **{html.escape(fallback_name)}**",
+            f"**{float(getattr(meal, 'calories', 0) or 0):.0f} ккал** "
+            f"*(Б {float(getattr(meal, 'protein', 0) or 0):.1f} / "
             f"Ж {float(getattr(meal, 'fat', 0) or 0):.1f} / "
-            f"У {float(getattr(meal, 'carbs', 0) or 0):.1f})",
+            f"У {float(getattr(meal, 'carbs', 0) or 0):.1f})*",
         ]
 
     lines: list[str] = []
@@ -116,17 +116,17 @@ def _extract_product_lines(meal: Meal) -> list[str]:
         grams = _safe_float(p.get("grams") or p.get("weight"))
         if grams > 0:
             lines.append(
-                f"• {html.escape(name)} ({grams:.0f} г)"
+                f"• **{html.escape(name)}** ({grams:.0f} г)"
             )
-            lines.append(f"{cal:.0f} ккал (Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})")
+            lines.append(f"**{cal:.0f} ккал** *(Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})*")
         else:
             lines.append(
-                f"• {html.escape(name)}"
+                f"• **{html.escape(name)}**"
             )
-            lines.append(f"{cal:.0f} ккал (Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})")
+            lines.append(f"**{cal:.0f} ккал** *(Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})*")
 
         if bool(p.get("is_manually_corrected")):
-            lines.append("✏️ КБЖУ скорректированы вручную")
+            lines.append("✏️ *КБЖУ скорректированы вручную*")
     return lines
 
 
@@ -143,17 +143,17 @@ def _collect_meal_totals(items: list[Meal]) -> dict[str, float]:
 def format_meal_totals(meal_type: str, totals: dict[str, float]) -> list[str]:
     meal_ui = MEAL_UI.get(meal_type, MEAL_UI["snack"])
     return [
-        f"Итого {meal_ui['totals_label']}:",
+        f"**Итого {meal_ui['totals_label']}:**",
         "",
-        f"🔥 {totals['calories']:.0f} ккал",
-        f"💪 {totals['protein']:.0f} г 🥑 {totals['fat']:.0f} г 🍩 {totals['carbs']:.0f} г",
+        f"🔥 **{totals['calories']:.0f} ккал**",
+        f"💪 **Белки: {totals['protein']:.0f} г** 🥑 **Жиры: {totals['fat']:.0f} г** 🍩 **Углеводы: {totals['carbs']:.0f} г**",
     ]
 
 
 def format_meal_block(meal_type: str, items: list[Meal]) -> list[str]:
     meal_ui = MEAL_UI.get(meal_type, MEAL_UI["snack"])
     totals = _collect_meal_totals(items)
-    lines = [f"{meal_ui['emoji']} {meal_ui['title']} • {totals['calories']:.0f} ккал", ""]
+    lines = [f"{meal_ui['emoji']} **{meal_ui['title']} • {totals['calories']:.0f} ккал**", ""]
 
     first_product = True
     for meal in items:
@@ -171,6 +171,8 @@ def format_meal_block(meal_type: str, items: list[Meal]) -> list[str]:
                 i += 1
             first_product = False
 
+    lines.append("")
+    lines.append("---")
     lines.append("")
     lines.extend(format_meal_totals(meal_type, totals))
     return lines
