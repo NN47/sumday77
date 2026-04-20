@@ -46,11 +46,13 @@ class MealFormatterTests(unittest.TestCase):
             daily_totals={"calories": 1430, "protein": 64, "fat": 80, "carbs": 114},
             day_str="08.04.2026",
         )
-        self.assertLess(text.find("🍳 Завтрак"), text.find("🍲 Обед"))
+        self.assertLess(text.find("🍳 **Завтрак"), text.find("🍲 **Обед"))
         self.assertNotIn("🍽 Ужин", text)
         self.assertIn("🍱 Дневник питания — 08.04.2026", text)
         self.assertIn("🎯 Цель: Не задана", text)
         self.assertIn("🔥 Калории: 1430/0 ккал (0%)", text)
+        self.assertIn("---", text)
+        self.assertIn("**Итого завтрак:**", text)
 
     def test_fallback_name_replaces_none(self):
         meals = [
@@ -70,8 +72,8 @@ class MealFormatterTests(unittest.TestCase):
             daily_totals={"calories": 100, "protein": 1, "fat": 2, "carbs": 3},
             day_str="08.04.2026",
         )
-        self.assertIn("• Продукт", text)
-        self.assertIn("100 ккал (Б 1.0 / Ж 2.0 / У 3.0)", text)
+        self.assertIn("• **Продукт**", text)
+        self.assertIn("**100 ккал** *(Б 1.0 / Ж 2.0 / У 3.0)*", text)
         self.assertNotIn("None", text)
 
 
