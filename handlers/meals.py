@@ -2017,7 +2017,6 @@ def _build_kbju_editor_keyboard(product_idx: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🥑 Жиры", callback_data=f"meal_kfield:{product_idx}:fat"),
                 InlineKeyboardButton(text=f"{CARBS_EMOJI} Углеводы", callback_data=f"meal_kfield:{product_idx}:carbs"),
             ],
-            [InlineKeyboardButton(text="✅ Сохранить", callback_data=f"meal_ksave:{product_idx}")],
             [InlineKeyboardButton(text="↩️ Назад", callback_data=f"meal_kback:{product_idx}")],
         ]
     )
