@@ -19,7 +19,10 @@ class MealEntryStates(StatesGroup):
     editing_meal_weight = State()  # Редактирование веса продукта
     editing_meal_weight_manual_input = State()  # Ручной ввод веса для выбранного продукта
     editing_meal_kbju = State()  # Ручная правка КБЖУ выбранного продукта
-    editing_meal_kbju_single_input = State()  # Ручной ввод одного поля КБЖУ
+    edit_kbju_menu = State()  # Экран "Ручная правка КБЖУ"
+    edit_kbju_field = State()  # Экран изменения конкретного поля КБЖУ
+    edit_kbju_manual_input = State()  # Ручной ввод значения в экране изменения поля
+    editing_meal_kbju_single_input = State()  # Legacy: ручной ввод одного поля КБЖУ
     editing_meal_kbju_all_input = State()  # Ручной ввод всех полей КБЖУ
     editing_meal_composition = State()  # Редактирование состава продуктов
     editing_meal = State()  # Старое состояние (для обратной совместимости)
