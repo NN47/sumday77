@@ -676,8 +676,8 @@ kbju_weight_input_menu = ReplyKeyboardMarkup(
 # Меню выбора типа редактирования КБЖУ
 kbju_edit_type_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="⚖️ Изменить вес продукта")],
-        [KeyboardButton(text="📝 Изменить состав продуктов")],
+        [KeyboardButton(text="⚖️ Изменить вес")],
+        [KeyboardButton(text="🧮 Исправить КБЖУ")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,

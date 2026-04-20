@@ -123,6 +123,15 @@ def init_db():
             else:
                 conn.execute(text("UPDATE meals SET meal_type = 'snack' WHERE meal_type IS NULL OR meal_type = ''"))
                 conn.commit()
+
+            if "is_manually_corrected" not in meal_columns:
+                conn.execute(text("ALTER TABLE meals ADD COLUMN is_manually_corrected BOOLEAN DEFAULT FALSE"))
+                conn.execute(text("UPDATE meals SET is_manually_corrected = FALSE WHERE is_manually_corrected IS NULL"))
+                conn.commit()
+                logger.info("Добавлен столбец meals.is_manually_corrected")
+            else:
+                conn.execute(text("UPDATE meals SET is_manually_corrected = FALSE WHERE is_manually_corrected IS NULL"))
+                conn.commit()
         except Exception as e:
             logger.warning(f"Ошибка при проверке meals.meal_type: {e}")
 

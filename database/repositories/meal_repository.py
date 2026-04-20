@@ -27,6 +27,7 @@ class MealRepository:
         products_json: Optional[str] = None,
         api_details: Optional[str] = None,
         meal_type: Optional[str] = MealType.SNACK.value,
+        is_manually_corrected: bool = False,
     ) -> Meal:
         """Сохраняет приём пищи."""
         with get_db_session() as session:
@@ -42,6 +43,7 @@ class MealRepository:
                 products_json=products_json or "[]",
                 api_details=api_details,
                 meal_type=normalize_meal_type(meal_type),
+                is_manually_corrected=is_manually_corrected,
             )
             session.add(meal)
             session.commit()
@@ -177,6 +179,7 @@ class MealRepository:
         carbs: float,
         products_json: Optional[str] = None,
         api_details: Optional[str] = None,
+        is_manually_corrected: Optional[bool] = None,
     ) -> bool:
         """Обновляет приём пищи."""
         with get_db_session() as session:
@@ -193,6 +196,8 @@ class MealRepository:
                 meal.protein = protein
                 meal.fat = fat
                 meal.carbs = carbs
+                if is_manually_corrected is not None:
+                    meal.is_manually_corrected = is_manually_corrected
                 if products_json:
                     meal.products_json = products_json
                 if api_details:
