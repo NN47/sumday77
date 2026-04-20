@@ -1762,15 +1762,16 @@ def _truncate_product_name(name: str, limit: int = 28) -> str:
 
 
 def _build_weight_products_keyboard(products: list[dict]) -> InlineKeyboardMarkup:
-    """Клавиатура выбора продукта для редактирования веса."""
+    """Клавиатура выбора продукта для редактирования."""
     rows: list[list[InlineKeyboardButton]] = []
     for idx, product in enumerate(products, start=1):
         name = _truncate_product_name(product.get("name") or "продукт")
         grams = float(product.get("grams") or 0)
+        corrected_badge = " ✏️" if bool(product.get("is_manually_corrected")) else ""
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{idx}. {name} — {grams:.0f} г",
+                    text=f"{idx}. {name} — {grams:.0f} г{corrected_badge}",
                     callback_data=f"meal_wsel:{idx - 1}",
                 )
             ]
@@ -1782,6 +1783,34 @@ def _build_weight_products_keyboard(products: list[dict]) -> InlineKeyboardMarku
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _render_product_actions_text(product: dict) -> str:
+    name = product.get("name") or "продукт"
+    grams = float(product.get("grams") or 0)
+    calories, protein, fat, carbs = _extract_product_macros(product)
+    lines = [
+        "✏️ Редактирование продукта",
+        "",
+        f"Продукт: {name}",
+        f"Вес: {grams:.0f} г",
+        f"🔥 {calories:.0f} ккал • 💪 {protein:.1f} • 🥑 {fat:.1f} • 🍞 {carbs:.1f}",
+    ]
+    if bool(product.get("is_manually_corrected")):
+        lines.append("✏️ КБЖУ скорректированы вручную")
+    lines.extend(["", "Выбери действие:"])
+    return "\n".join(lines)
+
+
+def _build_product_actions_keyboard(product_idx: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⚖️ Изменить вес", callback_data=f"meal_pact_weight:{product_idx}")],
+            [InlineKeyboardButton(text="🧮 Исправить КБЖУ", callback_data=f"meal_pact_kbju:{product_idx}")],
+            [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"meal_wdelask:{product_idx}")],
+            [InlineKeyboardButton(text="⬅️ К списку продуктов", callback_data="meal_wback_list")],
+        ]
+    )
 
 
 def _build_weight_editor_keyboard(product_idx: int) -> InlineKeyboardMarkup:
@@ -1881,6 +1910,55 @@ def _apply_product_weight(product: dict, new_weight: float) -> bool:
     return True
 
 
+def _apply_product_manual_macros(
+    product: dict,
+    *,
+    calories: Optional[float] = None,
+    protein: Optional[float] = None,
+    fat: Optional[float] = None,
+    carbs: Optional[float] = None,
+) -> bool:
+    """Обновляет выбранные поля КБЖУ без изменения веса и пересчитывает значения на 100 г."""
+    grams = float(product.get("grams") or 0)
+    if grams <= 0:
+        return False
+
+    current_calories, current_protein, current_fat, current_carbs = _extract_product_macros(product)
+    new_calories = current_calories if calories is None else float(calories)
+    new_protein = current_protein if protein is None else float(protein)
+    new_fat = current_fat if fat is None else float(fat)
+    new_carbs = current_carbs if carbs is None else float(carbs)
+
+    product["kcal"] = new_calories
+    product["protein"] = new_protein
+    product["fat"] = new_fat
+    product["carbs"] = new_carbs
+    product["calories"] = new_calories
+    product["protein_g"] = new_protein
+    product["fat_total_g"] = new_fat
+    product["carbohydrates_total_g"] = new_carbs
+    product["calories_per_100g"] = (new_calories / grams) * 100
+    product["protein_per_100g"] = (new_protein / grams) * 100
+    product["fat_per_100g"] = (new_fat / grams) * 100
+    product["carbs_per_100g"] = (new_carbs / grams) * 100
+    product["is_manually_corrected"] = True
+    return True
+
+
+def _parse_kbju_bulk_input(raw_text: str) -> Optional[tuple[float, float, float, float]]:
+    normalized = (raw_text or "").strip().replace(",", ".")
+    chunks = [part for part in normalized.split() if part]
+    if len(chunks) != 4:
+        return None
+    try:
+        values = tuple(float(part) for part in chunks)
+    except ValueError:
+        return None
+    if any(value < 0 for value in values):
+        return None
+    return values  # calories, protein, fat, carbs
+
+
 def _build_meal_update_payload(products: list[dict]) -> tuple[dict, str]:
     """Формирует суммарные КБЖУ и api_details для сохранения приёма пищи."""
     totals = {
@@ -1923,6 +2001,49 @@ def _render_weight_editor_text(product: dict, draft_weight: Optional[float] = No
         lines.append(f"Новый вес: {draft_weight:.0f} г")
 
     lines.extend(["", "Выбери действие:"])
+    return "\n".join(lines)
+
+
+def _build_kbju_editor_keyboard(product_idx: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔥 Калории", callback_data=f"meal_kfield:{product_idx}:calories"),
+                InlineKeyboardButton(text="💪 Белки", callback_data=f"meal_kfield:{product_idx}:protein"),
+            ],
+            [
+                InlineKeyboardButton(text="🥑 Жиры", callback_data=f"meal_kfield:{product_idx}:fat"),
+                InlineKeyboardButton(text="🍞 Углеводы", callback_data=f"meal_kfield:{product_idx}:carbs"),
+            ],
+            [InlineKeyboardButton(text="✏️ Изменить всё сразу", callback_data=f"meal_kall:{product_idx}")],
+            [InlineKeyboardButton(text="✅ Сохранить", callback_data=f"meal_ksave:{product_idx}")],
+            [InlineKeyboardButton(text="↩️ Назад", callback_data=f"meal_kback:{product_idx}")],
+        ]
+    )
+
+
+def _render_kbju_editor_text(product: dict, draft: Optional[dict] = None) -> str:
+    name = product.get("name") or "продукт"
+    grams = float(product.get("grams") or 0)
+    calories, protein, fat, carbs = _extract_product_macros(product)
+    if draft:
+        calories = float(draft.get("calories", calories))
+        protein = float(draft.get("protein", protein))
+        fat = float(draft.get("fat", fat))
+        carbs = float(draft.get("carbs", carbs))
+    lines = [
+        "🧮 Ручная правка КБЖУ",
+        "",
+        f"Продукт: {name}",
+        f"Текущий вес: {grams:.0f} г",
+        "",
+        f"🔥 Калории: {calories:.0f} ккал",
+        f"💪 Белки: {protein:.1f} г",
+        f"🥑 Жиры: {fat:.1f} г",
+        f"🍞 Углеводы: {carbs:.1f} г",
+    ]
+    if bool(product.get("is_manually_corrected")) or draft:
+        lines.append("✏️ КБЖУ скорректированы вручную")
     return "\n".join(lines)
 
 
@@ -1986,12 +2107,13 @@ async def edit_last_meal(message: Message, state: FSMContext):
         target_date=meal.date.isoformat(),
         saved_products=products,
         weight_drafts={},
+        kbju_drafts={},
         editing_product_idx=None,
     )
 
     # Сразу переходим к изменению веса продукта
     await message.answer(
-        "⚖️ Выбери продукт, вес которого хочешь изменить:",
+        "✏️ Выбери продукт для редактирования:",
         reply_markup=_build_weight_products_keyboard(products),
     )
 
@@ -2036,12 +2158,13 @@ async def _start_meal_edit_flow(
         target_date=target_date.isoformat(),
         saved_products=products,
         weight_drafts={},
+        kbju_drafts={},
         editing_product_idx=None,
     )
     await state.set_state(MealEntryStates.editing_meal_weight)
 
     await message.answer(
-        "⚖️ Выбери продукт, вес которого хочешь изменить:",
+        "✏️ Выбери продукт для редактирования:",
         reply_markup=_build_weight_products_keyboard(products),
     )
 
@@ -2151,6 +2274,7 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
         target_date=target_date.isoformat(),
         saved_products=merged_products,
         weight_drafts={},
+        kbju_drafts={},
         editing_product_idx=None,
         grouped_meal_ids=[m.id for m in meals_for_type],
         grouped_meal_type=meal_type,
@@ -2160,7 +2284,7 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
     meal_title = display_meal_type(meal_type)
     await callback.message.answer(
         f"⚖️ Нашёл несколько записей в приёме пищи «{meal_title}» за день — показываю объединённый список продуктов.\n"
-        "Выбери продукт, вес которого хочешь изменить:",
+        "Выбери продукт для редактирования:",
         reply_markup=_build_weight_products_keyboard(merged_products),
     )
 
@@ -2271,31 +2395,14 @@ async def handle_edit_type_choice(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    if text == "⚖️ Изменить вес продукта":
+    if text in {"⚖️ Изменить вес", "🧮 Исправить КБЖУ"}:
         await state.set_state(MealEntryStates.editing_meal_weight)
-        await state.update_data(weight_drafts={}, editing_product_idx=None)
+        await state.update_data(weight_drafts={}, kbju_drafts={}, editing_product_idx=None)
 
         await message.answer(
-            "⚖️ Выбери продукт, вес которого хочешь изменить:",
+            "✏️ Выбери продукт для редактирования:",
             reply_markup=_build_weight_products_keyboard(saved_products),
         )
-        
-    elif text == "📝 Изменить состав продуктов":
-        # Переходим к редактированию состава через ИИ
-        await state.set_state(MealEntryStates.editing_meal_composition)
-        
-        edit_lines = ["✏️ Изменение состава продуктов\n\nТекущий состав:"]
-        for i, p in enumerate(saved_products, 1):
-            name = p.get("name") or "продукт"
-            grams = p.get("grams", 0)
-            edit_lines.append(f"{i}. {name}, {grams:.0f} г")
-        
-        edit_lines.append("\nВведи новый состав текстом (как в «Ввести приём пищи»):")
-        edit_lines.append("Например: 200 г курицы, 100 г йогурта, 30 г орехов")
-        edit_lines.append("\nИИ автоматически определит КБЖУ на основе типичных значений продуктов.")
-        
-        push_menu_stack(message.bot, kbju_after_meal_menu)
-        await message.answer("\n".join(edit_lines), reply_markup=kbju_after_meal_menu)
     else:
         await message.answer("Пожалуйста, выбери вариант с кнопки.")
 
@@ -2313,7 +2420,7 @@ async def handle_meal_weight_edit(message: Message, state: FSMContext):
         )
         return
 
-    await message.answer("Используй кнопки ниже для изменения веса продукта 👇")
+    await message.answer("Используй кнопки ниже для редактирования продукта 👇")
 
 
 @router.callback_query(lambda c: c.data == "meal_wback_edit")
@@ -2352,45 +2459,82 @@ async def meal_weight_back_to_products(callback: CallbackQuery, state: FSMContex
     await state.set_state(MealEntryStates.editing_meal_weight)
     try:
         await callback.message.edit_text(
-            "⚖️ Выбери продукт, вес которого хочешь изменить:",
+            "✏️ Выбери продукт для редактирования:",
             reply_markup=_build_weight_products_keyboard(saved_products),
         )
     except TelegramBadRequest:
         await callback.message.answer(
-            "⚖️ Выбери продукт, вес которого хочешь изменить:",
+            "✏️ Выбери продукт для редактирования:",
             reply_markup=_build_weight_products_keyboard(saved_products),
         )
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_wsel:"))
 async def meal_weight_select_product(callback: CallbackQuery, state: FSMContext):
-    """Открывает экран изменения веса выбранного продукта."""
+    """Открывает меню действий для выбранного продукта."""
     await callback.answer()
     product_idx = int(callback.data.split(":")[1])
     data = await state.get_data()
     saved_products = data.get("saved_products", [])
-    drafts = data.get("weight_drafts", {})
 
     if product_idx < 0 or product_idx >= len(saved_products):
         await callback.answer("Не нашёл продукт", show_alert=True)
         return
 
     product = saved_products[product_idx]
-    draft_weight = drafts.get(str(product_idx))
-
     await state.set_state(MealEntryStates.editing_meal_weight)
     await state.update_data(editing_product_idx=product_idx)
 
     try:
         await callback.message.edit_text(
-            _render_weight_editor_text(product, draft_weight=draft_weight),
-            reply_markup=_build_weight_editor_keyboard(product_idx),
+            _render_product_actions_text(product),
+            reply_markup=_build_product_actions_keyboard(product_idx),
         )
     except TelegramBadRequest:
         await callback.message.answer(
-            _render_weight_editor_text(product, draft_weight=draft_weight),
-            reply_markup=_build_weight_editor_keyboard(product_idx),
+            _render_product_actions_text(product),
+            reply_markup=_build_product_actions_keyboard(product_idx),
         )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_pact_weight:"))
+async def meal_product_open_weight_editor(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    saved_products = data.get("saved_products", [])
+    drafts = data.get("weight_drafts", {})
+    if product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не нашёл продукт", show_alert=True)
+        return
+    product = saved_products[product_idx]
+    draft_weight = drafts.get(str(product_idx))
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    await state.update_data(editing_product_idx=product_idx)
+    await callback.message.edit_text(
+        _render_weight_editor_text(product, draft_weight=draft_weight),
+        reply_markup=_build_weight_editor_keyboard(product_idx),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_pact_kbju:"))
+async def meal_product_open_kbju_editor(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    saved_products = data.get("saved_products", [])
+    kbju_drafts = data.get("kbju_drafts", {})
+    if product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не нашёл продукт", show_alert=True)
+        return
+    product = saved_products[product_idx]
+    draft = kbju_drafts.get(str(product_idx))
+    await state.set_state(MealEntryStates.editing_meal_kbju)
+    await state.update_data(editing_product_idx=product_idx)
+    await callback.message.edit_text(
+        _render_kbju_editor_text(product, draft=draft),
+        reply_markup=_build_kbju_editor_keyboard(product_idx),
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_wchg:"))
@@ -2476,6 +2620,220 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
     )
 
 
+@router.message(MealEntryStates.editing_meal_kbju)
+async def handle_meal_kbju_edit(message: Message):
+    await message.answer("Используй кнопки ниже, чтобы исправить КБЖУ 👇")
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_kfield:"))
+async def meal_kbju_edit_single_field_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    _, raw_idx, field = callback.data.split(":")
+    product_idx = int(raw_idx)
+    field_labels = {
+        "calories": "калории",
+        "protein": "белки",
+        "fat": "жиры",
+        "carbs": "углеводы",
+    }
+    if field not in field_labels:
+        await callback.answer("Неизвестное поле", show_alert=True)
+        return
+    await state.set_state(MealEntryStates.editing_meal_kbju_single_input)
+    await state.update_data(editing_product_idx=product_idx, editing_macro_field=field)
+    await callback.message.answer(
+        f"Введи новое значение для «{field_labels[field]}».\n"
+        "Пример: 14.5"
+    )
+
+
+@router.message(MealEntryStates.editing_meal_kbju_single_input)
+async def meal_kbju_edit_single_field_value(message: Message, state: FSMContext):
+    raw_value = (message.text or "").strip().replace(",", ".")
+    try:
+        value = float(raw_value)
+    except ValueError:
+        await message.answer("Пожалуйста, введи число. Пример: 12.5")
+        return
+    if value < 0:
+        await message.answer("Значение не может быть отрицательным.")
+        return
+
+    data = await state.get_data()
+    product_idx = data.get("editing_product_idx")
+    field = data.get("editing_macro_field")
+    saved_products = data.get("saved_products", [])
+    kbju_drafts = data.get("kbju_drafts", {})
+    if product_idx is None or product_idx < 0 or product_idx >= len(saved_products):
+        await message.answer("❌ Не удалось найти продукт для редактирования.")
+        return
+
+    product = saved_products[product_idx]
+    current_cal, current_protein, current_fat, current_carbs = _extract_product_macros(product)
+    draft = dict(kbju_drafts.get(str(product_idx), {}))
+    draft.setdefault("calories", current_cal)
+    draft.setdefault("protein", current_protein)
+    draft.setdefault("fat", current_fat)
+    draft.setdefault("carbs", current_carbs)
+    draft[field] = value
+    kbju_drafts[str(product_idx)] = draft
+
+    await state.set_state(MealEntryStates.editing_meal_kbju)
+    await state.update_data(kbju_drafts=kbju_drafts)
+    await message.answer(
+        _render_kbju_editor_text(product, draft=draft),
+        reply_markup=_build_kbju_editor_keyboard(product_idx),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_kall:"))
+async def meal_kbju_edit_all_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    await state.set_state(MealEntryStates.editing_meal_kbju_all_input)
+    await state.update_data(editing_product_idx=product_idx)
+    await callback.message.answer(
+        "Введи 4 значения в формате:\n"
+        "ккал белки жиры углеводы\n"
+        "Пример: 120 14 5 3"
+    )
+
+
+@router.message(MealEntryStates.editing_meal_kbju_all_input)
+async def meal_kbju_edit_all_value(message: Message, state: FSMContext):
+    parsed = _parse_kbju_bulk_input(message.text or "")
+    if not parsed:
+        await message.answer(
+            "Не понял формат.\n"
+            "Нужно: ккал белки жиры углеводы\n"
+            "Пример: 120 14 5 3"
+        )
+        return
+
+    calories, protein, fat, carbs = parsed
+    data = await state.get_data()
+    product_idx = data.get("editing_product_idx")
+    saved_products = data.get("saved_products", [])
+    kbju_drafts = data.get("kbju_drafts", {})
+    if product_idx is None or product_idx < 0 or product_idx >= len(saved_products):
+        await message.answer("❌ Не удалось найти продукт для редактирования.")
+        return
+    product = saved_products[product_idx]
+    kbju_drafts[str(product_idx)] = {
+        "calories": calories,
+        "protein": protein,
+        "fat": fat,
+        "carbs": carbs,
+    }
+    await state.set_state(MealEntryStates.editing_meal_kbju)
+    await state.update_data(kbju_drafts=kbju_drafts)
+    await message.answer(
+        _render_kbju_editor_text(product, draft=kbju_drafts[str(product_idx)]),
+        reply_markup=_build_kbju_editor_keyboard(product_idx),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_kback:"))
+async def meal_kbju_back_to_product_actions(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    saved_products = data.get("saved_products", [])
+    if product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не нашёл продукт", show_alert=True)
+        return
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    await callback.message.edit_text(
+        _render_product_actions_text(saved_products[product_idx]),
+        reply_markup=_build_product_actions_keyboard(product_idx),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_ksave:"))
+async def meal_kbju_save(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    user_id = str(callback.from_user.id)
+    data = await state.get_data()
+    meal_id = data.get("meal_id")
+    target_date_str = data.get("target_date", date.today().isoformat())
+    saved_products = data.get("saved_products", [])
+    kbju_drafts = data.get("kbju_drafts", {})
+
+    if product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не удалось сохранить", show_alert=True)
+        return
+
+    draft = kbju_drafts.get(str(product_idx))
+    if not draft:
+        await callback.answer("Сначала измени хотя бы одно значение", show_alert=True)
+        return
+
+    product = saved_products[product_idx]
+    if not _apply_product_manual_macros(
+        product,
+        calories=draft.get("calories"),
+        protein=draft.get("protein"),
+        fat=draft.get("fat"),
+        carbs=draft.get("carbs"),
+    ):
+        await callback.answer("Не удалось обновить КБЖУ", show_alert=True)
+        return
+
+    source_meal_id = int(product.get("_source_meal_id") or meal_id or 0)
+    if not source_meal_id:
+        await callback.answer("Не удалось определить запись для обновления", show_alert=True)
+        return
+    source_products = [
+        _strip_source_meta(p)
+        for p in saved_products
+        if int(p.get("_source_meal_id") or source_meal_id) == source_meal_id
+    ]
+    totals, api_details = _build_meal_update_payload(source_products)
+    meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
+    raw_query = meal.raw_query if meal and hasattr(meal, "raw_query") else None
+    changed_meal_type = normalize_meal_type(getattr(meal, "meal_type", None)) if meal else None
+    success = MealRepository.update_meal(
+        meal_id=source_meal_id,
+        user_id=user_id,
+        description=raw_query,
+        calories=totals["calories"],
+        protein=totals["protein_g"],
+        fat=totals["fat_total_g"],
+        carbs=totals["carbohydrates_total_g"],
+        products_json=json.dumps(source_products),
+        api_details=api_details,
+        is_manually_corrected=True,
+    )
+    if not success:
+        await callback.answer("Не удалось обновить запись", show_alert=True)
+        return
+
+    kbju_drafts.pop(str(product_idx), None)
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    await state.update_data(saved_products=saved_products, kbju_drafts=kbju_drafts)
+    await callback.message.edit_text(
+        _render_product_actions_text(product),
+        reply_markup=_build_product_actions_keyboard(product_idx),
+    )
+    await callback.message.answer("✅ КБЖУ сохранены без изменения веса.")
+
+    if isinstance(target_date_str, str):
+        try:
+            target_date = date.fromisoformat(target_date_str)
+        except ValueError:
+            target_date = date.today()
+    else:
+        target_date = date.today()
+    await _render_day_meals_messages(
+        callback.message,
+        user_id,
+        target_date,
+        include_back=True,
+        changed_meal_type=changed_meal_type,
+    )
+
+
 @router.callback_query(lambda c: c.data.startswith("meal_wsave:"))
 async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
     """Сохраняет новый вес выбранного продукта и пересчитывает КБЖУ."""
@@ -2526,6 +2884,7 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
         carbs=totals["carbohydrates_total_g"],
         products_json=json.dumps(source_products),
         api_details=api_details,
+        is_manually_corrected=bool(any(bool(p.get("is_manually_corrected")) for p in source_products)),
     )
     if not success:
         await callback.answer("Не удалось обновить запись", show_alert=True)
@@ -2535,7 +2894,7 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
     await state.update_data(saved_products=saved_products, weight_drafts=drafts)
     await callback.answer("✅ Вес продукта обновлён")
     await callback.message.edit_text(
-        "⚖️ Выбери продукт, вес которого хочешь изменить:",
+        "✏️ Выбери продукт для редактирования:",
         reply_markup=_build_weight_products_keyboard(saved_products),
     )
 
@@ -2578,16 +2937,15 @@ async def meal_weight_delete_back(callback: CallbackQuery, state: FSMContext):
     product_idx = int(callback.data.split(":")[1])
     data = await state.get_data()
     saved_products = data.get("saved_products", [])
-    drafts = data.get("weight_drafts", {})
     if product_idx < 0 or product_idx >= len(saved_products):
         await callback.answer("Не нашёл продукт", show_alert=True)
         return
 
     product = saved_products[product_idx]
-    draft_weight = drafts.get(str(product_idx))
+    await state.set_state(MealEntryStates.editing_meal_weight)
     await callback.message.edit_text(
-        _render_weight_editor_text(product, draft_weight=draft_weight),
-        reply_markup=_build_weight_editor_keyboard(product_idx),
+        _render_product_actions_text(product),
+        reply_markup=_build_product_actions_keyboard(product_idx),
     )
 
 
@@ -2638,7 +2996,7 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
         else:
             await state.update_data(saved_products=saved_products, weight_drafts=drafts)
             await callback.message.edit_text(
-                "⚖️ Выбери продукт, вес которого хочешь изменить:",
+                "✏️ Выбери продукт для редактирования:",
                 reply_markup=_build_weight_products_keyboard(saved_products),
             )
             await callback.message.answer("✅ Продукт удалён")
@@ -2656,6 +3014,7 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
             carbs=totals["carbohydrates_total_g"],
             products_json=json.dumps(source_products),
             api_details=api_details,
+            is_manually_corrected=bool(any(bool(p.get("is_manually_corrected")) for p in source_products)),
         )
         if not success:
             await callback.answer("Не удалось обновить запись", show_alert=True)
@@ -2663,7 +3022,7 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
 
         await state.update_data(saved_products=saved_products, weight_drafts=drafts)
         await callback.message.edit_text(
-            "⚖️ Выбери продукт, вес которого хочешь изменить:",
+            "✏️ Выбери продукт для редактирования:",
             reply_markup=_build_weight_products_keyboard(saved_products),
         )
         await callback.message.answer("✅ Продукт удалён")

@@ -124,6 +124,9 @@ def _extract_product_lines(meal: Meal) -> list[str]:
                 f"• {html.escape(name)}"
             )
             lines.append(f"{cal:.0f} ккал (Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})")
+
+        if bool(p.get("is_manually_corrected")):
+            lines.append("✏️ КБЖУ скорректированы вручную")
     return lines
 
 
@@ -155,12 +158,17 @@ def format_meal_block(meal_type: str, items: list[Meal]) -> list[str]:
     first_product = True
     for meal in items:
         product_lines = _extract_product_lines(meal)
-        for i in range(0, len(product_lines), 2):
+        i = 0
+        while i < len(product_lines):
             if not first_product:
                 lines.append("")
             lines.append(product_lines[i])
             if i + 1 < len(product_lines):
                 lines.append(product_lines[i + 1])
+            i += 2
+            while i < len(product_lines) and product_lines[i].startswith("✏️ "):
+                lines.append(product_lines[i])
+                i += 1
             first_product = False
 
     lines.append("")
