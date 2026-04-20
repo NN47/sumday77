@@ -1796,7 +1796,7 @@ def _render_product_actions_text(product: dict) -> str:
         "",
         f"Продукт: {name}",
         f"Вес: {grams:.0f} г",
-        f"🔥 {calories:.0f} ккал • 💪 {protein:.1f} • 🥑 {fat:.1f} • 🍞 {carbs:.1f}",
+        f"🔥 {calories:.0f} ккал • 💪 {protein:.1f} • 🥑 {fat:.1f} • {CARBS_EMOJI} {carbs:.1f}",
     ]
     if bool(product.get("is_manually_corrected")):
         lines.append("✏️ КБЖУ скорректированы вручную")
