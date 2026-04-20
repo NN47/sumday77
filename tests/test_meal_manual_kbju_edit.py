@@ -2,7 +2,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from handlers.meals import _apply_product_manual_macros, _parse_kbju_bulk_input
+from handlers.meals import (
+    _apply_product_manual_macros,
+    _build_kbju_editor_keyboard,
+    _build_kbju_field_editor_keyboard,
+    _parse_kbju_bulk_input,
+)
+from utils.emoji_map import EMOJI_MAP
 from utils.meal_formatters import _extract_product_lines
 
 
@@ -52,3 +58,22 @@ def test_extract_product_lines_contains_manual_correction_label():
     lines = _extract_product_lines(meal)
 
     assert "✏️ КБЖУ скорректированы вручную" in lines
+
+
+def test_kbju_editor_uses_shared_carbs_emoji():
+    keyboard = _build_kbju_editor_keyboard(0)
+    texts = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert f"{EMOJI_MAP['carbs']} Углеводы" in texts
+    assert "🍞 Углеводы" not in texts
+
+
+def test_kbju_field_editor_has_expected_steps():
+    kcal_keyboard = _build_kbju_field_editor_keyboard(0, "calories")
+    kcal_rows = [[button.text for button in row] for row in kcal_keyboard.inline_keyboard]
+    assert kcal_rows[0] == ["-100", "-50", "-10"]
+    assert kcal_rows[1] == ["+10", "+50", "+100"]
+
+    protein_keyboard = _build_kbju_field_editor_keyboard(0, "protein")
+    protein_rows = [[button.text for button in row] for row in protein_keyboard.inline_keyboard]
+    assert protein_rows[0] == ["-10", "-5", "-1"]
+    assert protein_rows[1] == ["+1", "+5", "+10"]
