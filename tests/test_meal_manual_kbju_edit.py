@@ -65,6 +65,7 @@ def test_kbju_editor_uses_shared_carbs_emoji():
     texts = [button.text for row in keyboard.inline_keyboard for button in row]
     assert f"{EMOJI_MAP['carbs']} Углеводы" in texts
     assert "🍞 Углеводы" not in texts
+    assert "✅ Сохранить" not in texts
 
 
 def test_kbju_field_editor_has_expected_steps():
