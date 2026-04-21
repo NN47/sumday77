@@ -56,6 +56,12 @@ DAILY_ANALYSIS_REQUIRED_HEADERS = [
     "⚖️ Вес",
     "📈 Гипотеза",
 ]
+DAILY_ANALYSIS_GIGACHAT_REQUIRED_HEADERS = [
+    "🏋️ Тренировки",
+    "🍽️ Питание",
+    "⚖️ Вес",
+    "📈 Гипотеза",
+]
 DAILY_ANALYSIS_BANNED_PHRASES = [
     "как ии",
     "возможно я ошибаюсь",
@@ -215,7 +221,7 @@ def _build_daily_analysis_fallback(
     return report
 
 
-def _is_valid_daily_analysis_text(text: str) -> bool:
+def _is_valid_daily_analysis_text(text: str, backend: str = "openrouter") -> bool:
     stripped = (text or "").strip()
     if not stripped:
         return False
@@ -224,8 +230,11 @@ def _is_valid_daily_analysis_text(text: str) -> bool:
     lower = stripped.lower()
     if any(phrase in lower for phrase in DAILY_ANALYSIS_BANNED_PHRASES):
         return False
+    required_headers = (
+        DAILY_ANALYSIS_GIGACHAT_REQUIRED_HEADERS if backend == "gigachat" else DAILY_ANALYSIS_REQUIRED_HEADERS
+    )
     positions = []
-    for header in DAILY_ANALYSIS_REQUIRED_HEADERS:
+    for header in required_headers:
         idx = stripped.find(header)
         if idx < 0:
             return False
@@ -378,6 +387,7 @@ async def generate_activity_analysis(
     total_protein = sum(m.protein or 0 for m in meals)
     total_fat = sum(m.fat or 0 for m in meals)
     total_carbs = sum(m.carbs or 0 for m in meals)
+    total_net_calories = total_calories - total_workout_calories
     
     # 🔹 Цель / норма КБЖУ и проценты выполнения
     settings = MealRepository.get_kbju_settings(user_id)
@@ -397,7 +407,8 @@ async def generate_activity_analysis(
             f"{EMOJI_MAP['calories']} Калории: {total_calories:.0f} / {goal_calories:.0f} ккал ({calories_percent:.0f}%), "
             f"{EMOJI_MAP['protein']} Белки: {total_protein:.1f} / {goal_protein:.1f} г ({protein_percent:.0f}%), "
             f"{EMOJI_MAP['fat']} Жиры: {total_fat:.1f} / {goal_fat:.1f} г ({fat_percent:.0f}%), "
-            f"{EMOJI_MAP['carbs']} Углеводы: {total_carbs:.1f} / {goal_carbs:.1f} г ({carbs_percent:.0f}%)."
+            f"{EMOJI_MAP['carbs']} Углеводы: {total_carbs:.1f} / {goal_carbs:.1f} г ({carbs_percent:.0f}%). "
+            f"С учётом расхода на тренировках: ~{total_net_calories:.0f} ккал."
         )
         
         kbju_goal_summary = (
@@ -478,6 +489,8 @@ async def generate_activity_analysis(
                 f"активных добавок: {len(supplement_names)} ({', '.join(supplement_names[:3])}"
                 f"{'...' if len(supplement_names) > 3 else ''})."
             )
+
+    today_supplement_entries = SupplementRepository.get_entries_for_day(user_id, end_date)
     
     # 🔹 Процедуры за период
     procedure_count = 0
@@ -685,6 +698,8 @@ async def generate_activity_analysis(
         goal_carb = settings.carbs if settings else 0
 
         calories_percent_day = _safe_percent(total_calories, goal_cal)
+        net_calories_day = total_calories - today_workout_kcal
+        net_calories_percent_day = _safe_percent(net_calories_day, goal_cal)
         protein_percent_day = _safe_percent(total_protein, goal_pro)
         fat_percent_day = _safe_percent(total_fat, goal_fat_day)
         carbs_percent_day = _safe_percent(total_carbs, goal_carb)
@@ -701,6 +716,12 @@ async def generate_activity_analysis(
             "🍱 Питание за день",
             f"Цель: {_goal_label_ru(settings.goal if settings else None)}",
             fmt_macro_line("Калории", total_calories, goal_cal, calories_percent_day, unit="ккал"),
+            f"• С учётом расхода на тренировке: ~{net_calories_day:.0f} ккал"
+            + (
+                f" ({net_calories_percent_day}%)"
+                if goal_cal > 0 and net_calories_percent_day is not None
+                else ""
+            ),
             fmt_macro_line("Белки", total_protein, goal_pro, protein_percent_day),
             fmt_macro_line("Жиры", total_fat, goal_fat_day, fat_percent_day),
             fmt_macro_line("Углеводы", total_carbs, goal_carb, carbs_percent_day),
@@ -720,30 +741,38 @@ async def generate_activity_analysis(
                 weight_lines.append(
                     f"• Изменение относительно предыдущего замера: {'+' if delta >= 0 else ''}{delta:.1f} кг"
                 )
+                if delta <= -0.3:
+                    weight_lines.append("• Динамика: умеренное снижение, без резких колебаний")
+                elif delta >= 0.3:
+                    weight_lines.append("• Динамика: небольшой рост, возможно вклад воды/соли/нагрузки")
+                else:
+                    weight_lines.append("• Динамика: без существенных изменений")
             else:
                 weight_lines.append("• Изменение относительно предыдущего замера: недостаточно данных")
+                weight_lines.append("• По тренду пока рано делать уверенный вывод")
         elif trend_weights:
             latest_weight = trend_weights[0]
             weight_lines.extend([
                 f"• Последний замер: {latest_weight.value} кг",
                 f"• Дата: {latest_weight.date.strftime('%d.%m.%Y')}",
+                "• По тренду пока недостаточно данных для уверенного вывода",
             ])
         else:
             weight_lines.append("• Нет записей по весу")
 
         # 📊 Итог дня
         summary_lines = ["📊 Итог дня"]
-        if calories_percent_day is None:
+        if net_calories_percent_day is None:
             summary_lines.append("Данных по цели питания пока недостаточно для точной оценки дня.")
         else:
-            if calories_percent_day < 60:
-                summary_lines.append("Сегодня получился очень низкий калораж.")
-            elif calories_percent_day < 85:
-                summary_lines.append("Сегодня калораж ниже целевого уровня.")
-            elif calories_percent_day <= 115:
-                summary_lines.append("По калориям день близко к плану.")
+            if net_calories_percent_day < 60:
+                summary_lines.append("С учётом активности итоговый калораж получился очень низким.")
+            elif net_calories_percent_day < 85:
+                summary_lines.append("С учётом активности калораж ниже целевого уровня.")
+            elif net_calories_percent_day <= 115:
+                summary_lines.append("С учётом расхода энергии день по калориям близко к плану.")
             else:
-                summary_lines.append("Сегодня калораж выше целевого уровня.")
+                summary_lines.append("Даже с учётом активности калораж выше целевого уровня.")
 
             macro_parts = []
             if protein_percent_day is not None:
@@ -779,8 +808,9 @@ async def generate_activity_analysis(
         focus_lines = ["🎯 Фокус на завтра", *[f"• {item}" for item in focus_items]]
 
         # 📝 Заметки дня
-        notes_lines = ["📝 Заметки дня"]
+        notes_lines: list[str] = []
         if note_day_entry:
+            notes_lines = ["📝 Заметки дня"]
             notes_lines.append(
                 f"• Оценка дня: {int(note_day_entry.day_rating or 0)}/5"
             )
@@ -788,8 +818,20 @@ async def generate_activity_analysis(
                 notes_lines.append(f"• Факторы: {', '.join(note_day_entry.factors)}")
             if note_day_entry.text:
                 notes_lines.append(f"• Комментарий: {note_day_entry.text}")
-        else:
-            notes_lines.append("• Заметка за сегодня не заполнена")
+
+        supplements_lines: list[str] = []
+        if today_supplement_entries:
+            supplements_lines = ["💊 Добавки"]
+            unique_names = []
+            for entry in today_supplement_entries:
+                name = entry.get("supplement_name")
+                if name and name not in unique_names:
+                    unique_names.append(name)
+            supplements_lines.append(
+                f"• Отмечено приёмов: {len(today_supplement_entries)}"
+            )
+            supplements_lines.append(f"• Добавки: {', '.join(unique_names[:5])}")
+            supplements_lines.append("• Это поддерживает регулярность режима без лишнего давления")
 
         report_lines = [
             "Вот что получилось за день:",
@@ -803,8 +845,16 @@ async def generate_activity_analysis(
             *summary_lines,
             "",
             *focus_lines,
-            "",
-            *notes_lines,
+            *(
+                ["", *notes_lines]
+                if notes_lines
+                else []
+            ),
+            *(
+                ["", *supplements_lines]
+                if supplements_lines
+                else []
+            ),
         ]
         daily_draft = "\n".join(report_lines)
     
@@ -905,6 +955,50 @@ async def generate_activity_analysis(
 Рекомендации делай в стиле кнопки "🔥 Философия Sumday77", учитывай её принципы, но не вставляй текст или списки из неё дословно.
 """
 
+    if backend == "gigachat":
+        prompt = f"""
+Ты — бот-ассистент Sumday77. Пиши дружелюбно, компактно и без канцелярита.
+
+Ключевые правила:
+- Главный фокус питания: сначала калории, потом белок. Жиры/углеводы вторичны.
+- При анализе калорий за день обязательно учитывай сожжённые калории на тренировке.
+  Используй интерпретацию через «фактическую дневную ситуацию», а не через жёсткое сравнение сырых калорий с целью.
+- Вес: анализируй динамику (текущий vs предыдущий замер + короткая интерпретация: снижение/рост/без существенных изменений).
+- Если данных по весу мало, напиши нейтрально, что тренд пока неустойчив.
+- Если есть заметки дня — извлекай смысл (самочувствие, голод/аппетит, усталость, срывы, отёки, стресс, сон и др.) и добавляй короткий вывод.
+- Если есть добавки — кратко и спокойно отметь факт соблюдения этого элемента режима, без мед. назначений.
+- Пустые разделы не выводи.
+- {gender_instruction}
+
+Начни отчёт так:
+"Привет! Я на связи и уже подготовил твой отчёт {period_name.lower()}👇"
+
+Данные пользователя за период:
+{summary}
+
+Черновик сводки за день (опирайся на факты, но перепиши живым языком):
+{daily_draft if daily_draft else "н/д"}
+
+Структурированный input по тренировкам:
+{json.dumps(workout_ai_input, ensure_ascii=False, indent=2)}
+
+Ожидаемая структура (показывай только непустые блоки):
+<b>🏋️ Тренировки</b>
+<b>🍽️ Питание</b>
+<b>⚖️ Вес</b>
+<b>📝 Заметки</b> (если есть)
+<b>💊 Добавки</b> (если есть)
+<b>📈 Гипотеза</b>
+<b>Краткий вывод</b>
+<b>План на завтра</b> (3-5 нумерованных действий)
+
+Ограничения:
+1) Без служебных фраз модели.
+2) Если данных по разделу нет — не выдумывай.
+3) Гипотеза строго в формате: «Если [действие], то [эффект], потому что [причина].»
+4) Для отчёта за день цель: 600–1500 символов.
+"""
+
     async def _run_backend() -> str:
         if backend == "gemini":
             if gemini_service is None:
@@ -928,10 +1022,10 @@ async def generate_activity_analysis(
     result = await _run_backend()
     if days_count == 1 and backend in {"openrouter", "gigachat"}:
         for _ in range(2):
-            if _is_valid_daily_analysis_text(result):
+            if _is_valid_daily_analysis_text(result, backend=backend):
                 break
             result = await _run_backend()
-        if not _is_valid_daily_analysis_text(result):
+        if not _is_valid_daily_analysis_text(result, backend=backend):
             logger.warning("Activity daily analysis validation failed for backend=%s, fallback will be used", backend)
             result = _build_daily_analysis_fallback(
                 total_calories=total_calories,
