@@ -146,7 +146,7 @@ def format_meal_totals(meal_type: str, totals: dict[str, float]) -> list[str]:
         f"<b>Итого {meal_ui['totals_label']}:</b>",
         "",
         f"🔥 <b>{totals['calories']:.0f} ккал</b>",
-        f"💪 <b>Белки: {totals['protein']:.0f} г</b> 🥑 <b>Жиры: {totals['fat']:.0f} г</b> 🍩 <b>Углеводы: {totals['carbs']:.0f} г</b>",
+        f"💪 <b>Белки: {totals['protein']:.0f} г</b> 🥑 <b>Жиры: {totals['fat']:.0f} г</b> 🍩 <b>Углеводы: {totals['carbs']:.0f} г</b>",
     ]
 
 
