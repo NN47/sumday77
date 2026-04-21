@@ -143,9 +143,9 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
     
     if not workouts:
         return (
-            "👣 Шаги: 0 (~0 ккал)\n"
-            "💪 Упражнения: 0 записей (~0 ккал)\n"
-            "🔥 Итого за день: ~0 ккал"
+            "👣 <b>Шаги:</b> 0 (~0 ккал)\n"
+            "💪 <b>Упражнения:</b> 0 записей (~0 ккал)\n"
+            "🔥 <b>Итого за день:</b> ~0 ккал"
         )
 
     def normalize_exercise_name(exercise: str) -> str:
@@ -171,7 +171,7 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
         exercise_entries += 1
         exercise_calories += entry_calories
 
-    lines = [f"👣 Шаги: {steps_count:,} (~{steps_calories:.0f} ккал)".replace(",", " ")]
+    lines = [f"👣 <b>Шаги:</b> {steps_count:,} (~{steps_calories:.0f} ккал)".replace(",", " ")]
 
     if include_exercise_details:
         details = []
@@ -189,15 +189,15 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
             details.append(f"• {exercise}: {entered_value} (~{entry_calories:.0f} ккал)")
 
         if details:
-            lines.append("💪 Упражнения:")
+            lines.append("💪 <b>Упражнения:</b>")
             lines.extend(details)
             lines.append(f"Итого по упражнениям: {exercise_entries} запись (~{exercise_calories:.0f} ккал)")
         else:
-            lines.append("💪 Упражнения: 0 записей (~0 ккал)")
+            lines.append("💪 <b>Упражнения:</b> 0 записей (~0 ккал)")
     else:
-        lines.append(f"💪 Упражнения: {exercise_entries} запись (~{exercise_calories:.0f} ккал)")
+        lines.append(f"💪 <b>Упражнения:</b> {exercise_entries} запись (~{exercise_calories:.0f} ккал)")
 
-    lines.append(f"🔥 Итого за день: ~{total_calories:.0f} ккал")
+    lines.append(f"🔥 <b>Итого за день:</b> ~{total_calories:.0f} ккал")
 
     return "\n".join(lines)
 
