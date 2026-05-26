@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from database.session import get_db_session
-from database.models import User, Supplement
+from database.models import User, Supplement, KbjuSettings
 from services.error_logging_service import log_app_error
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,11 @@ class NotificationScheduler:
         """Отправляет уведомления о приёме пищи всем пользователям."""
         try:
             with get_db_session() as session:
-                users = session.query(User).all()
+                users = (
+                    session.query(User)
+                    .join(KbjuSettings, KbjuSettings.user_id == User.user_id)
+                    .all()
+                )
                 user_ids = [user.user_id for user in users]
             
             meal_type_prepositional = MEAL_TYPE_PREPOSITIONAL.get(meal_type, meal_type)
@@ -169,9 +173,13 @@ class NotificationScheduler:
                 self._last_check_date = today_date
             
             with get_db_session() as session:
-                # Получаем все добавки с включенными уведомлениями (проверяем явно на True, чтобы исключить None)
+                # Получаем все добавки с включенными уведомлениями только у пользователей,
+                # завершивших обязательный онбординг.
                 supplements = session.query(Supplement).filter(
-                    Supplement.notifications_enabled.is_(True)
+                    Supplement.notifications_enabled.is_(True),
+                    session.query(KbjuSettings.id)
+                    .filter(KbjuSettings.user_id == Supplement.user_id)
+                    .exists(),
                 ).all()
                 
                 for supplement in supplements:
