@@ -127,21 +127,22 @@ async def main():
     from handlers.calendar import register_calendar_handlers
     register_calendar_handlers(dp)
     
-    # Запускаем планировщик уведомлений
-    logger.info("Запуск планировщика уведомлений...")
-    notification_scheduler = NotificationScheduler(bot)
-    scheduler_task = asyncio.create_task(notification_scheduler.start())
-    
     logger.info("🚀 Бот запущен и готов к работе!")
     polling_lock_conn = acquire_polling_lock()
     if polling_lock_conn is None:
-        logger.error(
+        logger.warning(
             "Не удалось получить lock для polling. "
-            "Скорее всего, другой инстанс бота уже запущен."
+            "Переходим в standby-режим без polling и планировщика."
         )
-        return
+        while True:
+            await asyncio.sleep(60)
 
     logger.info("Lock для polling получен. Запускаем long polling.")
+
+    # Запускаем планировщик уведомлений только в активном инстансе
+    logger.info("Запуск планировщика уведомлений...")
+    notification_scheduler = NotificationScheduler(bot)
+    scheduler_task = asyncio.create_task(notification_scheduler.start())
 
     try:
         await bot.delete_webhook(drop_pending_updates=False)
