@@ -96,7 +96,7 @@ async def delete_account_start(message: Message):
     )
 
 
-@router.message(lambda m: m.text == "✅ Да, удалить аккаунт")
+@router.message(lambda m: m.text == "Да, удалить аккаунт")
 async def delete_account_confirm(message: Message):
     """Запрашивает текстовое подтверждение удаления аккаунта."""
     if not getattr(message.bot, "expecting_account_deletion_confirm", False):
@@ -113,7 +113,7 @@ async def delete_account_confirm(message: Message):
 
 @router.message(
     lambda m: getattr(m.bot, "expecting_account_deletion_text_confirm", False)
-    and m.text not in ["❌ Отмена", "✅ Да, удалить аккаунт"]
+    and m.text not in ["❌ Отмена", "Да, удалить аккаунт"]
 )
 async def delete_account_text_confirm(message: Message):
     """Удаляет аккаунт после текстового подтверждения."""
