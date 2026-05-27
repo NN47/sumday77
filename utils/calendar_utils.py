@@ -456,7 +456,7 @@ def build_activity_analysis_calendar_keyboard(user_id: str, year: int, month: in
         year=year,
         month=month,
         callback_prefix="act_cal",
-        marker="🤖",
+        marker="AI",
         get_days_func=get_month_activity_analysis_days,
     )
 

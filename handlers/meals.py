@@ -71,7 +71,7 @@ ADD_METHOD_TEXTS = {
     "barcode": "📷 Скан штрих-кода",
 }
 
-AI_TEMPORARY_UNAVAILABLE_TEXT = "🤖 Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
+AI_TEMPORARY_UNAVAILABLE_TEXT = "Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
 AI_QUOTA_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за лимита запросов."
 AI_CONFIG_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за ошибки настройки."
 AI_TIMEOUT_UNAVAILABLE_TEXT = "⏱️ AI отвечает слишком долго. Попробуй ещё раз чуть позже."
@@ -562,7 +562,7 @@ async def kbju_add_via_ai(message: Message, state: FSMContext):
     
     text = (
         "📝 Ввести приём пищи текстом (AI-анализ)\n\n"
-        "Просто напиши обычным человеческим языком, что ты съел — бот сам разберётся и посчитает КБЖУ 🤖\n\n"
+        "Просто напиши обычным человеческим языком, что ты съел — бот сам разберётся и посчитает КБЖУ\n\n"
         "Можно писать как удобно:\n\n"
         "✔ Список продуктов\n"
         "200 г курицы, 100 г йогурта, 30 г орехов\n\n"
@@ -809,7 +809,7 @@ async def kbju_add_via_photo(message: Message, state: FSMContext):
     
     text = (
         "📷 Анализ еды по фото\n\n"
-        "Отправь мне фото еды, и я определю КБЖУ с помощью ИИ! 🤖\n\n"
+        "Отправь мне фото еды, и я определю КБЖУ с помощью ИИ!\n\n"
         "Сделай фото так, чтобы еда была хорошо видна на изображении."
     )
     
@@ -937,7 +937,7 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
     data = await state.get_data()
     
     # Показываем сообщение об анализе
-    await message.answer("🤖 Считаю КБЖУ с помощью ИИ, секунду...")
+    await message.answer("Считаю КБЖУ с помощью ИИ, секунду...")
     
     # Получаем КБЖУ через Gemini
     try:
@@ -966,7 +966,7 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
             return 0.0
     
     # Формируем детальный ответ
-    lines = ["🤖 Оценка по ИИ для этого приёма пищи:\n"]
+    lines = ["Оценка по ИИ для этого приёма пищи:\n"]
     
     totals_for_db = {
         "calories": safe_float(total.get("kcal")),
@@ -1174,7 +1174,7 @@ async def handle_photo_input(message: Message, state: FSMContext):
         entry_date = date.today()
     
     # Показываем сообщение об анализе
-    await message.answer("📷 Анализирую фото с помощью ИИ, секунду... 🤖")
+    await message.answer("📷 Анализирую фото с помощью ИИ, секунду...")
     
     # Скачиваем фото
     photo = message.photo[-1]  # Берём самое большое разрешение
@@ -1292,7 +1292,7 @@ async def handle_label_photo(message: Message, state: FSMContext):
         entry_date = date.today()
     
     # Показываем сообщение об анализе
-    await message.answer("📋 Анализирую этикетку с помощью ИИ, секунду... 🤖")
+    await message.answer("📋 Анализирую этикетку с помощью ИИ, секунду...")
     
     # Скачиваем фото
     photo = message.photo[-1]
@@ -1406,7 +1406,7 @@ async def handle_barcode_photo(message: Message, state: FSMContext):
         entry_date = date.today()
     
     # Показываем сообщение о распознавании
-    await message.answer("📷 Распознаю штрих-код, секунду... 🤖")
+    await message.answer("📷 Распознаю штрих-код, секунду...")
     
     # Скачиваем фото
     photo = message.photo[-1]
@@ -3193,7 +3193,7 @@ async def handle_meal_composition_edit(message: Message, state: FSMContext):
     changed_meal_type = normalize_meal_type(getattr(meal, "meal_type", None)) if meal else None
     
     # Показываем сообщение об анализе
-    await message.answer("🤖 Считаю КБЖУ с помощью ИИ, секунду...")
+    await message.answer("Считаю КБЖУ с помощью ИИ, секунду...")
     
     # Получаем КБЖУ через Gemini (как в "ввести прием пищи")
     try:

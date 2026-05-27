@@ -37,9 +37,9 @@ def _admin_menu_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🧠 Анализ дня", callback_data="admin:daily")],
             [InlineKeyboardButton(text="👤 Пользователи", callback_data="admin:users")],
             [InlineKeyboardButton(text="⚠️ Ошибки", callback_data="admin:errors")],
-            [InlineKeyboardButton(text="🤖 Gemini / AI", callback_data="admin:gemini")],
-            [InlineKeyboardButton(text="🤖 GigaChat / AI", callback_data="admin:gigachat")],
-            [InlineKeyboardButton(text="🤖 OpenRouter / AI", callback_data="admin:openrouter")],
+            [InlineKeyboardButton(text="Gemini / AI", callback_data="admin:gemini")],
+            [InlineKeyboardButton(text="GigaChat / AI", callback_data="admin:gigachat")],
+            [InlineKeyboardButton(text="OpenRouter / AI", callback_data="admin:openrouter")],
             [InlineKeyboardButton(text="🕘 Последние события", callback_data="admin:events")],
             [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin:refresh")],
         ]

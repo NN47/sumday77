@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT = (
-    "🤖 AI-анализ временно недоступен\n\n"
+    "AI-анализ временно недоступен\n\n"
     "Сервис анализа сейчас испытывает высокую нагрузку и временно не отвечает. "
     "Данные сохранены, попробуй чуть позже.\n\n"
     "Можно продолжать пользоваться ботом — всё остальное работает нормально."
@@ -868,7 +868,7 @@ async def generate_activity_analysis(
     )
 
     prompt = f"""
-Ты — бот-ассистент 🤖, персональный фитнес-помощник пользователя.
+Ты — бот-ассистент, персональный фитнес-помощник пользователя.
 Говори дружелюбно, уверенно и по делу.
 
 Очень важно:
@@ -1044,7 +1044,7 @@ async def generate_activity_analysis(
     return result
 
 
-@router.message(lambda m: m.text in {"🧠 ИИ анализ", "📊 ИИ анализ", "📊 ИИ анализ деятельности", "🤖 ИИ анализ деятельности"})
+@router.message(lambda m: m.text in {"🧠 ИИ анализ", "📊 ИИ анализ", "📊 ИИ анализ деятельности", "ИИ анализ деятельности"})
 async def analyze_activity(message: Message):
     """Показывает меню анализа деятельности."""
     user_id = str(message.from_user.id)
@@ -1191,7 +1191,7 @@ async def show_activity_analysis_day(message: Message, user_id: str, target_date
 
     lines = [f"📅 {target_date.strftime('%d.%m.%Y')}\n\nСохранённые анализы:"]
     for idx, entry in enumerate(entries, start=1):
-        source = "🤖 ИИ" if entry.source == "generated" else "📝 Ручной"
+        source = "ИИ" if entry.source == "generated" else "📝 Ручной"
         full_analysis = (entry.analysis_text or "").strip()
         if not full_analysis:
             full_analysis = "—"
@@ -1281,7 +1281,7 @@ async def analyze_activity_day_gigachat(message: Message):
         if _is_gigachat_temporarily_unavailable_error(e):
             push_menu_stack(message.bot, activity_analysis_menu)
             await message.answer(
-                "🤖 GigaChat сейчас временно недоступен.\n\nПопробуй чуть позже — и всё снова заработает.",
+                "GigaChat сейчас временно недоступен.\n\nПопробуй чуть позже — и всё снова заработает.",
                 reply_markup=activity_analysis_menu,
             )
             return
