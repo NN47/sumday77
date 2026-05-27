@@ -129,6 +129,43 @@ class NutritionCalculatorTests(unittest.TestCase):
         self.assertEqual(maintain.target_calories, maintain.tdee)
         self.assertEqual(maintain.goal_explanation, "Для поддержания: без изменений")
 
+
+    def test_protein_target_is_20_percent_of_calories(self):
+        profile = calculate_nutrition_profile(
+            {
+                "gender": "female",
+                "age": 30,
+                "height": 165,
+                "weight": 62,
+                "activity": "medium",
+                "goal": "loss",
+                "goal_percent": 10,
+            }
+        )
+
+        expected_protein = round(profile.target_calories * 0.20 / 4)
+        self.assertEqual(profile.proteins, expected_protein)
+
+    def test_protein_examples_match_expected_values(self):
+        self.assertEqual(round(1919 * 0.20 / 4), 96)
+        self.assertEqual(round(1758 * 0.20 / 4), 88)
+
+    def test_loss_goal_no_longer_uses_weight_based_protein_formula(self):
+        profile = calculate_nutrition_profile(
+            {
+                "gender": "male",
+                "age": 28,
+                "height": 171,
+                "weight": 78,
+                "activity": "medium",
+                "goal": "loss",
+                "goal_percent": 10,
+            }
+        )
+
+        old_weight_based_protein = round(78 * 1.8)
+        self.assertNotEqual(profile.proteins, old_weight_based_protein)
+
     def test_macros_are_not_negative(self):
         profile = calculate_nutrition_profile(
             {

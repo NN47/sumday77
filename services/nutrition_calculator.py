@@ -10,8 +10,7 @@ CALORIES_PER_GRAM_PROTEIN = 4
 CALORIES_PER_GRAM_FAT = 9
 CALORIES_PER_GRAM_CARBS = 4
 
-PROTEIN_PER_KG_DEFAULT = 1.8
-PROTEIN_PER_KG_GAIN = 1.6
+PROTEIN_SHARE = 0.20
 FAT_PER_KG = 0.9
 
 DEFAULT_AGE = 30.0
@@ -123,14 +122,15 @@ def build_goal_explanation(goal: str, goal_percent: int) -> str:
 
 def calculate_macros(weight: float, target_calories: float, goal: str) -> tuple[int, int, int]:
     """Считает БЖУ по понятным правилам."""
-    protein_per_kg = PROTEIN_PER_KG_GAIN if goal == "gain" else PROTEIN_PER_KG_DEFAULT
+    _ = goal  # Пока цель не влияет на долю белка: используем 20% калорий для всех режимов.
 
-    proteins = round(weight * protein_per_kg)
-    fats = round(weight * FAT_PER_KG)
+    safe_target_calories = max(target_calories, 0)
+    proteins = round(safe_target_calories * PROTEIN_SHARE / CALORIES_PER_GRAM_PROTEIN)
+    fats = round(max(weight, 0) * FAT_PER_KG)
 
     protein_kcal = proteins * CALORIES_PER_GRAM_PROTEIN
     fat_kcal = fats * CALORIES_PER_GRAM_FAT
-    remaining_kcal = max(target_calories - protein_kcal - fat_kcal, 0)
+    remaining_kcal = max(safe_target_calories - protein_kcal - fat_kcal, 0)
     carbs = round(remaining_kcal / CALORIES_PER_GRAM_CARBS)
 
     return max(proteins, 0), max(fats, 0), max(carbs, 0)
