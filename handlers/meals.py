@@ -72,7 +72,10 @@ ADD_METHOD_TEXTS = {
 }
 
 
-def _truncate_recent_name(name: str, limit: int = 28) -> str:
+RECENT_MEALS_PAGE_SIZE = 8
+
+
+def _truncate_recent_name(name: str, limit: int = 22) -> str:
     clean = (name or "").strip()
     if len(clean) <= limit:
         return clean
@@ -88,21 +91,43 @@ def _normalize_recent_meal_title(meal) -> str:
     return raw_title or "Продукт"
 
 
-def _build_recent_meals_keyboard(recent_meals: list) -> InlineKeyboardMarkup:
+def _format_recent_meals_text(recent_meals: list, page: int) -> str:
+    start_idx = (page - 1) * RECENT_MEALS_PAGE_SIZE
+    lines: list[str] = [f"🕘 Недавно добавленные • страница {page}", ""]
+    for offset, meal in enumerate(recent_meals, start=start_idx + 1):
+        title = _normalize_recent_meal_title(meal)
+        lines.extend(
+            [
+                f"{offset}. {title}",
+                f"100 г • {meal.calories:.0f} ккал",
+                f"Б {meal.protein:.1f} / Ж {meal.fat:.1f} / У {meal.carbs:.1f}",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip()
+
+
+def _build_recent_meals_keyboard(recent_meals: list, meal_type: str, page: int, has_prev: bool, has_next: bool) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    for meal in recent_meals[:8]:
+    for offset, meal in enumerate(recent_meals, start=1):
         title = _truncate_recent_name(_normalize_recent_meal_title(meal))
+        number = (page - 1) * RECENT_MEALS_PAGE_SIZE + offset
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=(
-                        f"🕘 {title} • "
-                        f"К:{meal.calories:.0f} Б:{meal.protein:.1f} Ж:{meal.fat:.1f} У:{meal.carbs:.1f}"
-                    ),
-                    callback_data=f"recent_meal_pick:{meal.id}",
+                    text=f"{number}️⃣ {title}",
+                    callback_data=f"recent_meal_pick:{meal_type}:{page}:{meal.id}",
                 )
             ]
         )
+
+    nav_row: list[InlineKeyboardButton] = []
+    if has_prev:
+        nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"recent_meal_page:{meal_type}:{page-1}"))
+    if has_next:
+        nav_row.append(InlineKeyboardButton(text="➡️ Показать ещё", callback_data=f"recent_meal_page:{meal_type}:{page+1}"))
+    if nav_row:
+        rows.append(nav_row)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 AI_TEMPORARY_UNAVAILABLE_TEXT = "Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
@@ -385,13 +410,8 @@ async def _show_input_methods(message: Message, state: FSMContext) -> None:
     """Показывает меню способов добавления еды для уже выбранного типа приёма."""
     await state.set_state(MealEntryStates.choosing_meal_type)
     user_id = str(message.from_user.id)
-    recent_meals = MealRepository.get_recent_unique_meals(user_id, limit=8)
-    if recent_meals:
-        await message.answer(
-            "<b>🕘 Недавно добавленные</b>\nВыбери продукт, чтобы быстро повторить:",
-            parse_mode="HTML",
-            reply_markup=_build_recent_meals_keyboard(recent_meals),
-        )
+    meal_type = normalize_meal_type((await state.get_data()).get("meal_type"), fallback=MealType.SNACK.value)
+    await _show_recent_meals_page(message, state, meal_type=meal_type, page=1)
     text = (
         "<b>Теперь выбери, из недавних продуктов ☝️ или добавь прием пищи одним из предложенных способов:</b>\n"
         "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
@@ -404,23 +424,42 @@ async def _show_input_methods(message: Message, state: FSMContext) -> None:
     await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
 
 
-def _render_recent_meal_confirm_text(meal_type: str, meal) -> str:
+async def _show_recent_meals_page(message: Message, state: FSMContext, meal_type: str, page: int) -> None:
+    user_id = str(message.from_user.id)
+    all_recent_meals = MealRepository.get_recent_unique_meals(user_id, limit=64)
+    if not all_recent_meals:
+        return
+    page = max(1, page)
+    start = (page - 1) * RECENT_MEALS_PAGE_SIZE
+    page_items = all_recent_meals[start : start + RECENT_MEALS_PAGE_SIZE]
+    if not page_items:
+        return
+    has_prev = page > 1
+    has_next = start + RECENT_MEALS_PAGE_SIZE < len(all_recent_meals)
+    await state.update_data(recent_meals_page=page, meal_type=meal_type)
+    await message.answer(
+        _format_recent_meals_text(page_items, page),
+        reply_markup=_build_recent_meals_keyboard(page_items, meal_type, page, has_prev, has_next),
+    )
+
+
+def _render_recent_meal_confirm_text(meal_type: str, meal, amount_g: int = 100) -> str:
     meal_name = display_meal_type(meal_type).lower()
-    amount_g = 100
+    title = _normalize_recent_meal_title(meal)
     return (
         f"Добавить продукт в {meal_name}?\n\n"
-        f"{meal.raw_query}\n"
+        f"{title}\n"
         f"{amount_g} г • {meal.calories:.0f} ккал\n"
         f"Б {meal.protein:.1f} / Ж {meal.fat:.1f} / У {meal.carbs:.1f}"
     )
 
 
-def _build_recent_meal_confirm_keyboard(source_meal_id: int) -> InlineKeyboardMarkup:
+def _build_recent_meal_confirm_keyboard(source_meal_id: int, meal_type: str, page: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Добавить", callback_data=f"recent_meal_confirm:{source_meal_id}")],
-            [InlineKeyboardButton(text="✏️ Изменить граммовку", callback_data=f"recent_meal_edit_weight:{source_meal_id}")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="recent_meal_back")],
+            [InlineKeyboardButton(text="✅ Добавить", callback_data=f"recent_meal_confirm:{meal_type}:{page}:{source_meal_id}")],
+            [InlineKeyboardButton(text="✏️ Изменить граммовку", callback_data=f"recent_meal_edit_weight:{meal_type}:{page}:{source_meal_id}")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"recent_meal_back:{meal_type}:{page}")],
         ]
     )
 
@@ -429,32 +468,41 @@ def _build_recent_meal_confirm_keyboard(source_meal_id: int) -> InlineKeyboardMa
 async def recent_meal_pick(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = str(callback.from_user.id)
-    source_meal_id = int(callback.data.split(":")[1])
+    _, meal_type, page_str, source_meal_id_str = callback.data.split(":")
+    source_meal_id = int(source_meal_id_str)
+    page = int(page_str)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
     if not source_meal:
         await callback.message.answer("❌ Не удалось найти продукт в истории.")
         return
-    data = await state.get_data()
-    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    await state.update_data(recent_source_meal_id=source_meal_id, recent_custom_amount_g=None)
+    await state.update_data(recent_source_meal_id=source_meal_id, recent_custom_amount_g=None, recent_meals_page=page, meal_type=meal_type)
     await callback.message.answer(
         _render_recent_meal_confirm_text(meal_type, source_meal),
-        reply_markup=_build_recent_meal_confirm_keyboard(source_meal_id),
+        reply_markup=_build_recent_meal_confirm_keyboard(source_meal_id, meal_type, page),
     )
 
 
-@router.callback_query(lambda c: c.data == "recent_meal_back")
+@router.callback_query(lambda c: c.data.startswith("recent_meal_back:"))
 async def recent_meal_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    await _show_input_methods(callback.message, state)
+    _, meal_type, page_str = callback.data.split(":")
+    await _show_recent_meals_page(callback.message, state, meal_type=meal_type, page=int(page_str))
+
+
+@router.callback_query(lambda c: c.data.startswith("recent_meal_page:"))
+async def recent_meal_page(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    _, meal_type, page_str = callback.data.split(":")
+    await _show_recent_meals_page(callback.message, state, meal_type=meal_type, page=int(page_str))
 
 
 @router.callback_query(lambda c: c.data.startswith("recent_meal_edit_weight:"))
 async def recent_meal_edit_weight(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    source_meal_id = int(callback.data.split(":")[1])
+    _, meal_type, page_str, source_meal_id_str = callback.data.split(":")
+    source_meal_id = int(source_meal_id_str)
     await state.set_state(MealEntryStates.editing_meal_weight_manual_input)
-    await state.update_data(recent_source_meal_id=source_meal_id, recent_weight_edit_mode=True)
+    await state.update_data(recent_source_meal_id=source_meal_id, recent_weight_edit_mode=True, recent_meals_page=int(page_str), meal_type=meal_type)
     await callback.message.answer("Введи новую граммовку (в граммах), например: 180")
 
 
@@ -463,12 +511,13 @@ async def recent_meal_confirm(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = str(callback.from_user.id)
     data = await state.get_data()
-    source_meal_id = int(callback.data.split(":")[1])
+    _, meal_type_raw, _page_str, source_meal_id_str = callback.data.split(":")
+    source_meal_id = int(source_meal_id_str)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
     if not source_meal:
         await callback.message.answer("❌ Продукт не найден.")
         return
-    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    meal_type = normalize_meal_type(meal_type_raw or data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
     try:
         entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
@@ -2825,11 +2874,24 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
             await state.clear()
             return
         meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+        ratio = new_weight / 100.0
+        adjusted = type("AdjustedMeal", (), {
+            "raw_query": source_meal.raw_query,
+            "description": source_meal.description,
+            "calories": float(source_meal.calories) * ratio,
+            "protein": float(source_meal.protein) * ratio,
+            "fat": float(source_meal.fat) * ratio,
+            "carbs": float(source_meal.carbs) * ratio,
+        })()
         await state.set_state(MealEntryStates.choosing_meal_type)
         await state.update_data(recent_custom_amount_g=new_weight, recent_weight_edit_mode=False)
         await message.answer(
-            _render_recent_meal_confirm_text(meal_type, source_meal).replace("100 г", f"{new_weight} г"),
-            reply_markup=_build_recent_meal_confirm_keyboard(int(source_meal_id)),
+            _render_recent_meal_confirm_text(meal_type, adjusted, amount_g=new_weight),
+            reply_markup=_build_recent_meal_confirm_keyboard(
+                int(source_meal_id),
+                meal_type,
+                int(data.get("recent_meals_page") or 1),
+            ),
         )
         return
 
