@@ -10,8 +10,14 @@ CALORIES_PER_GRAM_PROTEIN = 4
 CALORIES_PER_GRAM_FAT = 9
 CALORIES_PER_GRAM_CARBS = 4
 
-PROTEIN_SHARE = 0.20
-FAT_PER_KG = 0.9
+PROTEIN_SHARES: dict[str, float] = {
+    "loss": 0.20,
+    "maintain": 0.16,
+    "gain": 0.18,
+}
+FAT_SHARE_MIN = 0.25
+FAT_SHARE_MAX = 0.30
+DEFAULT_FAT_SHARE = (FAT_SHARE_MIN + FAT_SHARE_MAX) / 2
 
 DEFAULT_AGE = 30.0
 DEFAULT_HEIGHT = 170.0
@@ -121,12 +127,14 @@ def build_goal_explanation(goal: str, goal_percent: int) -> str:
 
 
 def calculate_macros(weight: float, target_calories: float, goal: str) -> tuple[int, int, int]:
-    """Считает БЖУ по понятным правилам."""
-    _ = goal  # Пока цель не влияет на долю белка: используем 20% калорий для всех режимов.
+    """Считает БЖУ по обновлённым правилам популярных трекеров питания."""
+    _ = weight  # Вес больше не используется как основа для белка.
 
     safe_target_calories = max(target_calories, 0)
-    proteins = round(safe_target_calories * PROTEIN_SHARE / CALORIES_PER_GRAM_PROTEIN)
-    fats = round(max(weight, 0) * FAT_PER_KG)
+    protein_ratio = PROTEIN_SHARES.get(goal, PROTEIN_SHARES[DEFAULT_GOAL])
+
+    proteins = round(safe_target_calories * protein_ratio / CALORIES_PER_GRAM_PROTEIN)
+    fats = round(safe_target_calories * DEFAULT_FAT_SHARE / CALORIES_PER_GRAM_FAT)
 
     protein_kcal = proteins * CALORIES_PER_GRAM_PROTEIN
     fat_kcal = fats * CALORIES_PER_GRAM_FAT
