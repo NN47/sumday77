@@ -1820,14 +1820,22 @@ def _build_weight_editor_keyboard(product_idx: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                InlineKeyboardButton(text="−100 г", callback_data=f"meal_wchg:{product_idx}:-100"),
                 InlineKeyboardButton(text="−50 г", callback_data=f"meal_wchg:{product_idx}:-50"),
-                InlineKeyboardButton(text="−10 г", callback_data=f"meal_wchg:{product_idx}:-10"),
-                InlineKeyboardButton(text="−1 г", callback_data=f"meal_wchg:{product_idx}:-1"),
+                InlineKeyboardButton(text="+50 г", callback_data=f"meal_wchg:{product_idx}:50"),
+                InlineKeyboardButton(text="+100 г", callback_data=f"meal_wchg:{product_idx}:100"),
             ],
             [
-                InlineKeyboardButton(text="+1 г", callback_data=f"meal_wchg:{product_idx}:1"),
+                InlineKeyboardButton(text="−25 г", callback_data=f"meal_wchg:{product_idx}:-25"),
+                InlineKeyboardButton(text="−10 г", callback_data=f"meal_wchg:{product_idx}:-10"),
                 InlineKeyboardButton(text="+10 г", callback_data=f"meal_wchg:{product_idx}:10"),
-                InlineKeyboardButton(text="+50 г", callback_data=f"meal_wchg:{product_idx}:50"),
+                InlineKeyboardButton(text="+25 г", callback_data=f"meal_wchg:{product_idx}:25"),
+            ],
+            [
+                InlineKeyboardButton(text="−5 г", callback_data=f"meal_wchg:{product_idx}:-5"),
+                InlineKeyboardButton(text="−1 г", callback_data=f"meal_wchg:{product_idx}:-1"),
+                InlineKeyboardButton(text="+1 г", callback_data=f"meal_wchg:{product_idx}:1"),
+                InlineKeyboardButton(text="+5 г", callback_data=f"meal_wchg:{product_idx}:5"),
             ],
             [
                 InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data=f"meal_wmanual:{product_idx}"),
@@ -2049,23 +2057,31 @@ def _render_kbju_editor_text(product: dict, draft: Optional[dict] = None) -> str
 
 def _build_kbju_field_editor_keyboard(product_idx: int, field: str) -> InlineKeyboardMarkup:
     step_map = {
-        "calories": (10, 50, 100),
-        "protein": (1, 5, 10),
-        "fat": (1, 5, 10),
-        "carbs": (1, 5, 10),
+        "calories": (1, 5, 10, 25, 50, 100),
+        "protein": (1, 5, 10, 25, 50, 100),
+        "fat": (1, 5, 10, 25, 50, 100),
+        "carbs": (1, 5, 10, 25, 50, 100),
     }
-    small, medium, large = step_map[field]
+    small, medium, large, xmedium, xlarge, xxlarge = step_map[field]
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text=f"-{large}", callback_data=f"meal_kdelta:{product_idx}:{field}:-{large}"),
-                InlineKeyboardButton(text=f"-{medium}", callback_data=f"meal_kdelta:{product_idx}:{field}:-{medium}"),
-                InlineKeyboardButton(text=f"-{small}", callback_data=f"meal_kdelta:{product_idx}:{field}:-{small}"),
+                InlineKeyboardButton(text=f"-{xxlarge}", callback_data=f"meal_kdelta:{product_idx}:{field}:-{xxlarge}"),
+                InlineKeyboardButton(text=f"-{xlarge}", callback_data=f"meal_kdelta:{product_idx}:{field}:-{xlarge}"),
+                InlineKeyboardButton(text=f"+{xlarge}", callback_data=f"meal_kdelta:{product_idx}:{field}:{xlarge}"),
+                InlineKeyboardButton(text=f"+{xxlarge}", callback_data=f"meal_kdelta:{product_idx}:{field}:{xxlarge}"),
             ],
             [
+                InlineKeyboardButton(text=f"-{xmedium}", callback_data=f"meal_kdelta:{product_idx}:{field}:-{xmedium}"),
+                InlineKeyboardButton(text=f"-{large}", callback_data=f"meal_kdelta:{product_idx}:{field}:-{large}"),
+                InlineKeyboardButton(text=f"+{large}", callback_data=f"meal_kdelta:{product_idx}:{field}:{large}"),
+                InlineKeyboardButton(text=f"+{xmedium}", callback_data=f"meal_kdelta:{product_idx}:{field}:{xmedium}"),
+            ],
+            [
+                InlineKeyboardButton(text=f"-{medium}", callback_data=f"meal_kdelta:{product_idx}:{field}:-{medium}"),
+                InlineKeyboardButton(text=f"-{small}", callback_data=f"meal_kdelta:{product_idx}:{field}:-{small}"),
                 InlineKeyboardButton(text=f"+{small}", callback_data=f"meal_kdelta:{product_idx}:{field}:{small}"),
                 InlineKeyboardButton(text=f"+{medium}", callback_data=f"meal_kdelta:{product_idx}:{field}:{medium}"),
-                InlineKeyboardButton(text=f"+{large}", callback_data=f"meal_kdelta:{product_idx}:{field}:{large}"),
             ],
             [InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data=f"meal_kmanual:{product_idx}:{field}")],
             [InlineKeyboardButton(text="✅ Сохранить", callback_data=f"meal_kfsave:{product_idx}:{field}")],
