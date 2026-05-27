@@ -98,17 +98,42 @@ async def delete_account_start(message: Message):
 
 @router.message(lambda m: m.text == "✅ Да, удалить аккаунт")
 async def delete_account_confirm(message: Message):
-    """Подтверждает удаление аккаунта."""
+    """Запрашивает текстовое подтверждение удаления аккаунта."""
     if not getattr(message.bot, "expecting_account_deletion_confirm", False):
         await message.answer("Что-то пошло не так. Попробуй заново через меню Настройки.")
         return
-    
+
+    message.bot.expecting_account_deletion_text_confirm = True
+    await message.answer(
+        "Подтвердите удаление: введите текстом\n\n"
+        "<b>Я удаляю аккаунт Sumday77</b>",
+        parse_mode="HTML",
+    )
+
+
+@router.message(
+    lambda m: getattr(m.bot, "expecting_account_deletion_text_confirm", False)
+    and m.text not in ["❌ Отмена", "✅ Да, удалить аккаунт"]
+)
+async def delete_account_text_confirm(message: Message):
+    """Удаляет аккаунт после текстового подтверждения."""
+    expected_text = "Я удаляю аккаунт Sumday77"
+    if (message.text or "").strip() != expected_text:
+        await message.answer(
+            "Текст подтверждения не совпадает.\n"
+            f"Введите точно: <b>{expected_text}</b>\n"
+            "Или нажмите «❌ Отмена».",
+            parse_mode="HTML",
+        )
+        return
+
     user_id = str(message.from_user.id)
     message.bot.expecting_account_deletion_confirm = False
-    logger.warning(f"User {user_id} confirmed account deletion")
-    
+    message.bot.expecting_account_deletion_text_confirm = False
+    logger.warning(f"User {user_id} confirmed account deletion with text phrase")
+
     success = delete_user_account(user_id)
-    
+
     if success:
         await message.answer(
             "✅ Аккаунт успешно удалён.\n\n"
@@ -131,8 +156,11 @@ async def delete_account_confirm(message: Message):
 @router.message(lambda m: m.text == "❌ Отмена")
 async def delete_account_cancel(message: Message):
     """Отменяет удаление аккаунта."""
-    if getattr(message.bot, "expecting_account_deletion_confirm", False):
+    if getattr(message.bot, "expecting_account_deletion_confirm", False) or getattr(
+        message.bot, "expecting_account_deletion_text_confirm", False
+    ):
         message.bot.expecting_account_deletion_confirm = False
+        message.bot.expecting_account_deletion_text_confirm = False
         push_menu_stack(message.bot, settings_menu)
         await message.answer(
             "❌ Удаление аккаунта отменено.",
