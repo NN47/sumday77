@@ -1820,14 +1820,16 @@ def _build_weight_editor_keyboard(product_idx: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                InlineKeyboardButton(text="−100 г", callback_data=f"meal_wchg:{product_idx}:-100"),
                 InlineKeyboardButton(text="−50 г", callback_data=f"meal_wchg:{product_idx}:-50"),
-                InlineKeyboardButton(text="−10 г", callback_data=f"meal_wchg:{product_idx}:-10"),
-                InlineKeyboardButton(text="−1 г", callback_data=f"meal_wchg:{product_idx}:-1"),
+                InlineKeyboardButton(text="+50 г", callback_data=f"meal_wchg:{product_idx}:50"),
+                InlineKeyboardButton(text="+100 г", callback_data=f"meal_wchg:{product_idx}:100"),
             ],
             [
-                InlineKeyboardButton(text="+1 г", callback_data=f"meal_wchg:{product_idx}:1"),
+                InlineKeyboardButton(text="−10 г", callback_data=f"meal_wchg:{product_idx}:-10"),
+                InlineKeyboardButton(text="−5 г", callback_data=f"meal_wchg:{product_idx}:-5"),
+                InlineKeyboardButton(text="+5 г", callback_data=f"meal_wchg:{product_idx}:5"),
                 InlineKeyboardButton(text="+10 г", callback_data=f"meal_wchg:{product_idx}:10"),
-                InlineKeyboardButton(text="+50 г", callback_data=f"meal_wchg:{product_idx}:50"),
             ],
             [
                 InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data=f"meal_wmanual:{product_idx}"),
