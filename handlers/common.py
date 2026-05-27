@@ -213,7 +213,7 @@ async def quick_recommendations(callback: CallbackQuery):
     await callback.message.answer(_build_recommendations_text(), parse_mode="Markdown")
 
 
-@router.message(lambda m: m.text in {"🔥 Философия Sumday77", "🤖 Рекомендации"})
+@router.message(lambda m: m.text in {"🔥 Философия Sumday77", "Рекомендации"})
 async def show_recommendations(message: Message):
     """Показывает рекомендации из главного меню."""
     await message.answer(_build_recommendations_text(), parse_mode="Markdown")

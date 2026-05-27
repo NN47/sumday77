@@ -417,7 +417,7 @@ def translate_gemini_admin_stats(stats: dict, compact: bool = False, debug: bool
     active = stats.get("active_account")
     active_name = getattr(active, "account_name", None) or "—"
     lines = [
-        "🤖 <b>Gemini / AI</b>",
+        "<b>Gemini / AI</b>",
         "",
         f"• Активный аккаунт: <b>{active_name}</b>",
         f"• Пользовательские запросы сегодня: <b>{stats.get('user_requests_today', '—')}</b>",
@@ -453,7 +453,7 @@ def format_gemini(metrics: dict) -> str:
 
 def format_openrouter(metrics: dict) -> str:
     return (
-        "🤖 <b>OpenRouter / AI</b>\n\n"
+        "<b>OpenRouter / AI</b>\n\n"
         f"• Модель: <b>{metrics.get('model_name', 'openrouter/free')}</b>\n"
         f"• Тариф: <b>{metrics.get('tariff', 'free')}</b>\n"
         f"• Запросов сегодня: <b>{metrics.get('requests_today', 0)}</b>\n"
@@ -471,7 +471,7 @@ def format_openrouter(metrics: dict) -> str:
 
 def format_gigachat(metrics: dict) -> str:
     return (
-        "🤖 <b>GigaChat / AI</b>\n\n"
+        "<b>GigaChat / AI</b>\n\n"
         "📅 <b>Сегодня</b>\n"
         f"• Запущено: <b>{metrics.get('started_today', 0)}</b>\n"
         f"• Отправлено: <b>{metrics.get('sent_today', 0)}</b>\n"

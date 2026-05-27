@@ -35,7 +35,7 @@ def test_openrouter_formatter_shows_free_model():
 
 def test_admin_menu_has_gigachat_button():
     texts = _inline_keyboard_texts(_admin_menu_kb())
-    assert "🤖 GigaChat / AI" in texts
+    assert "GigaChat / AI" in texts
 
 
 def test_gigachat_formatter_shows_ranges():
