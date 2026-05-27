@@ -145,7 +145,7 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
         return (
             "👣 <b>Шаги:</b> 0 (~0 ккал)\n"
             "💪 <b>Упражнения:</b> 0 записей (~0 ккал)\n"
-            "🔥 <b>Итого за день:</b> ~0 ккал"
+            "🔥 <b>Сожжено за день:</b> ~0 ккал"
         )
 
     def normalize_exercise_name(exercise: str) -> str:
@@ -197,7 +197,7 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
     else:
         lines.append(f"💪 <b>Упражнения:</b> {exercise_entries} запись (~{exercise_calories:.0f} ккал)")
 
-    lines.append(f"🔥 <b>Итого за день:</b> ~{total_calories:.0f} ккал")
+    lines.append(f"🔥 <b>Сожжено за день:</b> ~{total_calories:.0f} ккал")
 
     return "\n".join(lines)
 
