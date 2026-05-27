@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Mapping
 
 
@@ -11,13 +12,15 @@ CALORIES_PER_GRAM_FAT = 9
 CALORIES_PER_GRAM_CARBS = 4
 
 PROTEIN_SHARES: dict[str, float] = {
-    "loss": 0.20,
-    "maintain": 0.16,
-    "gain": 0.18,
+    "loss": 0.22,
+    "maintain": 0.19,
+    "gain": 0.20,
 }
-FAT_SHARE_MIN = 0.25
-FAT_SHARE_MAX = 0.30
-DEFAULT_FAT_SHARE = (FAT_SHARE_MIN + FAT_SHARE_MAX) / 2
+FAT_SHARES: dict[str, float] = {
+    "loss": 0.28,
+    "maintain": 0.29,
+    "gain": 0.27,
+}
 
 DEFAULT_AGE = 30.0
 DEFAULT_HEIGHT = 170.0
@@ -132,14 +135,15 @@ def calculate_macros(weight: float, target_calories: float, goal: str) -> tuple[
 
     safe_target_calories = max(target_calories, 0)
     protein_ratio = PROTEIN_SHARES.get(goal, PROTEIN_SHARES[DEFAULT_GOAL])
+    fat_ratio = FAT_SHARES.get(goal, FAT_SHARES[DEFAULT_GOAL])
 
-    proteins = round(safe_target_calories * protein_ratio / CALORIES_PER_GRAM_PROTEIN)
-    fats = round(safe_target_calories * DEFAULT_FAT_SHARE / CALORIES_PER_GRAM_FAT)
+    proteins = round_half_up(safe_target_calories * protein_ratio / CALORIES_PER_GRAM_PROTEIN)
+    fats = round_half_up(safe_target_calories * fat_ratio / CALORIES_PER_GRAM_FAT)
 
     protein_kcal = proteins * CALORIES_PER_GRAM_PROTEIN
     fat_kcal = fats * CALORIES_PER_GRAM_FAT
     remaining_kcal = max(safe_target_calories - protein_kcal - fat_kcal, 0)
-    carbs = round(remaining_kcal / CALORIES_PER_GRAM_CARBS)
+    carbs = round_half_up(remaining_kcal / CALORIES_PER_GRAM_CARBS)
 
     return max(proteins, 0), max(fats, 0), max(carbs, 0)
 
@@ -158,12 +162,17 @@ def get_steps_calories_coefficient(steps: int) -> float:
 def calculate_counted_steps_calories(steps: int, steps_calories: int) -> int:
     """Считает учитываемые калории от шагов с округлением до целого."""
     coefficient = get_steps_calories_coefficient(steps=steps)
-    return round(max(steps_calories, 0) * coefficient)
+    return round_half_up(max(steps_calories, 0) * coefficient)
 
 
 def calculate_counted_workout_calories(workout_calories: int) -> int:
     """Считает учитываемые калории от тренировок с округлением до целого."""
-    return round(max(workout_calories, 0) * WORKOUT_CALORIES_COEFFICIENT)
+    return round_half_up(max(workout_calories, 0) * WORKOUT_CALORIES_COEFFICIENT)
+
+
+def round_half_up(value: float) -> int:
+    """Округляет .5 вверх (вместо банковского round в Python)."""
+    return int(Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def calculate_daily_calorie_summary(

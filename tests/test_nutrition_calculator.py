@@ -19,6 +19,7 @@ get_steps_calories_coefficient = module.get_steps_calories_coefficient
 calculate_counted_steps_calories = module.calculate_counted_steps_calories
 calculate_counted_workout_calories = module.calculate_counted_workout_calories
 calculate_daily_calorie_summary = module.calculate_daily_calorie_summary
+round_half_up = module.round_half_up
 
 
 class NutritionCalculatorTests(unittest.TestCase):
@@ -143,12 +144,12 @@ class NutritionCalculatorTests(unittest.TestCase):
             }
         )
 
-        expected_protein = round(profile.target_calories * 0.20 / 4)
+        expected_protein = round(profile.target_calories * 0.22 / 4)
         self.assertEqual(profile.proteins, expected_protein)
 
     def test_protein_examples_match_expected_values(self):
-        self.assertEqual(round(1919 * 0.20 / 4), 96)
-        self.assertEqual(round(2344 * 0.16 / 4), 94)
+        self.assertEqual(round_half_up(1900 * 0.22 / 4), 105)
+        self.assertEqual(round_half_up(2340 * 0.19 / 4), 111)
 
     def test_goal_specific_protein_ratios(self):
         maintain = calculate_nutrition_profile({
@@ -161,9 +162,24 @@ class NutritionCalculatorTests(unittest.TestCase):
             "gender": "male", "age": 30, "height": 180, "weight": 80, "activity": "moderate", "goal": "gain"
         })
 
-        self.assertEqual(maintain.proteins, round(maintain.target_calories * 0.16 / 4))
-        self.assertEqual(loss.proteins, round(loss.target_calories * 0.20 / 4))
-        self.assertEqual(gain.proteins, round(gain.target_calories * 0.18 / 4))
+        self.assertEqual(maintain.proteins, round(maintain.target_calories * 0.19 / 4))
+        self.assertEqual(loss.proteins, round(loss.target_calories * 0.22 / 4))
+        self.assertEqual(gain.proteins, round(gain.target_calories * 0.20 / 4))
+
+    def test_goal_specific_fat_ratios(self):
+        maintain = calculate_nutrition_profile({
+            "gender": "male", "age": 30, "height": 180, "weight": 80, "activity": "moderate", "goal": "maintain"
+        })
+        loss = calculate_nutrition_profile({
+            "gender": "male", "age": 30, "height": 180, "weight": 80, "activity": "moderate", "goal": "loss"
+        })
+        gain = calculate_nutrition_profile({
+            "gender": "male", "age": 30, "height": 180, "weight": 80, "activity": "moderate", "goal": "gain"
+        })
+
+        self.assertEqual(maintain.fats, round(maintain.target_calories * 0.29 / 9))
+        self.assertEqual(loss.fats, round(loss.target_calories * 0.28 / 9))
+        self.assertEqual(gain.fats, round(gain.target_calories * 0.27 / 9))
 
     def test_loss_goal_no_longer_uses_weight_based_protein_formula(self):
         profile = calculate_nutrition_profile(
