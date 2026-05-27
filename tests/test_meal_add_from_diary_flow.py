@@ -31,14 +31,17 @@ def _build_callback(callback_data: str):
 
 def test_show_input_methods_sends_add_menu():
     message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
     state = _DummyState()
 
-    with patch("handlers.meals.push_menu_stack") as push_stack:
+    with patch("handlers.meals.push_menu_stack") as push_stack, patch(
+        "handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]
+    ):
         asyncio.run(meals._show_input_methods(message, state))
 
     state.set_state.assert_awaited_once_with(meals.MealEntryStates.choosing_meal_type)
     push_stack.assert_called_once_with(message.bot, meals.kbju_add_menu)
-    message.answer.assert_awaited_once()
+    assert message.answer.await_count == 1
 
 
 def test_add_meal_from_diary_block_sets_context_and_opens_methods():

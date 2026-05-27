@@ -63,6 +63,29 @@ class MealRepository:
                 .order_by(Meal.id.asc())
                 .all()
             )
+
+    @staticmethod
+    def get_recent_unique_meals(user_id: str, limit: int = 8) -> list[Meal]:
+        """Возвращает последние уникальные приёмы по LOWER(raw_query)."""
+        with get_db_session() as session:
+            rows = (
+                session.query(Meal)
+                .filter(Meal.user_id == user_id)
+                .filter(Meal.raw_query.isnot(None))
+                .order_by(Meal.id.desc())
+                .all()
+            )
+            unique: list[Meal] = []
+            seen: set[str] = set()
+            for meal in rows:
+                key = (meal.raw_query or "").strip().lower()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                unique.append(meal)
+                if len(unique) >= limit:
+                    break
+            return unique
     
     @staticmethod
     def get_daily_totals(user_id: str, entry_date: date) -> dict:
