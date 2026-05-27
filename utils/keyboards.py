@@ -696,7 +696,7 @@ settings_menu = ReplyKeyboardMarkup(
 
 delete_account_confirm_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="✅ Да, удалить аккаунт")],
+        [KeyboardButton(text="Да, удалить аккаунт")],
         [KeyboardButton(text="❌ Отмена")],
         [main_menu_button],
     ],
