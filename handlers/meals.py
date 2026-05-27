@@ -79,14 +79,26 @@ def _truncate_recent_name(name: str, limit: int = 28) -> str:
     return f"{clean[:limit-1].rstrip()}…"
 
 
+def _normalize_recent_meal_title(meal) -> str:
+    """Возвращает человекочитаемое название продукта без технических префиксов."""
+    raw_title = (meal.raw_query or meal.description or "Продукт").strip()
+    lowered = raw_title.lower()
+    if lowered.startswith("[этикетка:") and raw_title.endswith("]"):
+        raw_title = raw_title[len("[Этикетка:") : -1].strip()
+    return raw_title or "Продукт"
+
+
 def _build_recent_meals_keyboard(recent_meals: list) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for meal in recent_meals[:8]:
-        title = _truncate_recent_name(meal.raw_query or meal.description or "Продукт")
+        title = _truncate_recent_name(_normalize_recent_meal_title(meal))
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"🕘 {title} • {meal.calories:.0f} ккал",
+                    text=(
+                        f"🕘 {title} • "
+                        f"К:{meal.calories:.0f} Б:{meal.protein:.1f} Ж:{meal.fat:.1f} У:{meal.carbs:.1f}"
+                    ),
                     callback_data=f"recent_meal_pick:{meal.id}",
                 )
             ]
@@ -372,17 +384,6 @@ async def _ensure_meal_type_selected(
 async def _show_input_methods(message: Message, state: FSMContext) -> None:
     """Показывает меню способов добавления еды для уже выбранного типа приёма."""
     await state.set_state(MealEntryStates.choosing_meal_type)
-    text = (
-        "<b>Теперь выбери, как добавить еду:</b>\n"
-        "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
-        "• 🧪 Ввести текст через OpenRouter\n"
-        "• 🧠 Ввести текст через GigaChat\n"
-        "• 📷 Анализ еды по фото\n"
-        "• 📋 Анализ этикетки"
-    )
-    push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
-
     user_id = str(message.from_user.id)
     recent_meals = MealRepository.get_recent_unique_meals(user_id, limit=8)
     if recent_meals:
@@ -391,6 +392,16 @@ async def _show_input_methods(message: Message, state: FSMContext) -> None:
             parse_mode="HTML",
             reply_markup=_build_recent_meals_keyboard(recent_meals),
         )
+    text = (
+        "<b>Теперь выбери, из недавних продуктов ☝️ или добавь прием пищи одним из предложенных способов:</b>\n"
+        "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
+        "• 🧪 Ввести текст через OpenRouter\n"
+        "• 🧠 Ввести текст через GigaChat\n"
+        "• 📷 Анализ еды по фото\n"
+        "• 📋 Анализ этикетки"
+    )
+    push_menu_stack(message.bot, kbju_add_menu)
+    await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
 
 
 def _render_recent_meal_confirm_text(meal_type: str, meal) -> str:
