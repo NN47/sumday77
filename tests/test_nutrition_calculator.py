@@ -130,7 +130,7 @@ class NutritionCalculatorTests(unittest.TestCase):
         self.assertEqual(maintain.goal_explanation, "Для поддержания: без изменений")
 
 
-    def test_protein_target_is_20_percent_of_calories(self):
+    def test_protein_target_uses_goal_specific_ratio(self):
         profile = calculate_nutrition_profile(
             {
                 "gender": "female",
@@ -148,7 +148,22 @@ class NutritionCalculatorTests(unittest.TestCase):
 
     def test_protein_examples_match_expected_values(self):
         self.assertEqual(round(1919 * 0.20 / 4), 96)
-        self.assertEqual(round(1758 * 0.20 / 4), 88)
+        self.assertEqual(round(2344 * 0.16 / 4), 94)
+
+    def test_goal_specific_protein_ratios(self):
+        maintain = calculate_nutrition_profile({
+            "gender": "male", "age": 30, "height": 180, "weight": 80, "activity": "moderate", "goal": "maintain"
+        })
+        loss = calculate_nutrition_profile({
+            "gender": "male", "age": 30, "height": 180, "weight": 80, "activity": "moderate", "goal": "loss"
+        })
+        gain = calculate_nutrition_profile({
+            "gender": "male", "age": 30, "height": 180, "weight": 80, "activity": "moderate", "goal": "gain"
+        })
+
+        self.assertEqual(maintain.proteins, round(maintain.target_calories * 0.16 / 4))
+        self.assertEqual(loss.proteins, round(loss.target_calories * 0.20 / 4))
+        self.assertEqual(gain.proteins, round(gain.target_calories * 0.18 / 4))
 
     def test_loss_goal_no_longer_uses_weight_based_protein_formula(self):
         profile = calculate_nutrition_profile(
