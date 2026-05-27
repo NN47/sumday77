@@ -196,7 +196,7 @@ def format_meal_message(
 def _build_goal_progress_line(label: str, current: float, target: float, unit: str) -> list[str]:
     percent = 0 if target <= 0 else round((current / target) * 100)
     return [
-        f"<b>{label}: {current:.0f}/{target:.0f} {unit} ({percent}%)</b>",
+        f"<b>{label}:</b> {current:.0f}/{target:.0f} {unit} ({percent}%)",
         build_progress_bar(current, target),
     ]
 
@@ -227,8 +227,8 @@ def format_daily_totals_lines(
         carbs_target = 0.0
 
     lines = [
-        f"🎯 <b>Цель: {goal_label}</b>",
-        f"📊 <b>Базовая норма: {base_calories_target:.0f} ккал</b>",
+        f"🎯 <b>Цель:</b> {goal_label}",
+        f"📊 <b>Базовая норма:</b> {base_calories_target:.0f} ккал",
         "",
     ]
     lines.extend(_build_goal_progress_line("🔥 Калории", calories_current, base_calories_target, "ккал"))
