@@ -71,10 +71,12 @@ def test_kbju_editor_uses_shared_carbs_emoji():
 def test_kbju_field_editor_has_expected_steps():
     kcal_keyboard = _build_kbju_field_editor_keyboard(0, "calories")
     kcal_rows = [[button.text for button in row] for row in kcal_keyboard.inline_keyboard]
-    assert kcal_rows[0] == ["-100", "-50", "-10"]
-    assert kcal_rows[1] == ["+10", "+50", "+100"]
+    assert kcal_rows[0] == ["-100", "-50", "+50", "+100"]
+    assert kcal_rows[1] == ["-25", "-10", "+10", "+25"]
+    assert kcal_rows[2] == ["-5", "-1", "+1", "+5"]
 
     protein_keyboard = _build_kbju_field_editor_keyboard(0, "protein")
     protein_rows = [[button.text for button in row] for row in protein_keyboard.inline_keyboard]
-    assert protein_rows[0] == ["-10", "-5", "-1"]
-    assert protein_rows[1] == ["+1", "+5", "+10"]
+    assert protein_rows[0] == ["-100", "-50", "+50", "+100"]
+    assert protein_rows[1] == ["-25", "-10", "+10", "+25"]
+    assert protein_rows[2] == ["-5", "-1", "+1", "+5"]
