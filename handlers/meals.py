@@ -763,13 +763,7 @@ async def recent_meal_confirm(callback: CallbackQuery, state: FSMContext):
     callback.message.bot.last_meal_ids[user_id] = new_meal.id
     await state.clear()
     await callback.message.answer("✅ Добавил в дневник.")
-    await _render_day_meals_messages(
-        callback.message,
-        user_id,
-        entry_date,
-        include_back=True,
-        changed_meal_type=meal_type,
-    )
+    await _return_to_food_diary(callback.message, user_id, entry_date)
 
 
 @router.message(lambda m: (m.text or "").strip() in MEALS_BUTTON_ALIASES)
@@ -2095,12 +2089,22 @@ async def calories_today_results(message: Message):
     await send_today_results(message, user_id)
 
 
-async def send_today_results(message: Message, user_id: str):
-    """Отправляет результаты за сегодня и возвращает меню раздела в reply-клавиатуру."""
-    today = date.today()
+async def _return_to_food_diary(message: Message, user_id: str, target_date: date) -> None:
+    """Возвращает пользователя в дневник питания после действия с приёмом пищи."""
     push_menu_stack(message.bot, kbju_menu)
     await message.answer("🍱 Дневник питания", reply_markup=kbju_menu)
-    await _render_day_meals_messages(message, user_id, today, include_back=False, force_refresh=True)
+    await _render_day_meals_messages(
+        message,
+        user_id,
+        target_date,
+        include_back=target_date != date.today(),
+        force_refresh=True,
+    )
+
+
+async def send_today_results(message: Message, user_id: str):
+    """Отправляет результаты за сегодня и возвращает меню раздела в reply-клавиатуру."""
+    await _return_to_food_diary(message, user_id, date.today())
 
 
 @router.message(lambda m: m.text == "📆 Календарь КБЖУ")

@@ -140,12 +140,32 @@ def test_recent_confirm_uses_single_selected_product():
 
     with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal), patch(
         "handlers.meals.MealRepository.save_meal", return_value=saved
-    ) as save_meal, patch("handlers.meals._render_day_meals_messages", new=AsyncMock()):
+    ) as save_meal, patch("handlers.meals._return_to_food_diary", new=AsyncMock()) as return_to_diary:
         asyncio.run(meals.recent_meal_confirm(callback, state))
 
     save_meal.assert_called_once()
+    return_to_diary.assert_awaited_once()
     kwargs = save_meal.call_args.kwargs
     assert kwargs["raw_query"] == "Окрошка без заправки"
     assert kwargs["calories"] == 120
     assert kwargs["protein"] == 6
     assert kwargs["products_json"] == '[{"name": "Окрошка без заправки", "grams": 200, "kcal": 120.0, "protein": 6.0, "fat": 3.0, "carbs": 18.0}]'
+
+
+def test_return_to_food_diary_sends_diary_menu_and_refreshes_today():
+    message = _build_message()
+
+    with patch("handlers.meals.push_menu_stack") as push_stack, patch(
+        "handlers.meals._render_day_meals_messages", new=AsyncMock()
+    ) as render_day:
+        asyncio.run(meals._return_to_food_diary(message, "12345", date.today()))
+
+    push_stack.assert_called_once_with(message.bot, meals.kbju_menu)
+    message.answer.assert_awaited_once_with("🍱 Дневник питания", reply_markup=meals.kbju_menu)
+    render_day.assert_awaited_once_with(
+        message,
+        "12345",
+        date.today(),
+        include_back=False,
+        force_refresh=True,
+    )
