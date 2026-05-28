@@ -468,7 +468,7 @@ def _build_recent_meal_confirm_keyboard(source_meal_id: int, meal_type: str, pag
 async def recent_meal_pick(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = str(callback.from_user.id)
-    _, meal_type, page_str, source_meal_id_str = callback.data.split(":")
+    _, meal_type, page_str, source_meal_id_str = callback.data.split(":", maxsplit=3)
     source_meal_id = int(source_meal_id_str)
     page = int(page_str)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
@@ -485,21 +485,21 @@ async def recent_meal_pick(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(lambda c: c.data.startswith("recent_meal_back:"))
 async def recent_meal_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    _, meal_type, page_str = callback.data.split(":")
+    _, meal_type, page_str = callback.data.split(":", maxsplit=2)
     await _show_recent_meals_page(callback.message, state, meal_type=meal_type, page=int(page_str))
 
 
 @router.callback_query(lambda c: c.data.startswith("recent_meal_page:"))
 async def recent_meal_page(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    _, meal_type, page_str = callback.data.split(":")
+    _, meal_type, page_str = callback.data.split(":", maxsplit=2)
     await _show_recent_meals_page(callback.message, state, meal_type=meal_type, page=int(page_str))
 
 
 @router.callback_query(lambda c: c.data.startswith("recent_meal_edit_weight:"))
 async def recent_meal_edit_weight(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    _, meal_type, page_str, source_meal_id_str = callback.data.split(":")
+    _, meal_type, page_str, source_meal_id_str = callback.data.split(":", maxsplit=3)
     source_meal_id = int(source_meal_id_str)
     await state.set_state(MealEntryStates.editing_meal_weight_manual_input)
     await state.update_data(recent_source_meal_id=source_meal_id, recent_weight_edit_mode=True, recent_meals_page=int(page_str), meal_type=meal_type)
@@ -511,7 +511,7 @@ async def recent_meal_confirm(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = str(callback.from_user.id)
     data = await state.get_data()
-    _, meal_type_raw, _page_str, source_meal_id_str = callback.data.split(":")
+    _, meal_type_raw, _page_str, source_meal_id_str = callback.data.split(":", maxsplit=3)
     source_meal_id = int(source_meal_id_str)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
     if not source_meal:
