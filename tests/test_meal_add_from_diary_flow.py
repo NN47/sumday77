@@ -80,3 +80,13 @@ def test_meal_type_navigation_main_menu_alias():
 
     state.clear.assert_awaited_once()
     go_main_menu.assert_awaited_once_with(message, state)
+
+
+def test_extract_recent_meal_amount_g_from_products_json():
+    meal = SimpleNamespace(products_json='[{"name":"x","grams":40}]')
+    assert meals._extract_recent_meal_amount_g(meal) == 40
+
+
+def test_extract_recent_meal_amount_g_fallback_to_100():
+    meal = SimpleNamespace(products_json='[{"name":"x","grams":"oops"}]')
+    assert meals._extract_recent_meal_amount_g(meal) == 100
