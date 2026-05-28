@@ -3,6 +3,7 @@ import asyncio
 import logging
 import json
 import re
+import math
 from datetime import date
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -435,13 +436,12 @@ async def _show_recent_meals_page(
     all_recent_meals = MealRepository.get_recent_unique_meals(resolved_user_id, limit=64)
     if not all_recent_meals:
         return
-    page = max(1, page)
+    total_pages = max(1, math.ceil(len(all_recent_meals) / RECENT_MEALS_PAGE_SIZE))
+    page = min(max(1, page), total_pages)
     start = (page - 1) * RECENT_MEALS_PAGE_SIZE
     page_items = all_recent_meals[start : start + RECENT_MEALS_PAGE_SIZE]
-    if not page_items:
-        return
     has_prev = page > 1
-    has_next = start + RECENT_MEALS_PAGE_SIZE < len(all_recent_meals)
+    has_next = page < total_pages
     await state.update_data(recent_meals_page=page, meal_type=meal_type)
     await message.answer(
         _format_recent_meals_text(page_items, page),
