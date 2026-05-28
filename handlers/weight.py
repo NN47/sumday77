@@ -25,6 +25,52 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
+
+def _format_weight_for_input(value: float) -> str:
+    """Форматирует вес для подстановки в поле ввода."""
+    formatted = f"{value:.1f}"
+    if formatted.endswith(".0"):
+        return formatted[:-2]
+    return formatted
+
+
+def _build_weight_quick_adjust_keyboard(base_weight: float) -> ReplyKeyboardMarkup:
+    """Клавиатура быстрых изменений веса относительно предыдущего значения."""
+    options = [
+        max(1.0, base_weight - 0.5),
+        max(1.0, base_weight - 0.1),
+        base_weight + 0.1,
+        base_weight + 0.5,
+    ]
+
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text=f"−500 г ({_format_weight_for_input(options[0])})"),
+                KeyboardButton(text=f"−100 г ({_format_weight_for_input(options[1])})"),
+            ],
+            [
+                KeyboardButton(text=f"+100 г ({_format_weight_for_input(options[2])})"),
+                KeyboardButton(text=f"+500 г ({_format_weight_for_input(options[3])})"),
+            ],
+            [KeyboardButton(text="✍️ Ввести вручную")],
+            [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def _resolve_base_weight(user_id: str, existing_weight_value: Optional[str | float] = None) -> Optional[float]:
+    """Возвращает опорный вес для быстрых кнопок."""
+    existing = _to_float_weight(existing_weight_value)
+    if existing is not None and existing > 0:
+        return existing
+    last = WeightRepository.get_last_weight(user_id)
+    if last is not None and last > 0:
+        return float(last)
+    return None
+
+
 # Меню для веса и замеров
 
 weight_menu = ReplyKeyboardMarkup(
@@ -462,13 +508,18 @@ async def add_weight_start(message: Message, state: FSMContext):
             f"✏️ Изменение веса\n\n"
             f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n"
             f"Текущий вес: {existing_weight.value} кг\n\n"
-            f"Введи новый вес в килограммах (например: 72.5):"
+            f"Введи новый вес в килограммах (например: 72.5):",
+            reply_markup=_build_weight_quick_adjust_keyboard(_resolve_base_weight(user_id, existing_weight.value) or 70.0),
         )
     else:
         # Если веса нет, создаем новую запись
         await state.update_data(entry_date=target_date.isoformat(), weight_id=None)
         await state.set_state(WeightStates.entering_weight)
-        await message.answer(f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nВведи свой вес в килограммах (например: 72.5):")
+        base_weight = _resolve_base_weight(user_id)
+        await message.answer(
+            f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nВведи свой вес в килограммах (например: 72.5):",
+            reply_markup=_build_weight_quick_adjust_keyboard(base_weight or 70.0),
+        )
 
 
 @router.message(WeightStates.choosing_date_for_weight)
@@ -502,7 +553,11 @@ async def handle_weight_date_choice(message: Message, state: FSMContext):
     
     await state.update_data(entry_date=target_date.isoformat())
     await state.set_state(WeightStates.entering_weight)
-    await message.answer(f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nВведи свой вес в килограммах (например: 72.5):")
+    base_weight = _resolve_base_weight(str(message.from_user.id))
+    await message.answer(
+        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nВведи свой вес в килограммах (например: 72.5):",
+        reply_markup=_build_weight_quick_adjust_keyboard(base_weight or 70.0),
+    )
 
 
 @router.message(WeightStates.entering_weight)
@@ -520,10 +575,19 @@ async def handle_weight_input(message: Message, state: FSMContext):
         if parsed:
             target_date = parsed.date() if isinstance(parsed, datetime) else date.today()
             await state.update_data(entry_date=target_date.isoformat())
-            await message.answer(f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nВведи свой вес в килограммах (например: 72.5):")
+            base_weight = _resolve_base_weight(user_id)
+            await message.answer(
+                f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\n"
+                "Введи свой вес в килограммах (например: 72.5):",
+                reply_markup=_build_weight_quick_adjust_keyboard(base_weight or 70.0),
+            )
             return
     
-    weight_value = parse_weight(message.text)
+    if message.text == "✍️ Ввести вручную":
+        await message.answer("Ок, введи вес в килограммах числом, например: 72.5")
+        return
+
+    weight_value = parse_weight(message.text.split("(")[-1].replace(")", "") if "(" in message.text else message.text)
     if weight_value is None or weight_value <= 0:
         await message.answer("⚠️ Введи положительное число (например: 72.5 или 72,5)")
         return
@@ -1010,7 +1074,8 @@ async def add_weight_from_calendar(callback: CallbackQuery, state: FSMContext):
             f"✏️ Изменение веса\n\n"
             f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n"
             f"Текущий вес: {existing_weight.value} кг\n\n"
-            f"Введи новый вес в килограммах (например: 72.5):"
+            f"Введи новый вес в килограммах (например: 72.5):",
+            reply_markup=_build_weight_quick_adjust_keyboard(_resolve_base_weight(user_id, existing_weight.value) or 70.0),
         )
     else:
         # Если веса нет, создаем новую запись
