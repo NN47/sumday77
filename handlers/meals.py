@@ -2231,16 +2231,16 @@ def _build_weight_editor_keyboard(product_idx: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="−100 г", callback_data=f"meal_wchg:{product_idx}:-100"),
-                InlineKeyboardButton(text="−50 г", callback_data=f"meal_wchg:{product_idx}:-50"),
-                InlineKeyboardButton(text="+50 г", callback_data=f"meal_wchg:{product_idx}:50"),
-                InlineKeyboardButton(text="+100 г", callback_data=f"meal_wchg:{product_idx}:100"),
+                InlineKeyboardButton(text="−1000 г", callback_data=f"meal_wchg:{product_idx}:-1000"),
+                InlineKeyboardButton(text="−500 г", callback_data=f"meal_wchg:{product_idx}:-500"),
+                InlineKeyboardButton(text="+500 г", callback_data=f"meal_wchg:{product_idx}:500"),
+                InlineKeyboardButton(text="+1000 г", callback_data=f"meal_wchg:{product_idx}:1000"),
             ],
             [
-                InlineKeyboardButton(text="−25 г", callback_data=f"meal_wchg:{product_idx}:-25"),
-                InlineKeyboardButton(text="−10 г", callback_data=f"meal_wchg:{product_idx}:-10"),
-                InlineKeyboardButton(text="+10 г", callback_data=f"meal_wchg:{product_idx}:10"),
-                InlineKeyboardButton(text="+25 г", callback_data=f"meal_wchg:{product_idx}:25"),
+                InlineKeyboardButton(text="−250 г", callback_data=f"meal_wchg:{product_idx}:-250"),
+                InlineKeyboardButton(text="−100 г", callback_data=f"meal_wchg:{product_idx}:-100"),
+                InlineKeyboardButton(text="+100 г", callback_data=f"meal_wchg:{product_idx}:100"),
+                InlineKeyboardButton(text="+250 г", callback_data=f"meal_wchg:{product_idx}:250"),
             ],
             [
                 InlineKeyboardButton(text="−5 г", callback_data=f"meal_wchg:{product_idx}:-5"),
@@ -2579,6 +2579,8 @@ async def edit_last_meal(message: Message, state: FSMContext):
         )
         return
     
+    initial_product_idx = 0 if len(products) == 1 else None
+
     # Сохраняем данные в FSM для редактирования веса
     await state.set_state(MealEntryStates.editing_meal_weight)
     await state.update_data(
@@ -2587,8 +2589,15 @@ async def edit_last_meal(message: Message, state: FSMContext):
         saved_products=products,
         weight_drafts={},
         kbju_drafts={},
-        editing_product_idx=None,
+        editing_product_idx=initial_product_idx,
     )
+
+    if initial_product_idx is not None:
+        await message.answer(
+            _render_weight_editor_text(products[initial_product_idx]),
+            reply_markup=_build_weight_editor_keyboard(initial_product_idx),
+        )
+        return
 
     # Сразу переходим к изменению веса продукта
     await message.answer(
@@ -2623,6 +2632,7 @@ async def _start_meal_edit_flow(
         return
 
     products = _extract_products_for_edit(meal)
+    initial_product_idx = 0 if len(products) == 1 else None
     
     if not products:
         await message.answer(
@@ -2638,9 +2648,16 @@ async def _start_meal_edit_flow(
         saved_products=products,
         weight_drafts={},
         kbju_drafts={},
-        editing_product_idx=None,
+        editing_product_idx=initial_product_idx,
     )
     await state.set_state(MealEntryStates.editing_meal_weight)
+
+    if initial_product_idx is not None:
+        await message.answer(
+            _render_weight_editor_text(products[initial_product_idx]),
+            reply_markup=_build_weight_editor_keyboard(initial_product_idx),
+        )
+        return
 
     await message.answer(
         "✏️ Выбери продукт для редактирования:",
