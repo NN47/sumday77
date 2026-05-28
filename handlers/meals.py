@@ -453,6 +453,26 @@ def _render_recent_meal_confirm_text(meal_type: str, meal, amount_g: int = 100) 
         f"Б {meal.protein:.1f} / Ж {meal.fat:.1f} / У {meal.carbs:.1f}"
     )
 
+def _extract_recent_meal_amount_g(meal) -> int:
+    """Возвращает исходную граммовку продукта из products_json, если доступно."""
+    raw_products = getattr(meal, "products_json", None)
+    if not raw_products:
+        return 100
+    try:
+        parsed = json.loads(raw_products)
+    except Exception:
+        return 100
+    if not isinstance(parsed, list) or not parsed:
+        return 100
+    grams = parsed[0].get("grams")
+    try:
+        grams_value = float(grams)
+    except (TypeError, ValueError):
+        return 100
+    if grams_value <= 0:
+        return 100
+    return max(1, int(round(grams_value)))
+
 
 def _build_recent_meal_confirm_keyboard(source_meal_id: int, meal_type: str, page: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -476,8 +496,9 @@ async def recent_meal_pick(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("❌ Не удалось найти продукт в истории.")
         return
     await state.update_data(recent_source_meal_id=source_meal_id, recent_custom_amount_g=None, recent_meals_page=page, meal_type=meal_type)
+    source_amount_g = _extract_recent_meal_amount_g(source_meal)
     await callback.message.answer(
-        _render_recent_meal_confirm_text(meal_type, source_meal),
+        _render_recent_meal_confirm_text(meal_type, source_meal, amount_g=source_amount_g),
         reply_markup=_build_recent_meal_confirm_keyboard(source_meal_id, meal_type, page),
     )
 
@@ -524,7 +545,7 @@ async def recent_meal_confirm(callback: CallbackQuery, state: FSMContext):
     except ValueError:
         entry_date = date.today()
     custom_amount = data.get("recent_custom_amount_g")
-    old_amount = 100.0
+    old_amount = float(_extract_recent_meal_amount_g(source_meal))
     ratio = float(custom_amount) / old_amount if custom_amount else 1.0
     new_meal = MealRepository.save_meal(
         user_id=user_id,
