@@ -175,6 +175,18 @@ def build_supplement_calendar_keyboard(user_id: str, year: int, month: int) -> I
     )
 
 
+def build_supplement_intake_date_calendar_keyboard(user_id: str, year: int, month: int) -> InlineKeyboardMarkup:
+    """Строит календарь выбора даты для отметки приёма добавки."""
+    return build_calendar_keyboard(
+        user_id=user_id,
+        year=year,
+        month=month,
+        callback_prefix="supintakecal",
+        marker="💊",
+        get_days_func=get_month_supplement_days,
+    )
+
+
 def build_supplement_day_actions_keyboard(entries: list[dict], target_date: date) -> InlineKeyboardMarkup:
     """Строит клавиатуру действий для дня в календаре добавок."""
     from aiogram.types import InlineKeyboardButton
