@@ -30,6 +30,7 @@ from utils.supplement_keyboards import (
 from utils.calendar_utils import (
     build_supplement_calendar_keyboard,
     build_supplement_day_actions_keyboard,
+    build_supplement_intake_date_calendar_keyboard,
 )
 from database.repositories import SupplementRepository
 from states.user_states import SupplementStates
@@ -162,6 +163,22 @@ async def handle_supplement_name(message: Message, state: FSMContext):
     )
 
 
+async def send_supplement_history_time_prompt(
+    message: Message, target_date: date, prefix: str = ""
+):
+    """Просит указать время приёма добавки для выбранной даты."""
+    from utils.supplement_keyboards import supplement_history_time_menu
+
+    push_menu_stack(message.bot, supplement_history_time_menu())
+    await message.answer(
+        f"{prefix}📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\n"
+        "Укажи время приёма в формате ЧЧ:ММ. Например: 09:30\n"
+        "Можно нажать «📅 Выбрать дату», чтобы отметить приём за другой день.\n"
+        "Или нажми «⏭️ Пропустить», чтобы оставить время по умолчанию.",
+        reply_markup=supplement_history_time_menu(),
+    )
+
+
 async def start_log_supplement_flow(message: Message, state: FSMContext, user_id: str):
     """Начинает процесс отметки приёма добавки."""
     supplements_list = SupplementRepository.get_supplements(user_id)
@@ -235,14 +252,7 @@ async def log_supplement_intake(message: Message, state: FSMContext):
         entry_date=target_date.isoformat(),
     )
     await state.set_state(SupplementStates.entering_history_time)
-    from utils.supplement_keyboards import supplement_history_time_menu
-    push_menu_stack(message.bot, supplement_history_time_menu())
-    await message.answer(
-        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\n"
-        "Укажи время приёма в формате ЧЧ:ММ. Например: 09:30\n"
-        "Или нажми «⏭️ Пропустить», чтобы оставить время по умолчанию.",
-        reply_markup=supplement_history_time_menu(),
-    )
+    await send_supplement_history_time_prompt(message, target_date)
 
 
 @router.message(SupplementStates.choosing_date_for_intake)
@@ -282,14 +292,7 @@ async def handle_intake_date_choice(message: Message, state: FSMContext):
     
     await state.update_data(entry_date=target_date.isoformat())
     await state.set_state(SupplementStates.entering_history_time)
-    from utils.supplement_keyboards import supplement_history_time_menu
-    push_menu_stack(message.bot, supplement_history_time_menu())
-    await message.answer(
-        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\n"
-        "Укажи время приёма в формате ЧЧ:ММ. Например: 09:30\n"
-        "Или нажми «⏭️ Пропустить», чтобы оставить время по умолчанию.",
-        reply_markup=supplement_history_time_menu(),
-    )
+    await send_supplement_history_time_prompt(message, target_date)
 
 
 @router.message(SupplementStates.entering_history_time)
@@ -302,24 +305,46 @@ async def handle_history_time(message: Message, state: FSMContext):
         return
     
     time_text = message.text.strip()
+    if time_text == "📅 Выбрать дату":
+        data = await state.get_data()
+        entry_date_str = data.get("entry_date", date.today().isoformat())
+        try:
+            selected_date = (
+                date.fromisoformat(entry_date_str)
+                if isinstance(entry_date_str, str)
+                else date.today()
+            )
+        except ValueError:
+            selected_date = date.today()
+        user_id = str(message.from_user.id)
+        await message.answer(
+            "Выбери день для отметки приёма добавки:",
+            reply_markup=build_supplement_intake_date_calendar_keyboard(
+                user_id, selected_date.year, selected_date.month
+            ),
+        )
+        return
+
     if time_text == "⏭️ Пропустить":
         data = await state.get_data()
         entry_date_str = data.get("entry_date", date.today().isoformat())
+        if isinstance(entry_date_str, str):
+            try:
+                entry_date = date.fromisoformat(entry_date_str)
+            except ValueError:
+                entry_date = date.today()
+        else:
+            entry_date = date.today()
+
         original_timestamp = data.get("original_timestamp")
         default_timestamp = None
         if isinstance(original_timestamp, str):
             try:
-                default_timestamp = datetime.fromisoformat(original_timestamp)
+                original_dt = datetime.fromisoformat(original_timestamp)
+                default_timestamp = datetime.combine(entry_date, original_dt.time())
             except (ValueError, TypeError):
                 default_timestamp = None
         if default_timestamp is None:
-            if isinstance(entry_date_str, str):
-                try:
-                    entry_date = date.fromisoformat(entry_date_str)
-                except ValueError:
-                    entry_date = date.today()
-            else:
-                entry_date = date.today()
             default_timestamp = datetime.combine(entry_date, datetime.now().time())
         await state.update_data(timestamp=default_timestamp.isoformat())
         await state.set_state(SupplementStates.entering_history_amount)
@@ -788,14 +813,7 @@ async def mark_supplement_from_details(message: Message, state: FSMContext):
         entry_date=target_date.isoformat(),
     )
     await state.set_state(SupplementStates.entering_history_time)
-    from utils.supplement_keyboards import supplement_history_time_menu
-    push_menu_stack(message.bot, supplement_history_time_menu())
-    await message.answer(
-        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\n"
-        "Укажи время приёма в формате ЧЧ:ММ. Например: 09:30\n"
-        "Или нажми «⏭️ Пропустить», чтобы оставить время по умолчанию.",
-        reply_markup=supplement_history_time_menu(),
-    )
+    await send_supplement_history_time_prompt(message, target_date)
 
 
 @router.message(SupplementStates.editing_supplement, lambda m: m.text == "💾 Сохранить")
@@ -1660,6 +1678,38 @@ async def close_supplement_calendar(callback: CallbackQuery):
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
+
+
+@router.callback_query(lambda c: c.data.startswith("supintakecal_nav:"))
+async def navigate_supplement_intake_date_calendar(callback: CallbackQuery):
+    """Навигация по календарю выбора даты для отметки приёма добавки."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    year, month = map(int, parts[1].split("-"))
+    user_id = str(callback.from_user.id)
+    keyboard = build_supplement_intake_date_calendar_keyboard(user_id, year, month)
+    await callback.message.edit_reply_markup(reply_markup=keyboard)
+
+
+@router.callback_query(lambda c: c.data.startswith("supintakecal_day:"))
+async def select_supplement_intake_date(callback: CallbackQuery, state: FSMContext):
+    """Выбирает дату для отметки приёма добавки и возвращает пользователя к вводу времени."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    target_date = date.fromisoformat(parts[1])
+    await state.update_data(entry_date=target_date.isoformat())
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    await state.set_state(SupplementStates.entering_history_time)
+    await send_supplement_history_time_prompt(
+        callback.message,
+        target_date,
+        prefix="✅ Дата изменена.\n",
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("supcal_nav:"))
