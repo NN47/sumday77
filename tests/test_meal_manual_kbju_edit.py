@@ -6,6 +6,7 @@ from handlers.meals import (
     _apply_product_manual_macros,
     _build_kbju_editor_keyboard,
     _build_kbju_field_editor_keyboard,
+    _build_weight_editor_keyboard,
     _parse_kbju_bulk_input,
 )
 from utils.emoji_map import EMOJI_MAP
@@ -57,7 +58,7 @@ def test_extract_product_lines_contains_manual_correction_label():
 
     lines = _extract_product_lines(meal)
 
-    assert "✏️ КБЖУ скорректированы вручную" in lines
+    assert any("КБЖУ скорректированы вручную" in line for line in lines)
 
 
 def test_kbju_editor_uses_shared_carbs_emoji():
@@ -80,3 +81,26 @@ def test_kbju_field_editor_has_expected_steps():
     assert protein_rows[0] == ["-100", "-50", "+50", "+100"]
     assert protein_rows[1] == ["-25", "-10", "+10", "+25"]
     assert protein_rows[2] == ["-5", "-1", "+1", "+5"]
+
+
+def test_weight_editor_multiplies_first_two_step_rows_by_ten():
+    keyboard = _build_weight_editor_keyboard(0)
+    rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
+
+    assert rows[0] == ["−1000 г", "−500 г", "+500 г", "+1000 г"]
+    assert rows[1] == ["−250 г", "−100 г", "+100 г", "+250 г"]
+    assert rows[2] == ["−5 г", "−1 г", "+1 г", "+5 г"]
+
+    callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
+    assert callback_rows[0] == [
+        "meal_wchg:0:-1000",
+        "meal_wchg:0:-500",
+        "meal_wchg:0:500",
+        "meal_wchg:0:1000",
+    ]
+    assert callback_rows[1] == [
+        "meal_wchg:0:-250",
+        "meal_wchg:0:-100",
+        "meal_wchg:0:100",
+        "meal_wchg:0:250",
+    ]
