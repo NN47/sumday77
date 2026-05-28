@@ -406,12 +406,11 @@ async def _ensure_meal_type_selected(
     return False
 
 
-async def _show_input_methods(message: Message, state: FSMContext) -> None:
+async def _show_input_methods(message: Message, state: FSMContext, *, user_id: str | None = None) -> None:
     """Показывает меню способов добавления еды для уже выбранного типа приёма."""
     await state.set_state(MealEntryStates.choosing_meal_type)
-    user_id = str(message.from_user.id)
     meal_type = normalize_meal_type((await state.get_data()).get("meal_type"), fallback=MealType.SNACK.value)
-    await _show_recent_meals_page(message, state, meal_type=meal_type, page=1)
+    await _show_recent_meals_page(message, state, meal_type=meal_type, page=1, user_id=user_id)
     text = (
         "<b>Теперь выбери, из недавних продуктов ☝️ или добавь прием пищи одним из предложенных способов:</b>\n"
         "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
@@ -424,9 +423,16 @@ async def _show_input_methods(message: Message, state: FSMContext) -> None:
     await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
 
 
-async def _show_recent_meals_page(message: Message, state: FSMContext, meal_type: str, page: int) -> None:
-    user_id = str(message.from_user.id)
-    all_recent_meals = MealRepository.get_recent_unique_meals(user_id, limit=64)
+async def _show_recent_meals_page(
+    message: Message,
+    state: FSMContext,
+    meal_type: str,
+    page: int,
+    *,
+    user_id: str | None = None,
+) -> None:
+    resolved_user_id = user_id or str(message.from_user.id)
+    all_recent_meals = MealRepository.get_recent_unique_meals(resolved_user_id, limit=64)
     if not all_recent_meals:
         return
     page = max(1, page)
@@ -507,14 +513,26 @@ async def recent_meal_pick(callback: CallbackQuery, state: FSMContext):
 async def recent_meal_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     _, meal_type, page_str = callback.data.split(":", maxsplit=2)
-    await _show_recent_meals_page(callback.message, state, meal_type=meal_type, page=int(page_str))
+    await _show_recent_meals_page(
+        callback.message,
+        state,
+        meal_type=meal_type,
+        page=int(page_str),
+        user_id=str(callback.from_user.id),
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("recent_meal_page:"))
 async def recent_meal_page(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     _, meal_type, page_str = callback.data.split(":", maxsplit=2)
-    await _show_recent_meals_page(callback.message, state, meal_type=meal_type, page=int(page_str))
+    await _show_recent_meals_page(
+        callback.message,
+        state,
+        meal_type=meal_type,
+        page=int(page_str),
+        user_id=str(callback.from_user.id),
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("recent_meal_edit_weight:"))
@@ -2516,7 +2534,7 @@ async def add_meal_from_diary_block(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         f"Добавляем в приём пищи: {display_meal_type(meal_type)} ({target_date.strftime('%d.%m.%Y')})"
     )
-    await _show_input_methods(callback.message, state)
+    await _show_input_methods(callback.message, state, user_id=str(callback.from_user.id))
 
 
 @router.callback_query(lambda c: c.data.startswith("edit_meal:"))
