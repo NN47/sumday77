@@ -35,7 +35,7 @@ def _format_weight_for_input(value: float) -> str:
 
 
 def _build_weight_quick_adjust_keyboard(base_weight: float) -> ReplyKeyboardMarkup:
-    """Клавиатура быстрых изменений веса относительно предыдущего значения."""
+    """Клавиатура быстрых изменений веса относительно последнего внесённого значения."""
     options = [
         max(1.0, base_weight - 0.5),
         max(1.0, base_weight - 0.1),
@@ -517,7 +517,9 @@ async def add_weight_start(message: Message, state: FSMContext):
         await state.set_state(WeightStates.entering_weight)
         base_weight = _resolve_base_weight(user_id)
         await message.answer(
-            f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nВведи свой вес в килограммах (например: 72.5):",
+            f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n"
+            f"Последний внесённый вес: {(f'{base_weight:.1f}'.rstrip('0').rstrip('.') if base_weight else 'нет данных')} кг\n\n"
+            "Введи свой вес в килограммах (например: 72.5):",
             reply_markup=_build_weight_quick_adjust_keyboard(base_weight or 70.0),
         )
 
@@ -555,7 +557,9 @@ async def handle_weight_date_choice(message: Message, state: FSMContext):
     await state.set_state(WeightStates.entering_weight)
     base_weight = _resolve_base_weight(str(message.from_user.id))
     await message.answer(
-        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nВведи свой вес в килограммах (например: 72.5):",
+        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n"
+        f"Последний внесённый вес: {(f'{base_weight:.1f}'.rstrip('0').rstrip('.') if base_weight else 'нет данных')} кг\n\n"
+        "Введи свой вес в килограммах (например: 72.5):",
         reply_markup=_build_weight_quick_adjust_keyboard(base_weight or 70.0),
     )
 
@@ -577,7 +581,8 @@ async def handle_weight_input(message: Message, state: FSMContext):
             await state.update_data(entry_date=target_date.isoformat())
             base_weight = _resolve_base_weight(user_id)
             await message.answer(
-                f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\n"
+                f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n"
+                f"Последний внесённый вес: {(f'{base_weight:.1f}'.rstrip('0').rstrip('.') if base_weight else 'нет данных')} кг\n\n"
                 "Введи свой вес в килограммах (например: 72.5):",
                 reply_markup=_build_weight_quick_adjust_keyboard(base_weight or 70.0),
             )
