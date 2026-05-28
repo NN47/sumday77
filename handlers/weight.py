@@ -154,30 +154,31 @@ def _format_change(current_value: float, reference_value: Optional[float]) -> st
     return f"{sign}{change:.1f} кг"
 
 
-def _detect_trend(last_weights: list) -> str:
-    """Определяет тренд на основе 3 последних записей."""
-    if len(last_weights) < 3:
+def _detect_trend(weights: list) -> str:
+    """Определяет тренд по изменению относительно ближайшей записи недельной давности."""
+    if len(weights) < 2:
         return "Недостаточно данных"
 
-    latest = _to_float_weight(last_weights[0].value)
-    previous = _to_float_weight(last_weights[1].value)
-    oldest = _to_float_weight(last_weights[2].value)
-    if latest is None or previous is None or oldest is None:
+    current_entry = weights[0]
+    current_value = _to_float_weight(current_entry.value)
+    if current_value is None:
         return "Недостаточно данных"
 
+    reference_entry = _find_reference_weight(weights[1:], current_entry.date, 7)
+    if reference_entry is None:
+        reference_entry = weights[-1]
+
+    reference_value = _to_float_weight(reference_entry.value)
+    if reference_value is None:
+        return "Недостаточно данных"
+
+    change = current_value - reference_value
     epsilon = 0.15
-    if latest < previous - epsilon and previous < oldest - epsilon:
+    if change < -epsilon:
         return "Снижение веса 📉"
-    if latest > previous + epsilon and previous > oldest + epsilon:
+    if change > epsilon:
         return "Рост веса 📈"
     return "Стабильно ⚖️"
-
-
-def _build_progress_bar(progress_percent: float, length: int = 10) -> str:
-    """Возвращает текстовый прогресс-бар."""
-    clamped = max(0.0, min(100.0, progress_percent))
-    filled = round((clamped / 100) * length)
-    return f"{'█' * filled}{'░' * (length - filled)} {clamped:.0f}%"
 
 
 def _parse_measurement_value(raw_value: str) -> Optional[float]:
@@ -324,23 +325,16 @@ async def my_weight(message: Message):
 
     target_weight = WeightRepository.get_target_weight(user_id)
     to_goal_text = "Цель веса не задана"
-    progress_text = "Прогресс: недоступен"
     if target_weight is not None:
         delta_to_target = target_weight - current_weight
         if abs(delta_to_target) < 0.05:
             to_goal_text = "Цель достигнута 🎉"
-            progress_text = f"Прогресс:\n{_build_progress_bar(100)}"
+        elif delta_to_target > 0:
+            to_goal_text = f"Осталось набрать: {delta_to_target:.1f} кг"
         else:
-            start_weight = _to_float_weight(weights[-1].value)
-            if start_weight is not None and abs(target_weight - start_weight) > 0:
-                progress = (current_weight - start_weight) / (target_weight - start_weight) * 100
-                progress_text = f"Прогресс:\n{_build_progress_bar(progress)}"
-            if delta_to_target > 0:
-                to_goal_text = f"Осталось набрать: {delta_to_target:.1f} кг"
-            else:
-                to_goal_text = f"Осталось: {abs(delta_to_target):.1f} кг"
+            to_goal_text = f"Осталось: {abs(delta_to_target):.1f} кг"
 
-    trend_text = _detect_trend(weights[:3])
+    trend_text = _detect_trend(weights)
 
     speed_text = "Недостаточно данных"
     if len(weights) > 1:
@@ -372,7 +366,6 @@ async def my_weight(message: Message):
         f"{trend_text}\n\n"
         "🚀 Средняя скорость:\n"
         f"{speed_text}\n\n"
-        f"{progress_text}\n\n"
         "📅 Последние записи:\n\n"
         f"{recent_text}"
     )
