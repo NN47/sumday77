@@ -34,7 +34,7 @@ class WeightRepository:
             query = (
                 session.query(Weight)
                 .filter(Weight.user_id == user_id)
-                .order_by(Weight.date.desc())
+                .order_by(Weight.date.desc(), Weight.id.desc())
             )
             if limit:
                 query = query.limit(limit)
@@ -94,7 +94,7 @@ class WeightRepository:
             weight = (
                 session.query(Weight)
                 .filter(Weight.user_id == user_id)
-                .order_by(Weight.date.desc())
+                .order_by(Weight.date.desc(), Weight.id.desc())
                 .first()
             )
             if weight:
