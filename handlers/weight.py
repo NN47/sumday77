@@ -489,17 +489,15 @@ def format_measurements_summary(measurements) -> str:
     return ", ".join(parts) if parts else "нет данных"
 
 
-@router.message(lambda m: m.text == "➕ Добавить вес")
-async def add_weight_start(message: Message, state: FSMContext):
-    """Начинает процесс добавления веса за сегодня."""
-    user_id = str(message.from_user.id)
+async def start_add_weight_for_user(message: Message, state: FSMContext, user_id: str):
+    """Начинает процесс добавления веса за сегодня для указанного пользователя."""
     logger.info(f"User {user_id} started adding weight for today")
-    
+
     target_date = date.today()
-    
+
     # Проверяем, есть ли уже вес за сегодня
     existing_weight = WeightRepository.get_weight_for_date(user_id, target_date)
-    
+
     if existing_weight:
         # Если вес уже есть, переходим в режим редактирования
         await state.update_data(entry_date=target_date.isoformat(), weight_id=existing_weight.id)
@@ -522,6 +520,12 @@ async def add_weight_start(message: Message, state: FSMContext):
             "Введи свой вес в килограммах (например: 72.5):",
             reply_markup=_build_weight_quick_adjust_keyboard(base_weight or 70.0),
         )
+
+
+@router.message(lambda m: m.text == "➕ Добавить вес")
+async def add_weight_start(message: Message, state: FSMContext):
+    """Начинает процесс добавления веса за сегодня."""
+    await start_add_weight_for_user(message, state, str(message.from_user.id))
 
 
 @router.message(WeightStates.choosing_date_for_weight)
