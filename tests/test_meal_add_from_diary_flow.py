@@ -10,9 +10,13 @@ class _DummyState:
     def __init__(self):
         self._data = {}
         self.set_state = AsyncMock()
+        self.clear = AsyncMock()
 
     async def update_data(self, **kwargs):
         self._data.update(kwargs)
+
+    async def get_data(self):
+        return dict(self._data)
 
 
 
@@ -55,7 +59,7 @@ def test_add_meal_from_diary_block_sets_context_and_opens_methods():
     callback.answer.assert_awaited_once()
     assert state._data["meal_type"] == "lunch"
     assert state._data["entry_date"] == target_date
-    show_methods.assert_awaited_once_with(callback.message, state)
+    show_methods.assert_awaited_once_with(callback.message, state, user_id="12345")
 
 
 def test_meal_type_navigation_back_supports_hook_arrow():
@@ -90,3 +94,58 @@ def test_extract_recent_meal_amount_g_from_products_json():
 def test_extract_recent_meal_amount_g_fallback_to_100():
     meal = SimpleNamespace(products_json='[{"name":"x","grams":"oops"}]')
     assert meals._extract_recent_meal_amount_g(meal) == 100
+
+
+def test_expand_recent_meals_splits_multi_product_entries():
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Кура гриль 150 г, окрошка 200 г",
+        description=None,
+        products_json=(
+            '[{"name":"Кура гриль","grams":150,"kcal":249,"protein":35,"fat":9,"carbs":16},'
+            '{"name":"Окрошка без заправки","grams":200,"kcal":120,"protein":6,"fat":3,"carbs":18}]'
+        ),
+        calories=369,
+        protein=41,
+        fat=12,
+        carbs=34,
+    )
+
+    items = meals._expand_recent_meals([meal])
+
+    assert [item.title for item in items] == ["Кура гриль", "Окрошка без заправки"]
+    assert [item.product_index for item in items] == [0, 1]
+    assert items[0].amount_g == 150
+    assert items[1].calories == 120
+
+
+def test_recent_confirm_uses_single_selected_product():
+    callback = _build_callback("recent_meal_confirm:dinner:1:7:1")
+    state = _DummyState()
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Кура гриль 150 г, окрошка 200 г",
+        description=None,
+        products_json=(
+            '[{"name":"Кура гриль","grams":150,"kcal":249,"protein":35,"fat":9,"carbs":16},'
+            '{"name":"Окрошка без заправки","grams":200,"kcal":120,"protein":6,"fat":3,"carbs":18}]'
+        ),
+        calories=369,
+        protein=41,
+        fat=12,
+        carbs=34,
+        api_details=None,
+    )
+    saved = SimpleNamespace(id=99)
+
+    with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal), patch(
+        "handlers.meals.MealRepository.save_meal", return_value=saved
+    ) as save_meal, patch("handlers.meals._render_day_meals_messages", new=AsyncMock()):
+        asyncio.run(meals.recent_meal_confirm(callback, state))
+
+    save_meal.assert_called_once()
+    kwargs = save_meal.call_args.kwargs
+    assert kwargs["raw_query"] == "Окрошка без заправки"
+    assert kwargs["calories"] == 120
+    assert kwargs["protein"] == 6
+    assert kwargs["products_json"] == '[{"name": "Окрошка без заправки", "grams": 200, "kcal": 120.0, "protein": 6.0, "fat": 3.0, "carbs": 18.0}]'

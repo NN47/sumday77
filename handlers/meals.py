@@ -4,6 +4,7 @@ import logging
 import json
 import re
 import math
+from dataclasses import dataclass
 from datetime import date
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -76,6 +77,20 @@ ADD_METHOD_TEXTS = {
 RECENT_MEALS_PAGE_SIZE = 8
 
 
+@dataclass(frozen=True)
+class RecentMealItem:
+    """Один продукт для отображения в списке недавних продуктов."""
+
+    source_meal_id: int
+    product_index: int | None
+    title: str
+    amount_g: int
+    calories: float
+    protein: float
+    fat: float
+    carbs: float
+
+
 def _truncate_recent_name(name: str, limit: int = 22) -> str:
     clean = (name or "").strip()
     if len(clean) <= limit:
@@ -92,32 +107,124 @@ def _normalize_recent_meal_title(meal) -> str:
     return raw_title or "Продукт"
 
 
-def _format_recent_meals_text(recent_meals: list, page: int) -> str:
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_recent_products(meal) -> list[dict]:
+    raw_products = getattr(meal, "products_json", None)
+    if not raw_products:
+        return []
+    try:
+        parsed = json.loads(raw_products)
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [product for product in parsed if isinstance(product, dict)]
+
+
+def _recent_product_title(product: dict) -> str:
+    raw_name = str(product.get("name") or "").strip()
+    if not raw_name or raw_name.lower() == "none":
+        return "Продукт"
+    return raw_name
+
+
+def _recent_product_value(product: dict, *keys: str) -> float:
+    for key in keys:
+        if key in product:
+            return _safe_float(product.get(key))
+    return 0.0
+
+
+def _extract_recent_product_amount_g(product: dict) -> int:
+    grams_value = _safe_float(product.get("grams"), default=0.0)
+    if grams_value <= 0:
+        return 100
+    return max(1, int(round(grams_value)))
+
+
+def _build_recent_item_from_product(meal, product: dict, product_index: int) -> RecentMealItem:
+    return RecentMealItem(
+        source_meal_id=meal.id,
+        product_index=product_index,
+        title=_recent_product_title(product),
+        amount_g=_extract_recent_product_amount_g(product),
+        calories=_recent_product_value(product, "kcal", "calories"),
+        protein=_recent_product_value(product, "protein", "protein_g"),
+        fat=_recent_product_value(product, "fat", "fat_total_g"),
+        carbs=_recent_product_value(product, "carbs", "carbohydrates_total_g"),
+    )
+
+
+def _build_recent_item_from_meal(meal) -> RecentMealItem:
+    return RecentMealItem(
+        source_meal_id=meal.id,
+        product_index=None,
+        title=_normalize_recent_meal_title(meal),
+        amount_g=_extract_recent_meal_amount_g(meal),
+        calories=float(meal.calories or 0),
+        protein=float(meal.protein or 0),
+        fat=float(meal.fat or 0),
+        carbs=float(meal.carbs or 0),
+    )
+
+
+def _expand_recent_meals(recent_meals: list, limit: int = 64) -> list[RecentMealItem]:
+    """Разворачивает записи истории в отдельные продукты для выбора по одному."""
+    items: list[RecentMealItem] = []
+    seen: set[str] = set()
+    for meal in recent_meals:
+        products = _parse_recent_products(meal)
+        meal_items = [
+            _build_recent_item_from_product(meal, product, idx)
+            for idx, product in enumerate(products)
+            if _recent_product_title(product) != "Продукт"
+        ]
+        if not meal_items:
+            meal_items = [_build_recent_item_from_meal(meal)]
+
+        for item in meal_items:
+            key = item.title.strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            items.append(item)
+            if len(items) >= limit:
+                return items
+    return items
+
+
+def _format_recent_meals_text(recent_meals: list[RecentMealItem], page: int) -> str:
     start_idx = (page - 1) * RECENT_MEALS_PAGE_SIZE
     lines: list[str] = [f"🕘 Недавно добавленные • страница {page}", ""]
-    for offset, meal in enumerate(recent_meals, start=start_idx + 1):
-        title = _normalize_recent_meal_title(meal)
+    for offset, item in enumerate(recent_meals, start=start_idx + 1):
         lines.extend(
             [
-                f"{offset}. {title}",
-                f"100 г • {meal.calories:.0f} ккал",
-                f"Б {meal.protein:.1f} / Ж {meal.fat:.1f} / У {meal.carbs:.1f}",
+                f"{offset}. {item.title}",
+                f"{item.amount_g} г • {item.calories:.0f} ккал",
+                f"Б {item.protein:.1f} / Ж {item.fat:.1f} / У {item.carbs:.1f}",
                 "",
             ]
         )
     return "\n".join(lines).strip()
 
 
-def _build_recent_meals_keyboard(recent_meals: list, meal_type: str, page: int, has_prev: bool, has_next: bool) -> InlineKeyboardMarkup:
+def _build_recent_meals_keyboard(recent_meals: list[RecentMealItem], meal_type: str, page: int, has_prev: bool, has_next: bool) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    for offset, meal in enumerate(recent_meals, start=1):
-        title = _truncate_recent_name(_normalize_recent_meal_title(meal))
+    for offset, item in enumerate(recent_meals, start=1):
+        title = _truncate_recent_name(item.title)
         number = (page - 1) * RECENT_MEALS_PAGE_SIZE + offset
+        product_idx = "" if item.product_index is None else str(item.product_index)
         rows.append(
             [
                 InlineKeyboardButton(
                     text=f"{number}️⃣ {title}",
-                    callback_data=f"recent_meal_pick:{meal_type}:{page}:{meal.id}",
+                    callback_data=f"recent_meal_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}",
                 )
             ]
         )
@@ -433,7 +540,8 @@ async def _show_recent_meals_page(
     user_id: str | None = None,
 ) -> None:
     resolved_user_id = user_id or str(message.from_user.id)
-    all_recent_meals = MealRepository.get_recent_unique_meals(resolved_user_id, limit=64)
+    source_meals = MealRepository.get_recent_unique_meals(resolved_user_id, limit=64)
+    all_recent_meals = _expand_recent_meals(source_meals, limit=64)
     if not all_recent_meals:
         return
     total_pages = max(1, math.ceil(len(all_recent_meals) / RECENT_MEALS_PAGE_SIZE))
@@ -451,13 +559,65 @@ async def _show_recent_meals_page(
 
 def _render_recent_meal_confirm_text(meal_type: str, meal, amount_g: int = 100) -> str:
     meal_name = display_meal_type(meal_type).lower()
-    title = _normalize_recent_meal_title(meal)
+    if isinstance(meal, RecentMealItem):
+        title = meal.title
+        calories = meal.calories
+        protein = meal.protein
+        fat = meal.fat
+        carbs = meal.carbs
+    else:
+        title = _normalize_recent_meal_title(meal)
+        calories = float(meal.calories or 0)
+        protein = float(meal.protein or 0)
+        fat = float(meal.fat or 0)
+        carbs = float(meal.carbs or 0)
     return (
         f"Добавить продукт в {meal_name}?\n\n"
         f"{title}\n"
-        f"{amount_g} г • {meal.calories:.0f} ккал\n"
-        f"Б {meal.protein:.1f} / Ж {meal.fat:.1f} / У {meal.carbs:.1f}"
+        f"{amount_g} г • {calories:.0f} ккал\n"
+        f"Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f}"
     )
+
+
+def _get_recent_item_from_source_meal(meal, product_index: int | None) -> RecentMealItem:
+    if product_index is not None:
+        products = _parse_recent_products(meal)
+        if 0 <= product_index < len(products):
+            return _build_recent_item_from_product(meal, products[product_index], product_index)
+    return _build_recent_item_from_meal(meal)
+
+
+def _single_product_json_for_recent_item(meal, item: RecentMealItem, ratio: float = 1.0, amount_g: int | None = None) -> str | None:
+    if item.product_index is None:
+        return meal.products_json
+    products = _parse_recent_products(meal)
+    if 0 <= item.product_index < len(products):
+        product = dict(products[item.product_index])
+        if amount_g is not None:
+            product["grams"] = amount_g
+        for key in ("kcal", "calories"):
+            if key in product:
+                product[key] = _safe_float(product.get(key)) * ratio
+        for key in ("protein", "protein_g"):
+            if key in product:
+                product[key] = _safe_float(product.get(key)) * ratio
+        for key in ("fat", "fat_total_g"):
+            if key in product:
+                product[key] = _safe_float(product.get(key)) * ratio
+        for key in ("carbs", "carbohydrates_total_g"):
+            if key in product:
+                product[key] = _safe_float(product.get(key)) * ratio
+        return json.dumps([product], ensure_ascii=False)
+    return None
+
+
+def _parse_recent_product_index(raw_index: str | None) -> int | None:
+    if raw_index in (None, ""):
+        return None
+    try:
+        return int(raw_index)
+    except (TypeError, ValueError):
+        return None
 
 def _extract_recent_meal_amount_g(meal) -> int:
     """Возвращает исходную граммовку продукта из products_json, если доступно."""
@@ -480,11 +640,12 @@ def _extract_recent_meal_amount_g(meal) -> int:
     return max(1, int(round(grams_value)))
 
 
-def _build_recent_meal_confirm_keyboard(source_meal_id: int, meal_type: str, page: int) -> InlineKeyboardMarkup:
+def _build_recent_meal_confirm_keyboard(source_meal_id: int, meal_type: str, page: int, product_index: int | None = None) -> InlineKeyboardMarkup:
+    product_idx = "" if product_index is None else str(product_index)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Добавить", callback_data=f"recent_meal_confirm:{meal_type}:{page}:{source_meal_id}")],
-            [InlineKeyboardButton(text="✏️ Изменить граммовку", callback_data=f"recent_meal_edit_weight:{meal_type}:{page}:{source_meal_id}")],
+            [InlineKeyboardButton(text="✅ Добавить", callback_data=f"recent_meal_confirm:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
+            [InlineKeyboardButton(text="✏️ Изменить граммовку", callback_data=f"recent_meal_edit_weight:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"recent_meal_back:{meal_type}:{page}")],
         ]
     )
@@ -494,18 +655,26 @@ def _build_recent_meal_confirm_keyboard(source_meal_id: int, meal_type: str, pag
 async def recent_meal_pick(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = str(callback.from_user.id)
-    _, meal_type, page_str, source_meal_id_str = callback.data.split(":", maxsplit=3)
+    parts = callback.data.split(":")
+    _, meal_type, page_str, source_meal_id_str, *product_idx_parts = parts
+    product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
     source_meal_id = int(source_meal_id_str)
     page = int(page_str)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
     if not source_meal:
         await callback.message.answer("❌ Не удалось найти продукт в истории.")
         return
-    await state.update_data(recent_source_meal_id=source_meal_id, recent_custom_amount_g=None, recent_meals_page=page, meal_type=meal_type)
-    source_amount_g = _extract_recent_meal_amount_g(source_meal)
+    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
+    await state.update_data(
+        recent_source_meal_id=source_meal_id,
+        recent_source_product_idx=product_index,
+        recent_custom_amount_g=None,
+        recent_meals_page=page,
+        meal_type=meal_type,
+    )
     await callback.message.answer(
-        _render_recent_meal_confirm_text(meal_type, source_meal, amount_g=source_amount_g),
-        reply_markup=_build_recent_meal_confirm_keyboard(source_meal_id, meal_type, page),
+        _render_recent_meal_confirm_text(meal_type, recent_item, amount_g=recent_item.amount_g),
+        reply_markup=_build_recent_meal_confirm_keyboard(source_meal_id, meal_type, page, product_index),
     )
 
 
@@ -538,10 +707,18 @@ async def recent_meal_page(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(lambda c: c.data.startswith("recent_meal_edit_weight:"))
 async def recent_meal_edit_weight(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    _, meal_type, page_str, source_meal_id_str = callback.data.split(":", maxsplit=3)
+    parts = callback.data.split(":")
+    _, meal_type, page_str, source_meal_id_str, *product_idx_parts = parts
+    product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
     source_meal_id = int(source_meal_id_str)
     await state.set_state(MealEntryStates.editing_meal_weight_manual_input)
-    await state.update_data(recent_source_meal_id=source_meal_id, recent_weight_edit_mode=True, recent_meals_page=int(page_str), meal_type=meal_type)
+    await state.update_data(
+        recent_source_meal_id=source_meal_id,
+        recent_source_product_idx=product_index,
+        recent_weight_edit_mode=True,
+        recent_meals_page=int(page_str),
+        meal_type=meal_type,
+    )
     await callback.message.answer("Введи новую граммовку (в граммах), например: 180")
 
 
@@ -550,7 +727,9 @@ async def recent_meal_confirm(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = str(callback.from_user.id)
     data = await state.get_data()
-    _, meal_type_raw, _page_str, source_meal_id_str = callback.data.split(":", maxsplit=3)
+    parts = callback.data.split(":")
+    _, meal_type_raw, _page_str, source_meal_id_str, *product_idx_parts = parts
+    product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else data.get("recent_source_product_idx"))
     source_meal_id = int(source_meal_id_str)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
     if not source_meal:
@@ -562,19 +741,20 @@ async def recent_meal_confirm(callback: CallbackQuery, state: FSMContext):
         entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
     except ValueError:
         entry_date = date.today()
+    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
     custom_amount = data.get("recent_custom_amount_g")
-    old_amount = float(_extract_recent_meal_amount_g(source_meal))
+    old_amount = float(recent_item.amount_g or 100)
     ratio = float(custom_amount) / old_amount if custom_amount else 1.0
     new_meal = MealRepository.save_meal(
         user_id=user_id,
-        raw_query=source_meal.raw_query,
-        description=source_meal.description,
-        calories=float(source_meal.calories) * ratio,
-        protein=float(source_meal.protein) * ratio,
-        fat=float(source_meal.fat) * ratio,
-        carbs=float(source_meal.carbs) * ratio,
+        raw_query=recent_item.title,
+        description=recent_item.title,
+        calories=float(recent_item.calories) * ratio,
+        protein=float(recent_item.protein) * ratio,
+        fat=float(recent_item.fat) * ratio,
+        carbs=float(recent_item.carbs) * ratio,
         entry_date=entry_date,
-        products_json=source_meal.products_json,
+        products_json=_single_product_json_for_recent_item(source_meal, recent_item, ratio=ratio, amount_g=custom_amount),
         api_details=source_meal.api_details,
         meal_type=meal_type,
     )
@@ -2913,15 +3093,19 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
             await state.clear()
             return
         meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-        ratio = new_weight / 100.0
-        adjusted = type("AdjustedMeal", (), {
-            "raw_query": source_meal.raw_query,
-            "description": source_meal.description,
-            "calories": float(source_meal.calories) * ratio,
-            "protein": float(source_meal.protein) * ratio,
-            "fat": float(source_meal.fat) * ratio,
-            "carbs": float(source_meal.carbs) * ratio,
-        })()
+        product_index = _parse_recent_product_index(data.get("recent_source_product_idx"))
+        recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
+        ratio = new_weight / float(recent_item.amount_g or 100)
+        adjusted = RecentMealItem(
+            source_meal_id=recent_item.source_meal_id,
+            product_index=recent_item.product_index,
+            title=recent_item.title,
+            amount_g=new_weight,
+            calories=float(recent_item.calories) * ratio,
+            protein=float(recent_item.protein) * ratio,
+            fat=float(recent_item.fat) * ratio,
+            carbs=float(recent_item.carbs) * ratio,
+        )
         await state.set_state(MealEntryStates.choosing_meal_type)
         await state.update_data(recent_custom_amount_g=new_weight, recent_weight_edit_mode=False)
         await message.answer(
@@ -2930,6 +3114,7 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
                 int(source_meal_id),
                 meal_type,
                 int(data.get("recent_meals_page") or 1),
+                product_index,
             ),
         )
         return
