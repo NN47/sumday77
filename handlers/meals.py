@@ -75,8 +75,8 @@ ADD_METHOD_TEXTS = {
 }
 
 
-def _format_kbju_summary_block(totals: dict, *, bold_values: bool = True) -> str:
-    """Форматирует блок КБЖУ с акцентом на названиях и значениях."""
+def _format_kbju_summary_block(totals: dict, *, bold_values: bool = False) -> str:
+    """Форматирует блок КБЖУ с акцентом на названиях показателей."""
     value_template = "<b>{value}</b>" if bold_values else "{value}"
     calories = value_template.format(value=f"{float(totals.get('calories', 0) or 0):.0f} ккал")
     protein = value_template.format(value=f"{float(totals.get('protein', 0) or 0):.1f} г")
@@ -2223,7 +2223,7 @@ async def handle_weight_input(message: Message, state: FSMContext):
         lines = [_format_label_result_header("barcode", product_name)]
         raw_query = f"[Штрих-код: {barcode}] {product_name}"
     
-    lines.append(f"📦 <b>Вес:</b> <b>{weight_grams:.0f} г</b>\n")
+    lines.append(f"📦 <b>Вес:</b> {weight_grams:.0f} г\n")
     lines.append("<b>КБЖУ:</b>")
     lines.append(_format_kbju_summary_block(totals_for_db))
     if meal_source == "ocr_openrouter_test":
