@@ -2419,7 +2419,7 @@ def _build_product_actions_keyboard(product_idx: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="⚖️ Изменить вес", callback_data=f"meal_pact_weight:{product_idx}")],
             [InlineKeyboardButton(text="🧮 Исправить КБЖУ", callback_data=f"meal_pact_kbju:{product_idx}")],
             [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"meal_wdelask:{product_idx}")],
-            [InlineKeyboardButton(text="⬅️ К списку продуктов", callback_data="meal_wback_list")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="meal_wback_list")],
         ]
     )
 
@@ -2454,7 +2454,7 @@ def _build_weight_editor_keyboard(product_idx: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🗑 Удалить", callback_data=f"meal_wdelask:{product_idx}"),
             ],
             [
-                InlineKeyboardButton(text="⬅️ К списку продуктов", callback_data="meal_wback_list"),
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="meal_wback_list"),
                 InlineKeyboardButton(text="❌ Отмена", callback_data="meal_wcancel"),
             ],
         ]
