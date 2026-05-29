@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("API_TOKEN", "test-token")
 
-from handlers.weight import _build_weight_quick_adjust_keyboard, _detect_trend, my_weight, weight_menu
+from handlers.weight import _build_weight_quick_adjust_keyboard, _detect_trend, _resolve_quick_weight_value, my_weight, weight_menu
 
 
 class DummyBot:
@@ -69,21 +69,17 @@ def test_weight_dashboard_hides_progress_bar_and_shows_decrease_trend():
     assert "Рост веса 📈" not in text
 
 
-def test_weight_quick_adjust_keyboard_uses_first_two_product_step_rows_times_ten():
+def test_weight_quick_adjust_keyboard_uses_requested_delta_buttons_without_duplicate_weight():
     keyboard = _build_weight_quick_adjust_keyboard(76.9)
     rows = [[button.text for button in row] for row in keyboard.keyboard]
 
-    assert rows[0] == [
-        "−1000 г (75.9)",
-        "−500 г (76.4)",
-        "+500 г (77.4)",
-        "+1000 г (77.9)",
-    ]
-    assert rows[1] == [
-        "−250 г (76.65)",
-        "−100 г (76.8)",
-        "+100 г (77)",
-        "+250 г (77.15)",
-    ]
+    assert rows[0] == ["-1", "-0,5", "+0,5", "+1"]
+    assert rows[1] == ["-0,2", "-0,1", "+0,1", "+0,2"]
     assert rows[2] == ["✍️ Ввести вручную"]
     assert rows[3] == ["⬅️ Назад", "🔄 Главное меню"]
+
+
+def test_quick_weight_delta_resolves_against_base_weight():
+    assert _resolve_quick_weight_value("-0,5", 76.9) == 76.4
+    assert round(_resolve_quick_weight_value("+0,2", 76.9), 1) == 77.1
+    assert _resolve_quick_weight_value("72.5", 76.9) is None
