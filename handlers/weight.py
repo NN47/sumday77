@@ -28,34 +28,48 @@ router = Router()
 
 def _format_weight_for_input(value: float) -> str:
     """Форматирует вес для подстановки в поле ввода."""
-    formatted = f"{value:.1f}"
-    if formatted.endswith(".0"):
-        return formatted[:-2]
-    return formatted
+    formatted = f"{value:.2f}"
+    return formatted.rstrip("0").rstrip(".")
+
+
+def _format_weight_delta_label(delta_kg: float) -> str:
+    """Форматирует быстрый шаг изменения веса в граммах."""
+    delta_grams = round(delta_kg * 1000)
+    sign = "+" if delta_grams > 0 else "−"
+    abs_grams = abs(delta_grams)
+    return f"{sign}{abs_grams} г"
 
 
 def _build_weight_quick_adjust_keyboard(base_weight: float) -> ReplyKeyboardMarkup:
     """Клавиатура быстрых изменений веса относительно последнего внесённого значения."""
-    options = [
-        max(1.0, base_weight - 0.5),
-        max(1.0, base_weight - 0.1),
-        base_weight + 0.1,
-        base_weight + 0.5,
+    delta_rows = [
+        [-1.0, -0.5, 0.5, 1.0],
+        [-0.25, -0.1, 0.1, 0.25],
     ]
 
-    return ReplyKeyboardMarkup(
-        keyboard=[
+    keyboard = []
+    for delta_row in delta_rows:
+        keyboard.append(
             [
-                KeyboardButton(text=f"−500 г ({_format_weight_for_input(options[0])})"),
-                KeyboardButton(text=f"−100 г ({_format_weight_for_input(options[1])})"),
-            ],
-            [
-                KeyboardButton(text=f"+100 г ({_format_weight_for_input(options[2])})"),
-                KeyboardButton(text=f"+500 г ({_format_weight_for_input(options[3])})"),
-            ],
+                KeyboardButton(
+                    text=(
+                        f"{_format_weight_delta_label(delta)} "
+                        f"({_format_weight_for_input(max(1.0, base_weight + delta))})"
+                    )
+                )
+                for delta in delta_row
+            ]
+        )
+
+    keyboard.extend(
+        [
             [KeyboardButton(text="✍️ Ввести вручную")],
             [KeyboardButton(text="⬅️ Назад"), main_menu_button],
-        ],
+        ]
+    )
+
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
         resize_keyboard=True,
     )
 
