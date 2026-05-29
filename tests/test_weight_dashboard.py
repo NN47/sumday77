@@ -83,3 +83,58 @@ def test_quick_weight_delta_resolves_against_base_weight():
     assert _resolve_quick_weight_value("-0,5", 76.9) == 76.4
     assert round(_resolve_quick_weight_value("+0,2", 76.9), 1) == 77.1
     assert _resolve_quick_weight_value("72.5", 76.9) is None
+
+
+class DummyState:
+    def __init__(self, data=None):
+        self.data = data or {}
+        self.state = None
+        self.cleared = False
+
+    async def get_data(self):
+        return dict(self.data)
+
+    async def update_data(self, **kwargs):
+        self.data.update(kwargs)
+
+    async def set_state(self, state):
+        self.state = state
+
+    async def clear(self):
+        self.data.clear()
+        self.cleared = True
+
+
+def test_weight_entry_prompt_has_no_parenthetical_example():
+    from handlers.weight import _weight_entry_prompt
+
+    prompt = _weight_entry_prompt()
+
+    assert "(" not in prompt
+    assert ")" not in prompt
+    assert "например" not in prompt.lower()
+
+
+def test_weight_input_requires_save_confirmation_before_repository_write():
+    from handlers.weight import handle_weight_input
+    from states.user_states import WeightStates
+
+    message = DummyMessage()
+    state = DummyState({"entry_date": date(2026, 5, 29).isoformat(), "quick_base_weight": 76.9})
+    message.text = "-0,5"
+
+    with (
+        patch("handlers.weight.WeightRepository.get_weights", return_value=[weight_entry(76.9, date(2026, 5, 28), 1)]),
+        patch("handlers.weight.WeightRepository.save_weight") as save_weight,
+        patch("handlers.weight.WeightRepository.update_weight") as update_weight,
+    ):
+        asyncio.run(handle_weight_input(message, state))
+
+    save_weight.assert_not_called()
+    update_weight.assert_not_called()
+    assert state.state == WeightStates.confirming_weight
+    assert state.data["draft_weight_value"] == 76.4
+    text, reply_markup = message.answers[-1]
+    rows = [[button.text for button in row] for row in reply_markup.keyboard]
+    assert "✅ Сохранить" in rows[0]
+    assert "<b>Вес:</b> 76.4 кг" in text
