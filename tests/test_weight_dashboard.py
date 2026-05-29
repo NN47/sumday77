@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("API_TOKEN", "test-token")
 
-from handlers.weight import _build_weight_quick_adjust_keyboard, _detect_trend, _resolve_quick_weight_value, my_weight, weight_menu
+from handlers.weight import _build_weight_quick_adjust_keyboard, _detect_trend, _resolve_quick_weight_value, my_weight, show_weight_archive, weight_menu
 
 
 class DummyBot:
@@ -68,8 +68,43 @@ def test_weight_dashboard_hides_progress_bar_and_shows_decrease_trend():
     assert "⚖️ <b>Вес</b>" in text
     assert "<b>Текущий вес:</b> <b>76.90 кг</b>" in text
     assert "📉 <b>Изменение:</b>" in text
+    assert "📊 <b>Диапазон:</b>" in text
+    assert "<b>Мин: 76.00 кг • Макс: 79.50 кг</b>" in text
     assert "<b>Снижение веса 📉</b>" in text
     assert "Рост веса 📈" not in text
+
+
+def test_weight_menu_renames_graph_button_to_archive():
+    rows = [[button.text for button in row] for row in weight_menu.keyboard]
+
+    assert rows[1] == ["📏 Замеры тела", "📦 Архив"]
+    assert all("📊 График веса" not in row for row in rows)
+
+
+def test_weight_archive_shows_only_entered_weights_without_graph_or_range():
+    weights = [
+        weight_entry(76.4, date(2026, 5, 29), 8),
+        weight_entry(76.9, date(2026, 5, 28), 7),
+        weight_entry(76.7, date(2026, 5, 28), 6),
+        weight_entry(76.0, date(2026, 5, 27), 5),
+        weight_entry(79.5, date(2026, 4, 21), 4),
+    ]
+    message = DummyMessage()
+
+    with patch("handlers.weight.WeightRepository.get_weights", return_value=weights):
+        asyncio.run(show_weight_archive(message))
+
+    assert len(message.answers) == 1
+    text, reply_markup = message.answers[0]
+    assert reply_markup is None
+    assert text.startswith("📅 Все введённые веса:\n")
+    assert "29.05.2026 — 76.40 кг" in text
+    assert "28.05.2026 — 76.90 кг" in text
+    assert "📊 График веса" not in text
+    assert "Мин:" not in text
+    assert "Макс:" not in text
+    assert "█" not in text
+    assert "▁" not in text
 
 
 def test_weight_quick_adjust_keyboard_uses_requested_delta_buttons_without_duplicate_weight():
