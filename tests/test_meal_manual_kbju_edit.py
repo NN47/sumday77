@@ -8,6 +8,7 @@ from handlers.meals import (
     _build_kbju_field_editor_keyboard,
     _build_product_actions_keyboard,
     _build_weight_editor_keyboard,
+    _format_product_macro_summary,
     _render_product_actions_text,
     _parse_kbju_bulk_input,
 )
@@ -106,6 +107,12 @@ def test_weight_editor_uses_smaller_first_two_step_rows():
         "meal_wchg:0:10",
         "meal_wchg:0:25",
     ]
+
+
+def test_format_product_macro_summary_matches_edit_card_example():
+    assert _format_product_macro_summary(112, 1.8, 0, 26.9) == (
+        f"🔥 112 ккал • 💪 Б 1.8 г • 🥑 Ж 0.0 г • {EMOJI_MAP['carbs']} У 26.9 г"
+    )
 
 
 def test_product_actions_text_has_bold_labels_and_bju_letters():
