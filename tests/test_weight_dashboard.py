@@ -109,13 +109,13 @@ def test_weight_archive_shows_only_entered_weights_without_graph_or_range():
 
 def test_weight_quick_adjust_keyboard_uses_requested_delta_buttons_without_duplicate_weight():
     keyboard = _build_weight_quick_adjust_keyboard(76.9)
-    rows = [[button.text for button in row] for row in keyboard.keyboard]
+    rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
 
     assert rows[0] == ["-1", "-0,5", "+0,5", "+1"]
     assert rows[1] == ["-0,2", "-0,1", "+0,1", "+0,2"]
     assert rows[2] == ["✍️ Ввести вручную"]
     assert rows[3] == ["✅ Сохранить"]
-    assert rows[4] == ["⬅️ Назад", "🔄 Главное меню"]
+    assert rows[4] == ["⬅️ Назад", "❌ Отмена"]
 
 
 def test_quick_weight_delta_resolves_against_base_weight():
@@ -175,7 +175,7 @@ def test_weight_input_keeps_quick_buttons_and_requires_save_before_repository_wr
     assert state.data["draft_weight_value"] == 76.4
     assert state.data["quick_base_weight"] == 76.4
     text, reply_markup = message.answers[-1]
-    rows = [[button.text for button in row] for row in reply_markup.keyboard]
+    rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows[0] == ["-1", "-0,5", "+0,5", "+1"]
     assert rows[3] == ["✅ Сохранить"]
     assert "<b>Новый вес:</b> 76.4 кг" in text
@@ -198,6 +198,6 @@ def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
     assert round(state.data["draft_weight_value"], 1) == 76.0
     assert round(state.data["quick_base_weight"], 1) == 76.0
     text, reply_markup = message.answers[-1]
-    rows = [[button.text for button in row] for row in reply_markup.keyboard]
+    rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows[1] == ["-0,2", "-0,1", "+0,1", "+0,2"]
     assert "<b>Новый вес:</b> 76.0 кг" in text
