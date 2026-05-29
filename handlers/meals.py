@@ -2413,10 +2413,12 @@ def _format_product_macro_summary(
     fat: float,
     carbs: float,
 ) -> str:
-    """Форматирует компактную строку КБЖУ для карточки редактирования продукта."""
+    """Форматирует блок КБЖУ для карточки редактирования продукта."""
     return (
-        f"🔥 {calories:.0f} ккал • 💪 Б {protein:.1f} г "
-        f"• 🥑 Ж {fat:.1f} г • {CARBS_EMOJI} У {carbs:.1f} г"
+        f"🔥 Калории: {calories:.0f} ккал\n"
+        f"💪 Белки: {protein:.1f} г\n"
+        f"🥑 Жиры: {fat:.1f} г\n"
+        f"{CARBS_EMOJI} Углеводы: {carbs:.1f} г"
     )
 
 
