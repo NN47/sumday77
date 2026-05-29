@@ -201,3 +201,75 @@ def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows[1] == ["-0,2", "-0,1", "+0,1", "+0,2"]
     assert "<b>Новый вес:</b> 76.0 кг" in text
+
+
+def test_weight_day_actions_for_existing_weight_show_requested_buttons():
+    from utils.calendar_utils import build_weight_day_actions_keyboard
+
+    keyboard = build_weight_day_actions_keyboard(weight_entry(76.2, date(2026, 5, 29), 3), date(2026, 5, 29))
+    rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
+    callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
+
+    assert rows == [
+        ["✏️ Редактировать", "🗑 Удалить"],
+        ["🔄 Вернуться в главное меню"],
+    ]
+    assert callbacks == [
+        ["weight_cal_edit:2026-05-29", "weight_cal_del:2026-05-29"],
+        ["weight_cal_main"],
+    ]
+
+
+def test_show_day_weight_formats_float_artifacts():
+    from handlers.weight import show_day_weight
+
+    message = DummyMessage()
+    entry = weight_entry(76.20000000000003, date(2026, 5, 29), 3)
+
+    with patch("handlers.weight.WeightRepository.get_weight_for_date", return_value=entry):
+        asyncio.run(show_day_weight(message, "12345", date(2026, 5, 29)))
+
+    text, reply_markup = message.answers[0]
+    assert "76.20000000000003" not in text
+    assert "⚖️ Вес: 76.2 кг" in text
+    rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
+    assert rows == [
+        ["✏️ Редактировать", "🗑 Удалить"],
+        ["🔄 Вернуться в главное меню"],
+    ]
+
+
+def test_update_weight_sends_only_success_message_with_day_actions():
+    from handlers.weight import _save_weight_draft
+
+    message = DummyMessage()
+    state = DummyState(
+        {
+            "draft_weight_value": 76.20000000000003,
+            "draft_previous_weight_value": 76.9,
+            "entry_date": date(2026, 5, 29).isoformat(),
+            "weight_id": 3,
+        }
+    )
+    updated_entry = weight_entry(76.2, date(2026, 5, 29), 3)
+
+    with (
+        patch("handlers.weight.WeightRepository.update_weight", return_value=True) as update_weight,
+        patch("handlers.weight.WeightRepository.get_weight_for_date", return_value=updated_entry),
+        patch("handlers.weight.show_day_weight") as show_day_weight,
+    ):
+        asyncio.run(_save_weight_draft(message, state, "12345", state.data))
+
+    update_weight.assert_called_once_with(3, "12345", "76.2")
+    show_day_weight.assert_not_called()
+    assert state.cleared is True
+    assert len(message.answers) == 1
+    text, reply_markup = message.answers[0]
+    assert "✅ <b>Вес обновлён!</b>" in text
+    assert "⚖️ <b>76.2 кг</b>" in text
+    assert "76.20000000000003" not in text
+    rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
+    assert rows == [
+        ["✏️ Редактировать", "🗑 Удалить"],
+        ["🔄 Вернуться в главное меню"],
+    ]

@@ -379,22 +379,32 @@ def build_weight_day_actions_keyboard(weight, target_date: date) -> InlineKeyboa
             ]
         )
     
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="➕ Добавить вес" if not weight else "➕ Изменить вес",
-                callback_data=f"weight_cal_add:{target_date.isoformat()}",
-            ),
-        ]
-    )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="⬅️ Назад к календарю",
-                callback_data=f"weight_cal_back:{target_date.year}-{target_date.month:02d}",
-            )
-        ]
-    )
+    if not weight:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="➕ Добавить вес",
+                    callback_data=f"weight_cal_add:{target_date.isoformat()}",
+                ),
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад к календарю",
+                    callback_data=f"weight_cal_back:{target_date.year}-{target_date.month:02d}",
+                )
+            ]
+        )
+    else:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🔄 Вернуться в главное меню",
+                    callback_data="weight_cal_main",
+                )
+            ]
+        )
     
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
