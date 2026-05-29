@@ -645,9 +645,78 @@ def _build_recent_meal_confirm_keyboard(source_meal_id: int, meal_type: str, pag
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Добавить", callback_data=f"recent_meal_confirm:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
-            [InlineKeyboardButton(text="✏️ Изменить граммовку", callback_data=f"recent_meal_edit_weight:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
+            [InlineKeyboardButton(text="✏️ Изменить вес", callback_data=f"recent_meal_edit_weight:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"recent_meal_back:{meal_type}:{page}")],
         ]
+    )
+
+
+def _render_recent_weight_editor_text(item: RecentMealItem, draft_amount_g: int | None = None) -> str:
+    """Текст экрана быстрого изменения веса продукта из истории."""
+    current_amount = int(item.amount_g or 100)
+    new_amount = int(draft_amount_g or current_amount)
+    ratio = new_amount / float(current_amount or 100)
+    lines = [
+        "✏️ Изменение веса продукта",
+        "",
+        f"Продукт: {item.title}",
+        f"Текущий вес: {current_amount} г",
+    ]
+    if new_amount != current_amount:
+        lines.append(f"Новый вес: {new_amount} г")
+    lines.extend(
+        [
+            "",
+            f"Итого: {float(item.calories) * ratio:.0f} ккал",
+            f"Б {float(item.protein) * ratio:.1f} / Ж {float(item.fat) * ratio:.1f} / У {float(item.carbs) * ratio:.1f}",
+            "",
+            "Выбери действие:",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _build_recent_weight_editor_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура изменения веса продукта из истории по аналогии с редактором приёма пищи."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="−1000 г", callback_data="recent_wchg:-1000"),
+                InlineKeyboardButton(text="−500 г", callback_data="recent_wchg:-500"),
+                InlineKeyboardButton(text="+500 г", callback_data="recent_wchg:500"),
+                InlineKeyboardButton(text="+1000 г", callback_data="recent_wchg:1000"),
+            ],
+            [
+                InlineKeyboardButton(text="−250 г", callback_data="recent_wchg:-250"),
+                InlineKeyboardButton(text="−100 г", callback_data="recent_wchg:-100"),
+                InlineKeyboardButton(text="+100 г", callback_data="recent_wchg:100"),
+                InlineKeyboardButton(text="+250 г", callback_data="recent_wchg:250"),
+            ],
+            [
+                InlineKeyboardButton(text="−5 г", callback_data="recent_wchg:-5"),
+                InlineKeyboardButton(text="−1 г", callback_data="recent_wchg:-1"),
+                InlineKeyboardButton(text="+1 г", callback_data="recent_wchg:1"),
+                InlineKeyboardButton(text="+5 г", callback_data="recent_wchg:5"),
+            ],
+            [InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data="recent_wmanual")],
+            [InlineKeyboardButton(text="✅ Сохранить", callback_data="recent_wsave")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="recent_wback")],
+        ]
+    )
+
+
+def _build_adjusted_recent_item(item: RecentMealItem, amount_g: int) -> RecentMealItem:
+    """Возвращает копию продукта из истории с пересчитанными КБЖУ под новый вес."""
+    ratio = amount_g / float(item.amount_g or 100)
+    return RecentMealItem(
+        source_meal_id=item.source_meal_id,
+        product_index=item.product_index,
+        title=item.title,
+        amount_g=amount_g,
+        calories=float(item.calories) * ratio,
+        protein=float(item.protein) * ratio,
+        fat=float(item.fat) * ratio,
+        carbs=float(item.carbs) * ratio,
     )
 
 
@@ -711,15 +780,140 @@ async def recent_meal_edit_weight(callback: CallbackQuery, state: FSMContext):
     _, meal_type, page_str, source_meal_id_str, *product_idx_parts = parts
     product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
     source_meal_id = int(source_meal_id_str)
-    await state.set_state(MealEntryStates.editing_meal_weight_manual_input)
+    user_id = str(callback.from_user.id)
+    source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
+    if not source_meal:
+        await callback.message.answer("❌ Не удалось найти продукт в истории.")
+        return
+    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
+    current_amount = int(recent_item.amount_g or 100)
+    data = await state.get_data()
+    custom_amount = int(data.get("recent_custom_amount_g") or current_amount)
     await state.update_data(
         recent_source_meal_id=source_meal_id,
         recent_source_product_idx=product_index,
         recent_weight_edit_mode=True,
+        recent_weight_draft_g=custom_amount,
         recent_meals_page=int(page_str),
         meal_type=meal_type,
     )
-    await callback.message.answer("Введи новую граммовку (в граммах), например: 180")
+    await callback.message.answer(
+        _render_recent_weight_editor_text(recent_item, draft_amount_g=custom_amount),
+        reply_markup=_build_recent_weight_editor_keyboard(),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("recent_wchg:"))
+async def recent_meal_weight_change_draft(callback: CallbackQuery, state: FSMContext):
+    """Меняет временный вес продукта из истории кнопками +/−."""
+    delta = int(callback.data.split(":", maxsplit=1)[1])
+    data = await state.get_data()
+    source_meal_id = data.get("recent_source_meal_id")
+    if not source_meal_id:
+        await callback.message.answer("❌ Не удалось найти продукт из истории.")
+        return
+
+    source_meal = MealRepository.get_meal_by_id(int(source_meal_id), str(callback.from_user.id))
+    if not source_meal:
+        await callback.message.answer("❌ Не удалось найти продукт из истории.")
+        return
+
+    product_index = _parse_recent_product_index(data.get("recent_source_product_idx"))
+    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
+    base_amount = int(data.get("recent_weight_draft_g") or recent_item.amount_g or 100)
+    new_amount = base_amount + delta
+    if new_amount < 1:
+        await callback.answer("Вес не может быть меньше 1 г", show_alert=True)
+        return
+
+    await state.update_data(recent_weight_draft_g=new_amount, recent_weight_edit_mode=True)
+    await callback.answer()
+    await callback.message.edit_text(
+        _render_recent_weight_editor_text(recent_item, draft_amount_g=new_amount),
+        reply_markup=_build_recent_weight_editor_keyboard(),
+    )
+
+
+@router.callback_query(lambda c: c.data == "recent_wmanual")
+async def recent_meal_weight_manual_input_start(callback: CallbackQuery, state: FSMContext):
+    """Запрашивает ручной ввод веса для продукта из истории."""
+    await callback.answer()
+    await state.set_state(MealEntryStates.editing_meal_weight_manual_input)
+    await state.update_data(recent_weight_edit_mode=True)
+    await callback.message.answer("Введи новый вес (в граммах), например: 180")
+
+
+@router.callback_query(lambda c: c.data == "recent_wsave")
+async def recent_meal_weight_save_draft(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет выбранный вес продукта из истории и возвращает экран подтверждения."""
+    await callback.answer()
+    data = await state.get_data()
+    source_meal_id = data.get("recent_source_meal_id")
+    if not source_meal_id:
+        await callback.message.answer("❌ Не удалось найти продукт из истории.")
+        return
+
+    source_meal = MealRepository.get_meal_by_id(int(source_meal_id), str(callback.from_user.id))
+    if not source_meal:
+        await callback.message.answer("❌ Не удалось найти продукт из истории.")
+        return
+
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    product_index = _parse_recent_product_index(data.get("recent_source_product_idx"))
+    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
+    new_amount = int(data.get("recent_weight_draft_g") or recent_item.amount_g or 100)
+    adjusted = _build_adjusted_recent_item(recent_item, new_amount)
+
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(
+        recent_custom_amount_g=new_amount,
+        recent_weight_edit_mode=False,
+        recent_weight_draft_g=None,
+    )
+    await callback.message.edit_text(
+        _render_recent_meal_confirm_text(meal_type, adjusted, amount_g=new_amount),
+        reply_markup=_build_recent_meal_confirm_keyboard(
+            int(source_meal_id),
+            meal_type,
+            int(data.get("recent_meals_page") or 1),
+            product_index,
+        ),
+    )
+
+
+@router.callback_query(lambda c: c.data == "recent_wback")
+async def recent_meal_weight_back(callback: CallbackQuery, state: FSMContext):
+    """Возвращает экран подтверждения продукта из истории без сохранения черновика веса."""
+    await callback.answer()
+    data = await state.get_data()
+    source_meal_id = data.get("recent_source_meal_id")
+    if not source_meal_id:
+        await callback.message.answer("❌ Не удалось найти продукт из истории.")
+        return
+
+    source_meal = MealRepository.get_meal_by_id(int(source_meal_id), str(callback.from_user.id))
+    if not source_meal:
+        await callback.message.answer("❌ Не удалось найти продукт из истории.")
+        return
+
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    product_index = _parse_recent_product_index(data.get("recent_source_product_idx"))
+    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
+    custom_amount = data.get("recent_custom_amount_g")
+    display_item = _build_adjusted_recent_item(recent_item, int(custom_amount)) if custom_amount else recent_item
+    display_amount = int(custom_amount or recent_item.amount_g or 100)
+
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(recent_weight_edit_mode=False, recent_weight_draft_g=None)
+    await callback.message.edit_text(
+        _render_recent_meal_confirm_text(meal_type, display_item, amount_g=display_amount),
+        reply_markup=_build_recent_meal_confirm_keyboard(
+            int(source_meal_id),
+            meal_type,
+            int(data.get("recent_meals_page") or 1),
+            product_index,
+        ),
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("recent_meal_confirm:"))
@@ -3116,19 +3310,13 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
         meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
         product_index = _parse_recent_product_index(data.get("recent_source_product_idx"))
         recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
-        ratio = new_weight / float(recent_item.amount_g or 100)
-        adjusted = RecentMealItem(
-            source_meal_id=recent_item.source_meal_id,
-            product_index=recent_item.product_index,
-            title=recent_item.title,
-            amount_g=new_weight,
-            calories=float(recent_item.calories) * ratio,
-            protein=float(recent_item.protein) * ratio,
-            fat=float(recent_item.fat) * ratio,
-            carbs=float(recent_item.carbs) * ratio,
-        )
+        adjusted = _build_adjusted_recent_item(recent_item, new_weight)
         await state.set_state(MealEntryStates.choosing_meal_type)
-        await state.update_data(recent_custom_amount_g=new_weight, recent_weight_edit_mode=False)
+        await state.update_data(
+            recent_custom_amount_g=new_weight,
+            recent_weight_edit_mode=False,
+            recent_weight_draft_g=None,
+        )
         await message.answer(
             _render_recent_meal_confirm_text(meal_type, adjusted, amount_g=new_weight),
             reply_markup=_build_recent_meal_confirm_keyboard(
