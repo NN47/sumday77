@@ -111,7 +111,10 @@ def test_weight_editor_uses_smaller_first_two_step_rows():
 
 def test_format_product_macro_summary_matches_edit_card_example():
     assert _format_product_macro_summary(112, 1.8, 0, 26.9) == (
-        f"🔥 112 ккал • 💪 Б 1.8 г • 🥑 Ж 0.0 г • {EMOJI_MAP['carbs']} У 26.9 г"
+        "🔥 Калории: 112 ккал\n"
+        "💪 Белки: 1.8 г\n"
+        "🥑 Жиры: 0.0 г\n"
+        f"{EMOJI_MAP['carbs']} Углеводы: 26.9 г"
     )
 
 
@@ -128,9 +131,10 @@ def test_product_actions_text_has_bold_labels_and_bju_letters():
     assert "<b>✏️ Редактирование продукта</b>" in text
     assert "<b>Продукт:</b> Творог" in text
     assert "<b>Вес:</b> 50 г" in text
-    assert "💪 Б 10.0 г" in text
-    assert "🥑 Ж 8.0 г" in text
-    assert f"{EMOJI_MAP['carbs']} У 5.0 г" in text
+    assert "🔥 Калории: 182 ккал" in text
+    assert "💪 Белки: 10.0 г" in text
+    assert "🥑 Жиры: 8.0 г" in text
+    assert f"{EMOJI_MAP['carbs']} Углеводы: 5.0 г" in text
 
 
 def test_product_actions_keyboard_has_change_name_button():
