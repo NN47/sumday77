@@ -96,6 +96,26 @@ def test_extract_recent_meal_amount_g_fallback_to_100():
     assert meals._extract_recent_meal_amount_g(meal) == 100
 
 
+def test_recent_weight_editor_keyboard_uses_tenth_scale_on_first_rows():
+    keyboard = meals._build_recent_weight_editor_keyboard()
+
+    rows = keyboard.inline_keyboard
+    assert [button.text for button in rows[0]] == ["−100 г", "−50 г", "+50 г", "+100 г"]
+    assert [button.callback_data for button in rows[0]] == [
+        "recent_wchg:-100",
+        "recent_wchg:-50",
+        "recent_wchg:50",
+        "recent_wchg:100",
+    ]
+    assert [button.text for button in rows[1]] == ["−25 г", "−10 г", "+10 г", "+25 г"]
+    assert [button.callback_data for button in rows[1]] == [
+        "recent_wchg:-25",
+        "recent_wchg:-10",
+        "recent_wchg:10",
+        "recent_wchg:25",
+    ]
+
+
 def test_expand_recent_meals_splits_multi_product_entries():
     meal = SimpleNamespace(
         id=7,

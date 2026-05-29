@@ -681,16 +681,16 @@ def _build_recent_weight_editor_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="−1000 г", callback_data="recent_wchg:-1000"),
-                InlineKeyboardButton(text="−500 г", callback_data="recent_wchg:-500"),
-                InlineKeyboardButton(text="+500 г", callback_data="recent_wchg:500"),
-                InlineKeyboardButton(text="+1000 г", callback_data="recent_wchg:1000"),
+                InlineKeyboardButton(text="−100 г", callback_data="recent_wchg:-100"),
+                InlineKeyboardButton(text="−50 г", callback_data="recent_wchg:-50"),
+                InlineKeyboardButton(text="+50 г", callback_data="recent_wchg:50"),
+                InlineKeyboardButton(text="+100 г", callback_data="recent_wchg:100"),
             ],
             [
-                InlineKeyboardButton(text="−250 г", callback_data="recent_wchg:-250"),
-                InlineKeyboardButton(text="−100 г", callback_data="recent_wchg:-100"),
-                InlineKeyboardButton(text="+100 г", callback_data="recent_wchg:100"),
-                InlineKeyboardButton(text="+250 г", callback_data="recent_wchg:250"),
+                InlineKeyboardButton(text="−25 г", callback_data="recent_wchg:-25"),
+                InlineKeyboardButton(text="−10 г", callback_data="recent_wchg:-10"),
+                InlineKeyboardButton(text="+10 г", callback_data="recent_wchg:10"),
+                InlineKeyboardButton(text="+25 г", callback_data="recent_wchg:25"),
             ],
             [
                 InlineKeyboardButton(text="−5 г", callback_data="recent_wchg:-5"),
