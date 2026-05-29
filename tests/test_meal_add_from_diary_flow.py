@@ -197,12 +197,13 @@ def test_format_label_result_header_bolds_label_and_escapes_product_name():
     )
 
 
-def test_format_kbju_summary_block_bolds_names_and_values():
+def test_format_kbju_summary_block_bolds_only_names_by_default():
     text = meals._format_kbju_summary_block(
         {"calories": 67, "protein": 3.1, "fat": 5.3, "carbs": 1.7}
     )
 
-    assert "🔥 <b>Калории:</b> <b>67 ккал</b>" in text
-    assert "💪 <b>Белки:</b> <b>3.1 г</b>" in text
-    assert "🥑 <b>Жиры:</b> <b>5.3 г</b>" in text
-    assert "🍩 <b>Углеводы:</b> <b>1.7 г</b>" in text
+    assert "🔥 <b>Калории:</b> 67 ккал" in text
+    assert "💪 <b>Белки:</b> 3.1 г" in text
+    assert "🥑 <b>Жиры:</b> 5.3 г" in text
+    assert "🍩 <b>Углеводы:</b> 1.7 г" in text
+    assert "<b>67 ккал</b>" not in text
