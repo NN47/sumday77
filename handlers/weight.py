@@ -14,6 +14,7 @@ from aiogram.fsm.context import FSMContext
 from typing import Optional
 from utils.keyboards import (
     WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT,
+    main_menu,
     push_menu_stack,
     main_menu_button,
     other_day_menu,
@@ -769,10 +770,11 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
     weight_id = data.get("weight_id")
     previous_weight_value = data.get("draft_previous_weight_value")
     previous_weight_value = _to_float_weight(previous_weight_value)
+    stored_weight_value = f"{weight_value:.1f}"
 
     try:
         if weight_id:
-            success = WeightRepository.update_weight(weight_id, user_id, str(weight_value))
+            success = WeightRepository.update_weight(weight_id, user_id, stored_weight_value)
             if success:
                 logger.info(f"User {user_id} updated weight {weight_id}: {weight_value} kg on {entry_date}")
                 await state.clear()
@@ -786,13 +788,16 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
                     f"⚖️ <b>{weight_value:.1f} кг</b>\n"
                     f"📅 {entry_date.strftime('%d.%m.%Y')}"
                     f"{delta_text}",
+                    reply_markup=build_weight_day_actions_keyboard(
+                        WeightRepository.get_weight_for_date(user_id, entry_date),
+                        entry_date,
+                    ),
                 )
-                await show_day_weight(message, user_id, entry_date)
             else:
                 await message.answer("⚠️ Не удалось обновить запись.")
                 await state.clear()
         else:
-            WeightRepository.save_weight(user_id, str(weight_value), entry_date)
+            WeightRepository.save_weight(user_id, stored_weight_value, entry_date)
             logger.info(f"User {user_id} saved weight: {weight_value} kg on {entry_date}")
             AnalyticsRepository.track_event(user_id, "add_weight", section="weight")
 
@@ -1342,7 +1347,9 @@ async def show_day_weight(message: Message, user_id: str, target_date: date):
         )
         return
     
-    text = f"📅 {target_date.strftime('%d.%m.%Y')}\n\n⚖️ Вес: {weight.value} кг"
+    weight_value = _to_float_weight(weight.value)
+    weight_text = f"{weight_value:.1f}" if weight_value is not None else str(weight.value)
+    text = f"📅 {target_date.strftime('%d.%m.%Y')}\n\n⚖️ Вес: {weight_text} кг"
     
     await message.answer(
         text,
@@ -1426,6 +1433,14 @@ async def add_weight_from_calendar(callback: CallbackQuery, state: FSMContext):
             _format_weight_input_screen(target_date, base_weight),
             base_weight or 70.0,
         )
+
+
+@router.callback_query(lambda c: c.data == "weight_cal_main")
+async def back_to_main_menu_from_weight(callback: CallbackQuery):
+    """Возвращает пользователя в главное меню из карточки веса."""
+    await callback.answer()
+    push_menu_stack(callback.message.bot, main_menu)
+    await callback.message.answer("⬇️ Главное меню", reply_markup=main_menu, disable_notification=True)
 
 
 @router.callback_query(lambda c: c.data.startswith("meas_cal_add:"))
