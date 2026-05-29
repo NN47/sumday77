@@ -48,6 +48,7 @@ class WorkoutStates(StatesGroup):
 class WeightStates(StatesGroup):
     """Состояния для работы с весом."""
     entering_weight = State()
+    confirming_weight = State()
     choosing_period = State()
     entering_measurements = State()
     entering_measurements_date = State()
