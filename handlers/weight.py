@@ -155,7 +155,7 @@ def _resolve_base_weight(user_id: str, existing_weight_value: Optional[str | flo
 weight_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="➕ Добавить вес")],
-        [KeyboardButton(text="📏 Замеры тела"), KeyboardButton(text="📊 График веса")],
+        [KeyboardButton(text="📏 Замеры тела"), KeyboardButton(text="📦 Архив")],
         [KeyboardButton(text="📆 Календарь")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
@@ -266,28 +266,6 @@ def _parse_measurement_value(raw_value: str) -> Optional[float]:
         return float(raw_value.replace(",", "."))
     except (TypeError, ValueError, AttributeError):
         return None
-
-
-def _build_weight_sparkline(values: list[float]) -> str:
-    """Строит компактный текстовый график веса."""
-    if not values:
-        return ""
-    if len(values) == 1:
-        return "▅"
-
-    blocks = "▁▂▃▄▅▆▇█"
-    minimum = min(values)
-    maximum = max(values)
-
-    if abs(maximum - minimum) < 1e-9:
-        return "▅" * len(values)
-
-    result = []
-    for value in values:
-        ratio = (value - minimum) / (maximum - minimum)
-        index = round(ratio * (len(blocks) - 1))
-        result.append(blocks[index])
-    return "".join(result)
 
 
 def _format_measurement_value(value: Optional[float]) -> str:
@@ -425,12 +403,19 @@ async def my_weight(message: Message):
                 weekly_speed = (current_weight - oldest_weight) / (total_days / 7)
                 speed_text = f"{weekly_speed:+.2f} кг в неделю"
 
+    weight_values = []
     recent_rows = []
-    for entry in weights[:7]:
+    for entry in weights:
         entry_value = _to_float_weight(entry.value)
         if entry_value is None:
             continue
-        recent_rows.append(f"{entry.date.strftime('%d.%m')} — {entry_value:.2f} кг")
+        weight_values.append(entry_value)
+        if len(recent_rows) < 7:
+            recent_rows.append(f"{entry.date.strftime('%d.%m')} — {entry_value:.2f} кг")
+
+    range_text = "Недостаточно данных"
+    if weight_values:
+        range_text = f"Мин: {min(weight_values):.2f} кг • Макс: {max(weight_values):.2f} кг"
 
     recent_text = "\n".join(recent_rows) if recent_rows else "Нет записей для отображения"
     text = (
@@ -445,6 +430,8 @@ async def my_weight(message: Message):
         f"<b>{trend_text}</b>\n\n"
         "🚀 <b>Средняя скорость:</b>\n"
         f"<b>{speed_text}</b>\n\n"
+        "📊 <b>Диапазон:</b>\n"
+        f"<b>{range_text}</b>\n\n"
         "📅 <b>Последние записи:</b>\n\n"
         f"{recent_text}"
     )
@@ -496,37 +483,18 @@ async def show_measurements_history(message: Message):
     await message.answer("\n".join(lines), reply_markup=measurements_menu)
 
 
-@router.message(lambda m: m.text == "📊 График веса")
-async def show_weight_graph(message: Message):
-    """Показывает текстовый график и всю историю веса."""
+@router.message(lambda m: m.text == "📦 Архив")
+async def show_weight_archive(message: Message):
+    """Показывает архив всех введённых весов без графика и диапазона."""
     user_id = str(message.from_user.id)
     weights = WeightRepository.get_weights(user_id)
 
     if not weights:
         await message.answer(
-            "📊 График веса\n\n"
-            "Пока нет записей веса.\n"
-            "Нажми «➕ Добавить вес», чтобы увидеть график и историю."
+            "📅 Все введённые веса:\n"
+            "Пока нет записей веса."
         )
         return
-
-    chronological_entries = list(reversed(weights))
-    chart_values = []
-    for entry in chronological_entries:
-        value = _to_float_weight(entry.value)
-        if value is not None:
-            chart_values.append(value)
-
-    if not chart_values:
-        await message.answer(
-            "📊 График веса\n\n"
-            "Не удалось построить график: значения веса заполнены некорректно."
-        )
-        return
-
-    sparkline = _build_weight_sparkline(chart_values)
-    min_value = min(chart_values)
-    max_value = max(chart_values)
 
     rows = []
     for entry in weights:
@@ -537,9 +505,6 @@ async def show_weight_graph(message: Message):
         rows.append(f"{entry.date.strftime('%d.%m.%Y')} — {value:.2f} кг")
 
     await message.answer(
-        "📊 График веса\n\n"
-        f"{sparkline}\n"
-        f"Мин: {min_value:.2f} кг • Макс: {max_value:.2f} кг\n\n"
         "📅 Все введённые веса:\n"
         f"{chr(10).join(rows)}"
     )
