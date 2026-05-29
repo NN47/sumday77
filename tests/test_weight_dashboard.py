@@ -154,6 +154,18 @@ def test_weight_entry_prompt_has_no_parenthetical_example():
     assert "например" not in prompt.lower()
 
 
+def test_weight_input_screen_formats_current_weight_float_artifacts():
+    from handlers.weight import _format_weight_input_screen
+
+    text = _format_weight_input_screen(
+        date(2026, 5, 29),
+        76.20000000000003,
+        current_weight="76.20000000000003",
+    )
+
+    assert "76.20000000000003" not in text
+    assert "<b>Текущий вес:</b> 76.2 кг" in text
+
 def test_weight_input_keeps_quick_buttons_and_requires_save_before_repository_write():
     from handlers.weight import handle_weight_input
     from states.user_states import WeightStates
