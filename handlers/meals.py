@@ -2408,15 +2408,16 @@ def _build_weight_products_keyboard(products: list[dict]) -> InlineKeyboardMarku
 
 
 def _render_product_actions_text(product: dict) -> str:
-    name = product.get("name") or "продукт"
+    name = html.escape(str(product.get("name") or "продукт"))
     grams = float(product.get("grams") or 0)
     calories, protein, fat, carbs = _extract_product_macros(product)
     lines = [
-        "✏️ Редактирование продукта",
+        "<b>✏️ Редактирование продукта</b>",
         "",
-        f"Продукт: {name}",
-        f"Вес: {grams:.0f} г",
-        f"🔥 {calories:.0f} ккал • 💪 {protein:.1f} • 🥑 {fat:.1f} • {CARBS_EMOJI} {carbs:.1f}",
+        f"<b>Продукт:</b> {name}",
+        f"<b>Вес:</b> {grams:.0f} г",
+        f"🔥 {calories:.0f} ккал • 💪 Б {protein:.1f} г "
+        f"• 🥑 Ж {fat:.1f} г • {CARBS_EMOJI} У {carbs:.1f} г",
     ]
     if bool(product.get("is_manually_corrected")):
         lines.append("✏️ КБЖУ скорректированы вручную")
@@ -2427,6 +2428,7 @@ def _render_product_actions_text(product: dict) -> str:
 def _build_product_actions_keyboard(product_idx: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Изменить название", callback_data=f"meal_pact_name:{product_idx}")],
             [InlineKeyboardButton(text="⚖️ Изменить вес", callback_data=f"meal_pact_weight:{product_idx}")],
             [InlineKeyboardButton(text="🧮 Исправить КБЖУ", callback_data=f"meal_pact_kbju:{product_idx}")],
             [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"meal_wdelask:{product_idx}")],
@@ -3202,6 +3204,95 @@ async def meal_weight_select_product(callback: CallbackQuery, state: FSMContext)
         )
 
 
+@router.callback_query(lambda c: c.data.startswith("meal_pact_name:"))
+async def meal_product_name_input_start(callback: CallbackQuery, state: FSMContext):
+    """Запрашивает новое название для выбранного продукта."""
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    saved_products = data.get("saved_products", [])
+    if product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не нашёл продукт", show_alert=True)
+        return
+
+    product_name = saved_products[product_idx].get("name") or "продукт"
+    await state.set_state(MealEntryStates.editing_meal_name_input)
+    await state.update_data(editing_product_idx=product_idx)
+    await callback.message.answer(
+        f'Введи новое название для продукта "{html.escape(str(product_name))}":'
+    )
+
+
+@router.message(MealEntryStates.editing_meal_name_input)
+async def meal_product_name_input_value(message: Message, state: FSMContext):
+    """Сохраняет новое название продукта."""
+    new_name = (message.text or "").strip()
+    if not new_name:
+        await message.answer("Пожалуйста, введи непустое название продукта.")
+        return
+    if len(new_name) > 80:
+        await message.answer("Название слишком длинное. Введи до 80 символов.")
+        return
+
+    data = await state.get_data()
+    product_idx = data.get("editing_product_idx")
+    meal_id = data.get("meal_id")
+    saved_products = data.get("saved_products", [])
+    if product_idx is None or product_idx < 0 or product_idx >= len(saved_products):
+        await message.answer("❌ Не удалось найти продукт для редактирования.")
+        await state.set_state(MealEntryStates.editing_meal_weight)
+        return
+
+    product = saved_products[product_idx]
+    product["name"] = new_name
+    if "name_ru" in product:
+        product["name_ru"] = new_name
+
+    source_meal_id = int(product.get("_source_meal_id") or meal_id or 0)
+    if not source_meal_id:
+        await message.answer("❌ Не удалось определить запись для обновления.")
+        await state.set_state(MealEntryStates.editing_meal_weight)
+        return
+
+    source_products = [
+        _strip_source_meta(p)
+        for p in saved_products
+        if int(p.get("_source_meal_id") or source_meal_id) == source_meal_id
+    ]
+    totals, api_details = _build_meal_update_payload(source_products)
+    user_id = str(message.from_user.id)
+    meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
+    raw_query = meal.raw_query if meal and hasattr(meal, "raw_query") else None
+    success = MealRepository.update_meal(
+        meal_id=source_meal_id,
+        user_id=user_id,
+        description=raw_query,
+        calories=totals["calories"],
+        protein=totals["protein_g"],
+        fat=totals["fat_total_g"],
+        carbs=totals["carbohydrates_total_g"],
+        products_json=json.dumps(source_products),
+        api_details=api_details,
+        is_manually_corrected=bool(
+            any(bool(p.get("is_manually_corrected")) for p in source_products)
+        ),
+    )
+    if not success:
+        await message.answer("❌ Не удалось обновить название продукта.")
+        await state.set_state(MealEntryStates.editing_meal_weight)
+        return
+
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    await state.update_data(saved_products=saved_products, editing_product_idx=product_idx)
+    await message.answer(
+        "✅ Название продукта обновлено",
+    )
+    await message.answer(
+        _render_product_actions_text(product),
+        reply_markup=_build_product_actions_keyboard(product_idx),
+    )
+
+
 @router.callback_query(lambda c: c.data.startswith("meal_pact_weight:"))
 async def meal_product_open_weight_editor(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
@@ -3684,7 +3775,9 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
         carbs=totals["carbohydrates_total_g"],
         products_json=json.dumps(source_products),
         api_details=api_details,
-        is_manually_corrected=bool(any(bool(p.get("is_manually_corrected")) for p in source_products)),
+        is_manually_corrected=bool(
+            any(bool(p.get("is_manually_corrected")) for p in source_products)
+        ),
     )
     if not success:
         await callback.answer("Не удалось обновить запись", show_alert=True)
@@ -3814,7 +3907,9 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
             carbs=totals["carbohydrates_total_g"],
             products_json=json.dumps(source_products),
             api_details=api_details,
-            is_manually_corrected=bool(any(bool(p.get("is_manually_corrected")) for p in source_products)),
+            is_manually_corrected=bool(
+            any(bool(p.get("is_manually_corrected")) for p in source_products)
+        ),
         )
         if not success:
             await callback.answer("Не удалось обновить запись", show_alert=True)
