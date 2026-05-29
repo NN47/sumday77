@@ -6,7 +6,9 @@ from handlers.meals import (
     _apply_product_manual_macros,
     _build_kbju_editor_keyboard,
     _build_kbju_field_editor_keyboard,
+    _build_product_actions_keyboard,
     _build_weight_editor_keyboard,
+    _render_product_actions_text,
     _parse_kbju_bulk_input,
 )
 from utils.emoji_map import EMOJI_MAP
@@ -104,3 +106,32 @@ def test_weight_editor_uses_smaller_first_two_step_rows():
         "meal_wchg:0:10",
         "meal_wchg:0:25",
     ]
+
+
+def test_product_actions_text_has_bold_labels_and_bju_letters():
+    text = _render_product_actions_text({
+        "name": "Творог",
+        "grams": 50,
+        "calories": 182,
+        "protein_g": 10,
+        "fat_total_g": 8,
+        "carbohydrates_total_g": 5,
+    })
+
+    assert "<b>✏️ Редактирование продукта</b>" in text
+    assert "<b>Продукт:</b> Творог" in text
+    assert "<b>Вес:</b> 50 г" in text
+    assert "💪 Б 10.0 г" in text
+    assert "🥑 Ж 8.0 г" in text
+    assert f"{EMOJI_MAP['carbs']} У 5.0 г" in text
+
+
+def test_product_actions_keyboard_has_change_name_button():
+    keyboard = _build_product_actions_keyboard(2)
+    rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
+    callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
+
+    assert rows[0] == ["✏️ Изменить название"]
+    assert callback_rows[0] == ["meal_pact_name:2"]
+    assert ["⚖️ Изменить вес"] in rows
+    assert ["🧮 Исправить КБЖУ"] in rows
