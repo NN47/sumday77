@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardB
 from aiogram.fsm.context import FSMContext
 from typing import Optional
 from utils.keyboards import (
-    WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT,
+    WEIGHT_AND_MEASUREMENTS_BUTTON_ALIASES,
     push_menu_stack,
     main_menu_button,
     other_day_menu,
@@ -304,7 +304,7 @@ async def _start_measurements_wizard(
     await _show_measurement_step(message, state)
 
 
-@router.message(lambda m: m.text == WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT)
+@router.message(lambda m: m.text in WEIGHT_AND_MEASUREMENTS_BUTTON_ALIASES)
 async def weight_and_measurements(message: Message):
     """Сразу открывает раздел веса из кнопки «Вес и замеры»."""
     user_id = str(message.from_user.id)
