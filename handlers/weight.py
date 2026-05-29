@@ -58,6 +58,7 @@ def _build_weight_quick_adjust_keyboard(_base_weight: float) -> ReplyKeyboardMar
     keyboard.extend(
         [
             [KeyboardButton(text="✍️ Ввести вручную")],
+            [KeyboardButton(text="✅ Сохранить")],
             [KeyboardButton(text="⬅️ Назад"), main_menu_button],
         ]
     )
@@ -136,6 +137,26 @@ def _format_weight_confirmation_text(
         f"⚖️ <b>Вес:</b> {weight_value:.1f} кг\n"
         f"{delta_text}\n\n"
         "Нажми <b>✅ Сохранить</b>, чтобы записать вес."
+    )
+
+
+def _format_weight_draft_text(
+    weight_value: float,
+    entry_date: date,
+    previous_weight_value: Optional[float],
+) -> str:
+    """Формирует сообщение о черновом весе после быстрой правки."""
+    delta_text = "<b>Изменение:</b> недостаточно данных"
+    if previous_weight_value is not None:
+        delta = weight_value - previous_weight_value
+        direction = "📉" if delta < 0 else "📈" if delta > 0 else "⚖️"
+        delta_text = f"<b>Изменение:</b> {delta:+.2f} кг с прошлой записи {direction}"
+
+    return (
+        f"⚖️ <b>Новый вес:</b> {weight_value:.1f} кг\n"
+        f"📅 <b>Дата:</b> {entry_date.strftime('%d.%m.%Y')}\n"
+        f"{delta_text}\n\n"
+        "Можно ещё изменить вес кнопками ниже или нажать <b>✅ Сохранить</b>."
     )
 
 
@@ -707,85 +728,12 @@ async def _show_weight_input_screen_from_state(message: Message, state: FSMConte
     )
 
 
-@router.message(WeightStates.entering_weight)
-async def handle_weight_input(message: Message, state: FSMContext):
-    """Обрабатывает ввод веса и показывает подтверждение перед сохранением."""
-    user_id = str(message.from_user.id)
-    text = (message.text or "").strip()
-    data = await state.get_data()
-    entry_date_str = data.get("entry_date")
-
-    # Если дата ещё не установлена, проверяем, не ввёл ли пользователь дату вручную.
-    if not entry_date_str:
-        parsed = parse_date(text)
-        if parsed:
-            target_date = parsed.date() if isinstance(parsed, datetime) else date.today()
-            base_weight = _resolve_base_weight(user_id)
-            await state.update_data(entry_date=target_date.isoformat(), quick_base_weight=base_weight or 70.0)
-            await message.answer(
-                _format_weight_input_screen(target_date, base_weight),
-                reply_markup=_build_weight_quick_adjust_keyboard(base_weight or 70.0),
-            )
-            return
-
-    if text == "✍️ Ввести вручную":
-        await message.answer("Ок, введи вес в килограммах числом.")
-        return
-
-    quick_base_weight = data.get("quick_base_weight")
-    if quick_base_weight is None:
-        quick_base_weight = _resolve_base_weight(user_id)
-    quick_weight_value = _resolve_quick_weight_value(text, _to_float_weight(quick_base_weight))
-    weight_value = quick_weight_value
-    if weight_value is None:
-        weight_value = parse_weight(text)
-    if weight_value is None or weight_value <= 0:
-        await message.answer("⚠️ Введи положительное число: 72.5 или 72,5")
-        return
-
-    data = await state.get_data()
-    entry_date = _resolve_weight_entry_date(data.get("entry_date", date.today().isoformat()))
-    weight_id = data.get("weight_id")
-    previous_weight_value = _find_previous_weight_value(user_id, entry_date, weight_id)
-
-    await state.update_data(
-        draft_weight_value=weight_value,
-        draft_previous_weight_value=previous_weight_value,
-        entry_date=entry_date.isoformat(),
-    )
-    await state.set_state(WeightStates.confirming_weight)
-    await message.answer(
-        _format_weight_confirmation_text(weight_value, entry_date, previous_weight_value),
-        reply_markup=_build_weight_confirmation_keyboard(),
-    )
-
-
-@router.message(WeightStates.confirming_weight)
-async def handle_weight_confirmation(message: Message, state: FSMContext):
-    """Сохраняет вес только после явного подтверждения пользователя."""
-    user_id = str(message.from_user.id)
-    text = (message.text or "").strip()
-    data = await state.get_data()
-
-    if text == "✏️ Изменить":
-        await _show_weight_input_screen_from_state(message, state)
-        return
-
-    if text == "⬅️ Назад":
-        await state.clear()
-        push_menu_stack(message.bot, weight_menu)
-        await message.answer("Выбери действие:", reply_markup=weight_menu)
-        return
-
-    if text != "✅ Сохранить":
-        await message.answer("Нажми ✅ Сохранить, чтобы записать вес, или ✏️ Изменить.")
-        return
-
+async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, data: dict):
+    """Сохраняет черновик веса из FSM."""
     weight_value = data.get("draft_weight_value")
     weight_value = _to_float_weight(weight_value)
     if weight_value is None or weight_value <= 0:
-        await message.answer("⚠️ Не нашёл вес для сохранения. Введи значение заново.")
-        await _show_weight_input_screen_from_state(message, state)
+        await message.answer("⚠️ Сначала выбери новый вес кнопкой или введи значение вручную.")
         return
 
     entry_date = _resolve_weight_entry_date(data.get("entry_date", date.today().isoformat()))
@@ -844,6 +792,95 @@ async def handle_weight_confirmation(message: Message, state: FSMContext):
         logger.error(f"Error saving/updating weight: {e}", exc_info=True)
         await message.answer("⚠️ Ошибка при сохранении. Повтори попытку позже.")
         await state.clear()
+
+
+@router.message(WeightStates.entering_weight)
+async def handle_weight_input(message: Message, state: FSMContext):
+    """Обрабатывает ввод веса и оставляет быстрые кнопки до сохранения."""
+    user_id = str(message.from_user.id)
+    text = (message.text or "").strip()
+    data = await state.get_data()
+    entry_date_str = data.get("entry_date")
+
+    # Если дата ещё не установлена, проверяем, не ввёл ли пользователь дату вручную.
+    if not entry_date_str:
+        parsed = parse_date(text)
+        if parsed:
+            target_date = parsed.date() if isinstance(parsed, datetime) else date.today()
+            base_weight = _resolve_base_weight(user_id)
+            await state.update_data(entry_date=target_date.isoformat(), quick_base_weight=base_weight or 70.0)
+            await message.answer(
+                _format_weight_input_screen(target_date, base_weight),
+                reply_markup=_build_weight_quick_adjust_keyboard(base_weight or 70.0),
+            )
+            return
+
+    if text == "✅ Сохранить":
+        await _save_weight_draft(message, state, user_id, data)
+        return
+
+    if text == "⬅️ Назад":
+        await state.clear()
+        push_menu_stack(message.bot, weight_menu)
+        await message.answer("Выбери действие:", reply_markup=weight_menu)
+        return
+
+    if text == "✍️ Ввести вручную":
+        await message.answer("Ок, введи вес в килограммах числом.")
+        return
+
+    draft_weight = _to_float_weight(data.get("draft_weight_value"))
+    quick_base_weight = draft_weight if draft_weight is not None else data.get("quick_base_weight")
+    if quick_base_weight is None:
+        quick_base_weight = _resolve_base_weight(user_id)
+    quick_weight_value = _resolve_quick_weight_value(text, _to_float_weight(quick_base_weight))
+    weight_value = quick_weight_value
+    if weight_value is None:
+        weight_value = parse_weight(text)
+    if weight_value is None or weight_value <= 0:
+        await message.answer("⚠️ Введи положительное число: 72.5 или 72,5")
+        return
+
+    data = await state.get_data()
+    entry_date = _resolve_weight_entry_date(data.get("entry_date", date.today().isoformat()))
+    weight_id = data.get("weight_id")
+    previous_weight_value = _find_previous_weight_value(user_id, entry_date, weight_id)
+
+    await state.update_data(
+        draft_weight_value=weight_value,
+        draft_previous_weight_value=previous_weight_value,
+        entry_date=entry_date.isoformat(),
+        quick_base_weight=weight_value,
+    )
+    await state.set_state(WeightStates.entering_weight)
+    await message.answer(
+        _format_weight_draft_text(weight_value, entry_date, previous_weight_value),
+        reply_markup=_build_weight_quick_adjust_keyboard(weight_value),
+    )
+
+
+@router.message(WeightStates.confirming_weight)
+async def handle_weight_confirmation(message: Message, state: FSMContext):
+    """Сохраняет вес из старого экрана подтверждения."""
+    user_id = str(message.from_user.id)
+    text = (message.text or "").strip()
+    data = await state.get_data()
+
+    if text == "✏️ Изменить":
+        await _show_weight_input_screen_from_state(message, state)
+        return
+
+    if text == "⬅️ Назад":
+        await state.clear()
+        push_menu_stack(message.bot, weight_menu)
+        await message.answer("Выбери действие:", reply_markup=weight_menu)
+        return
+
+    if text != "✅ Сохранить":
+        await message.answer("Нажми ✅ Сохранить, чтобы записать вес, или ✏️ Изменить.")
+        return
+
+    await _save_weight_draft(message, state, user_id, data)
 
 
 @router.message(lambda m: m.text == "🗑 Удалить вес")
