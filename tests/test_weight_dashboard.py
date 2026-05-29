@@ -114,7 +114,8 @@ def test_weight_quick_adjust_keyboard_uses_requested_delta_buttons_without_dupli
     assert rows[0] == ["-1", "-0,5", "+0,5", "+1"]
     assert rows[1] == ["-0,2", "-0,1", "+0,1", "+0,2"]
     assert rows[2] == ["✍️ Ввести вручную"]
-    assert rows[3] == ["⬅️ Назад", "🔄 Главное меню"]
+    assert rows[3] == ["✅ Сохранить"]
+    assert rows[4] == ["⬅️ Назад", "🔄 Главное меню"]
 
 
 def test_quick_weight_delta_resolves_against_base_weight():
@@ -153,7 +154,7 @@ def test_weight_entry_prompt_has_no_parenthetical_example():
     assert "например" not in prompt.lower()
 
 
-def test_weight_input_requires_save_confirmation_before_repository_write():
+def test_weight_input_keeps_quick_buttons_and_requires_save_before_repository_write():
     from handlers.weight import handle_weight_input
     from states.user_states import WeightStates
 
@@ -170,9 +171,33 @@ def test_weight_input_requires_save_confirmation_before_repository_write():
 
     save_weight.assert_not_called()
     update_weight.assert_not_called()
-    assert state.state == WeightStates.confirming_weight
+    assert state.state == WeightStates.entering_weight
     assert state.data["draft_weight_value"] == 76.4
+    assert state.data["quick_base_weight"] == 76.4
     text, reply_markup = message.answers[-1]
     rows = [[button.text for button in row] for row in reply_markup.keyboard]
-    assert "✅ Сохранить" in rows[0]
-    assert "<b>Вес:</b> 76.4 кг" in text
+    assert rows[0] == ["-1", "-0,5", "+0,5", "+1"]
+    assert rows[3] == ["✅ Сохранить"]
+    assert "<b>Новый вес:</b> 76.4 кг" in text
+
+
+def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
+    from handlers.weight import handle_weight_input
+
+    message = DummyMessage()
+    state = DummyState({
+        "entry_date": date(2026, 5, 29).isoformat(),
+        "quick_base_weight": 76.4,
+        "draft_weight_value": 76.2,
+    })
+    message.text = "-0,2"
+
+    with patch("handlers.weight.WeightRepository.get_weights", return_value=[weight_entry(76.9, date(2026, 5, 28), 1)]):
+        asyncio.run(handle_weight_input(message, state))
+
+    assert round(state.data["draft_weight_value"], 1) == 76.0
+    assert round(state.data["quick_base_weight"], 1) == 76.0
+    text, reply_markup = message.answers[-1]
+    rows = [[button.text for button in row] for row in reply_markup.keyboard]
+    assert rows[1] == ["-0,2", "-0,1", "+0,1", "+0,2"]
+    assert "<b>Новый вес:</b> 76.0 кг" in text
