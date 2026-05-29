@@ -1,4 +1,5 @@
 """Константы и утилиты для типов приёма пищи."""
+import html
 from enum import StrEnum
 
 
@@ -48,3 +49,12 @@ def display_meal_type(value: str | None) -> str:
     """Возвращает отображаемое название типа приёма пищи."""
     normalized = normalize_meal_type(value, fallback=MealType.SNACK.value)
     return MEAL_TYPE_LABELS.get(normalized, MEAL_TYPE_LABELS[MealType.SNACK.value])
+
+
+def display_meal_type_with_bold_name(value: str | None) -> str:
+    """Возвращает название приёма пищи с жирным HTML-выделением текстовой части."""
+    label = display_meal_type(value)
+    emoji, separator, name = label.partition(" ")
+    if not separator:
+        return f"<b>{html.escape(label)}</b>"
+    return f"{html.escape(emoji)}{separator}<b>{html.escape(name)}</b>"

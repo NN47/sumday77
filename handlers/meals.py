@@ -46,7 +46,13 @@ from services.ai.gigachat import (
 )
 from utils.validators import parse_date
 from datetime import datetime
-from utils.meal_types import MealType, MEAL_TYPE_ORDER, normalize_meal_type, display_meal_type
+from utils.meal_types import (
+    MealType,
+    MEAL_TYPE_ORDER,
+    normalize_meal_type,
+    display_meal_type,
+    display_meal_type_with_bold_name,
+)
 from utils.emoji_map import EMOJI_MAP
 from config import OPENROUTER_MODEL
 
@@ -2999,10 +3005,10 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
     )
     await state.set_state(MealEntryStates.editing_meal_weight)
 
-    meal_title = display_meal_type(meal_type)
+    meal_title = display_meal_type_with_bold_name(meal_type)
     await callback.message.answer(
-        f"⚖️ Нашёл несколько записей в приёме пищи «{meal_title}» за день — показываю объединённый список продуктов.\n"
-        "Выбери продукт для редактирования:",
+        f"⚖️ Нашёл несколько записей в приёме пищи «{meal_title}» за день — показываю объединённый список <b>продуктов</b>.\n"
+        "Выбери <b>продукт</b> для редактирования:",
         reply_markup=_build_weight_products_keyboard(merged_products),
     )
 
