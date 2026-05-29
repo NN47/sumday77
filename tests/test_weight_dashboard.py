@@ -65,5 +65,8 @@ def test_weight_dashboard_hides_progress_bar_and_shows_decrease_trend():
     assert "Прогресс:" not in text
     assert "█" not in text
     assert "░" not in text
-    assert "Снижение веса 📉" in text
+    assert "⚖️ <b>Вес</b>" in text
+    assert "<b>Текущий вес:</b> <b>76.90 кг</b>" in text
+    assert "📉 <b>Изменение:</b>" in text
+    assert "<b>Снижение веса 📉</b>" in text
     assert "Рост веса 📈" not in text
