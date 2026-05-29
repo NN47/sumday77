@@ -2407,6 +2407,19 @@ def _build_weight_products_keyboard(products: list[dict]) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _format_product_macro_summary(
+    calories: float,
+    protein: float,
+    fat: float,
+    carbs: float,
+) -> str:
+    """Форматирует компактную строку КБЖУ для карточки редактирования продукта."""
+    return (
+        f"🔥 {calories:.0f} ккал • 💪 Б {protein:.1f} г "
+        f"• 🥑 Ж {fat:.1f} г • {CARBS_EMOJI} У {carbs:.1f} г"
+    )
+
+
 def _render_product_actions_text(product: dict) -> str:
     name = html.escape(str(product.get("name") or "продукт"))
     grams = float(product.get("grams") or 0)
@@ -2416,8 +2429,7 @@ def _render_product_actions_text(product: dict) -> str:
         "",
         f"<b>Продукт:</b> {name}",
         f"<b>Вес:</b> {grams:.0f} г",
-        f"🔥 {calories:.0f} ккал • 💪 Б {protein:.1f} г "
-        f"• 🥑 Ж {fat:.1f} г • {CARBS_EMOJI} У {carbs:.1f} г",
+        _format_product_macro_summary(calories, protein, fat, carbs),
     ]
     if bool(product.get("is_manually_corrected")):
         lines.append("✏️ КБЖУ скорректированы вручную")
