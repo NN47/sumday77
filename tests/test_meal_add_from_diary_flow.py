@@ -189,3 +189,20 @@ def test_return_to_food_diary_sends_diary_menu_and_refreshes_today():
         include_back=False,
         force_refresh=True,
     )
+
+
+def test_format_label_result_header_bolds_label_and_escapes_product_name():
+    assert meals._format_label_result_header("label", "Салат <Курочка>") == (
+        "📋 <b>Анализ этикетки:</b> Салат &lt;Курочка&gt;\n"
+    )
+
+
+def test_format_kbju_summary_block_bolds_names_and_values():
+    text = meals._format_kbju_summary_block(
+        {"calories": 67, "protein": 3.1, "fat": 5.3, "carbs": 1.7}
+    )
+
+    assert "🔥 <b>Калории:</b> <b>67 ккал</b>" in text
+    assert "💪 <b>Белки:</b> <b>3.1 г</b>" in text
+    assert "🥑 <b>Жиры:</b> <b>5.3 г</b>" in text
+    assert "🍩 <b>Углеводы:</b> <b>1.7 г</b>" in text

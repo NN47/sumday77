@@ -4,6 +4,7 @@ import logging
 import json
 import re
 import math
+import html
 from dataclasses import dataclass
 from datetime import date
 from aiogram import Router, F
@@ -72,6 +73,31 @@ ADD_METHOD_TEXTS = {
     "label": "📋 Анализ этикетки",
     "barcode": "📷 Скан штрих-кода",
 }
+
+
+def _format_kbju_summary_block(totals: dict, *, bold_values: bool = True) -> str:
+    """Форматирует блок КБЖУ с акцентом на названиях и значениях."""
+    value_template = "<b>{value}</b>" if bold_values else "{value}"
+    calories = value_template.format(value=f"{float(totals.get('calories', 0) or 0):.0f} ккал")
+    protein = value_template.format(value=f"{float(totals.get('protein', 0) or 0):.1f} г")
+    fat = value_template.format(value=f"{float(totals.get('fat', 0) or 0):.1f} г")
+    carbs = value_template.format(value=f"{float(totals.get('carbs', 0) or 0):.1f} г")
+    return (
+        f"🔥 <b>Калории:</b> {calories}\n"
+        f"💪 <b>Белки:</b> {protein}\n"
+        f"🥑 <b>Жиры:</b> {fat}\n"
+        f"🍩 <b>Углеводы:</b> {carbs}"
+    )
+
+
+def _format_label_result_header(source: str, product_name: str) -> str:
+    """Форматирует первую строку результата анализа упаковки."""
+    safe_product_name = html.escape(product_name or "Продукт")
+    if source == "ocr_openrouter_test":
+        return f"📷 <b>OCR-анализ этикетки (тест):</b> {safe_product_name}\n"
+    if source == "barcode":
+        return f"📷 <b>Сканирование штрих-кода:</b> {safe_product_name}\n"
+    return f"📋 <b>Анализ этикетки:</b> {safe_product_name}\n"
 
 
 RECENT_MEALS_PAGE_SIZE = 8
@@ -1858,13 +1884,8 @@ async def handle_photo_input(message: Message, state: FSMContext):
     
     # Показываем суммарные данные за день
     daily_totals = MealRepository.get_daily_totals(user_id, entry_date)
-    lines.append("\nСУММА ЗА СЕГОДНЯ:")
-    lines.append(
-        f"🔥 Калории: {daily_totals.get('calories', 0):.0f} ккал\n"
-        f"💪 Белки: {daily_totals.get('protein', 0):.1f} г\n"
-        f"🥑 Жиры: {daily_totals.get('fat', 0):.1f} г\n"
-        f"🍩 Углеводы: {daily_totals.get('carbs', 0):.1f} г"
-    )
+    lines.append("\n<b>СУММА ЗА СЕГОДНЯ:</b>")
+    lines.append(_format_kbju_summary_block(daily_totals))
     
     await state.clear()
     push_menu_stack(message.bot, kbju_after_meal_menu)
@@ -2180,13 +2201,13 @@ async def handle_weight_input(message: Message, state: FSMContext):
         
         # Определяем источник по наличию barcode
         if meal_source == "ocr_openrouter_test":
-            lines = [f"📷 OCR-анализ этикетки (тест): {product_name}\n"]
+            lines = [_format_label_result_header("ocr_openrouter_test", product_name)]
             raw_query = f"[ocr_openrouter_test] {product_name}"
         elif barcode:
-            lines = [f"📷 Сканирование штрих-кода: {product_name}\n"]
+            lines = [_format_label_result_header("barcode", product_name)]
             raw_query = f"[Штрих-код: {barcode}] {product_name}"
         else:
-            lines = [f"📋 Анализ этикетки: {product_name}\n"]
+            lines = [_format_label_result_header("label", product_name)]
             raw_query = f"[Этикетка: {product_name}]"
     else:
         # Старый формат (для обратной совместимости)
@@ -2199,17 +2220,12 @@ async def handle_weight_input(message: Message, state: FSMContext):
         }
         product_name = data.get("product_name", "Продукт")
         barcode = data.get("barcode", "")
-        lines = [f"📷 Сканирование штрих-кода: {product_name}\n"]
+        lines = [_format_label_result_header("barcode", product_name)]
         raw_query = f"[Штрих-код: {barcode}] {product_name}"
     
-    lines.append(f"📦 Вес: {weight_grams:.0f} г\n")
-    lines.append("КБЖУ:")
-    lines.append(
-        f"🔥 Калории: {totals_for_db['calories']:.0f} ккал\n"
-        f"💪 Белки: {totals_for_db['protein']:.1f} г\n"
-        f"🥑 Жиры: {totals_for_db['fat']:.1f} г\n"
-        f"🍩 Углеводы: {totals_for_db['carbs']:.1f} г"
-    )
+    lines.append(f"📦 <b>Вес:</b> <b>{weight_grams:.0f} г</b>\n")
+    lines.append("<b>КБЖУ:</b>")
+    lines.append(_format_kbju_summary_block(totals_for_db))
     if meal_source == "ocr_openrouter_test":
         lines.append("Источник: OCR + OpenRouter (тест)")
 
@@ -2262,13 +2278,8 @@ async def handle_weight_input(message: Message, state: FSMContext):
     
     # Показываем суммарные данные за день
     daily_totals = MealRepository.get_daily_totals(user_id, entry_date)
-    lines.append("\nСУММА ЗА СЕГОДНЯ:")
-    lines.append(
-        f"🔥 Калории: {daily_totals.get('calories', 0):.0f} ккал\n"
-        f"💪 Белки: {daily_totals.get('protein', 0):.1f} г\n"
-        f"🥑 Жиры: {daily_totals.get('fat', 0):.1f} г\n"
-        f"🍩 Углеводы: {daily_totals.get('carbs', 0):.1f} г"
-    )
+    lines.append("\n<b>СУММА ЗА СЕГОДНЯ:</b>")
+    lines.append(_format_kbju_summary_block(daily_totals))
     
     await state.clear()
     push_menu_stack(message.bot, kbju_after_meal_menu)
