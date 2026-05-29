@@ -107,6 +107,14 @@ def _weight_entry_prompt() -> str:
     return "Выбери изменение кнопкой ниже или введи точный вес вручную:"
 
 
+def _format_weight_value_for_editor(raw_value: str | float | int | None) -> str:
+    """Форматирует вес для редактора без длинных float-хвостов."""
+    weight_value = _to_float_weight(raw_value)
+    if weight_value is None:
+        return str(raw_value)
+    return f"{weight_value:.1f}"
+
+
 def _format_weight_input_screen(
     target_date: date,
     base_weight: Optional[float],
@@ -116,7 +124,7 @@ def _format_weight_input_screen(
 ) -> str:
     """Формирует экран выбора нового значения веса."""
     if current_weight is not None:
-        weight_line = f"<b>Текущий вес:</b> {current_weight} кг"
+        weight_line = f"<b>Текущий вес:</b> {_format_weight_value_for_editor(current_weight)} кг"
         title = f"<b>{edit_title}</b>"
     else:
         weight_line = (
