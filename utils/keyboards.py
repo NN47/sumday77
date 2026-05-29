@@ -69,8 +69,8 @@ ACTIVITY_ANALYSIS_MONTH_BUTTON_ALIASES = {
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=MEALS_BUTTON_TEXT)],
-        [KeyboardButton(text=TRAINING_BUTTON_TEXT), KeyboardButton(text="💧 Контроль воды")],
-        [KeyboardButton(text=WELLBEING_AND_PROCEDURES_BUTTON_TEXT), KeyboardButton(text=WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT)],
+        [KeyboardButton(text=TRAINING_BUTTON_TEXT), KeyboardButton(text=WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT)],
+        [KeyboardButton(text=WELLBEING_AND_PROCEDURES_BUTTON_TEXT), KeyboardButton(text="💧 Контроль воды")],
         [KeyboardButton(text="💊 Добавки"), KeyboardButton(text=AI_ANALYSIS_BUTTON_TEXT)],
         [KeyboardButton(text="⚙️ Настройки"), main_menu_button],
     ],
