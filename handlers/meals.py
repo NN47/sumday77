@@ -2792,7 +2792,7 @@ async def edit_last_meal(message: Message, state: FSMContext):
     
     initial_product_idx = 0 if len(products) == 1 else None
 
-    # Сохраняем данные в FSM для редактирования веса
+    # Сохраняем данные в FSM для редактирования продукта
     await state.set_state(MealEntryStates.editing_meal_weight)
     await state.update_data(
         meal_id=last_meal_id,
@@ -2805,12 +2805,11 @@ async def edit_last_meal(message: Message, state: FSMContext):
 
     if initial_product_idx is not None:
         await message.answer(
-            _render_weight_editor_text(products[initial_product_idx]),
-            reply_markup=_build_weight_editor_keyboard(initial_product_idx),
+            _render_product_actions_text(products[initial_product_idx]),
+            reply_markup=_build_product_actions_keyboard(initial_product_idx),
         )
         return
 
-    # Сразу переходим к изменению веса продукта
     await message.answer(
         "✏️ Выбери продукт для редактирования:",
         reply_markup=_build_weight_products_keyboard(products),
@@ -2852,7 +2851,7 @@ async def _start_meal_edit_flow(
         )
         return
     
-    # Сохраняем данные в FSM и сразу открываем изменение веса
+    # Сохраняем данные в FSM и открываем меню действий продукта
     await state.update_data(
         meal_id=meal_id,
         target_date=target_date.isoformat(),
@@ -2865,8 +2864,8 @@ async def _start_meal_edit_flow(
 
     if initial_product_idx is not None:
         await message.answer(
-            _render_weight_editor_text(products[initial_product_idx]),
-            reply_markup=_build_weight_editor_keyboard(initial_product_idx),
+            _render_product_actions_text(products[initial_product_idx]),
+            reply_markup=_build_product_actions_keyboard(initial_product_idx),
         )
         return
 

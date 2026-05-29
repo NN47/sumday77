@@ -172,6 +172,35 @@ def test_recent_confirm_uses_single_selected_product():
     assert kwargs["products_json"] == '[{"name": "Окрошка без заправки", "grams": 200, "kcal": 120.0, "protein": 6.0, "fat": 3.0, "carbs": 18.0}]'
 
 
+def test_edit_last_meal_single_label_product_opens_product_actions_menu():
+    meal_date = date.today()
+    meal = SimpleNamespace(
+        id=42,
+        date=meal_date,
+        products_json=(
+            '[{"name":"Eichbaum Radler Lemon","grams":350,"kcal":112,'
+            '"protein":1.8,"fat":1.8,"carbs":27.3}]'
+        ),
+    )
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    message.text = "✏️ Редактировать"
+    message.bot.last_meal_ids = {"12345": 42}
+    state = _DummyState()
+
+    with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal):
+        asyncio.run(meals.edit_last_meal(message, state))
+
+    state.set_state.assert_awaited_once_with(meals.MealEntryStates.editing_meal_weight)
+    assert state._data["editing_product_idx"] == 0
+    answer_kwargs = message.answer.await_args.kwargs
+    answer_text = message.answer.await_args.args[0]
+    assert "✏️ Редактирование продукта" in answer_text
+    assert "Продукт: Eichbaum Radler Lemon" in answer_text
+    button_texts = [button.text for row in answer_kwargs["reply_markup"].inline_keyboard for button in row]
+    assert button_texts == ["⚖️ Изменить вес", "🧮 Исправить КБЖУ", "🗑 Удалить", "⬅️ Назад"]
+
+
 def test_return_to_food_diary_sends_diary_menu_and_refreshes_today():
     message = _build_message()
 
