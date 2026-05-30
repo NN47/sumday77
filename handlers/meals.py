@@ -591,7 +591,7 @@ async def _show_recent_meals_page(
 
 
 def _render_recent_meal_confirm_text(meal_type: str, meal, amount_g: int = 100) -> str:
-    meal_name = display_meal_type(meal_type).lower()
+    meal_ui = display_meal_type_with_bold_name(meal_type)
     if isinstance(meal, RecentMealItem):
         title = meal.title
         calories = meal.calories
@@ -604,11 +604,12 @@ def _render_recent_meal_confirm_text(meal_type: str, meal, amount_g: int = 100) 
         protein = float(meal.protein or 0)
         fat = float(meal.fat or 0)
         carbs = float(meal.carbs or 0)
+    safe_title = html.escape(title or "Продукт")
     return (
-        f"Добавить продукт в {meal_name}?\n\n"
-        f"{title}\n"
-        f"{amount_g} г • {calories:.0f} ккал\n"
-        f"Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f}"
+        f"{meal_ui} • <b>Добавить продукт?</b>\n\n"
+        f"• <b>{safe_title}</b> ({amount_g} г)\n"
+        f"<b>{calories:.0f} ккал</b> <i>(Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f})</i>\n\n"
+        f"<b>Выбери действие:</b>"
     )
 
 
@@ -783,6 +784,7 @@ async def recent_meal_pick(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         _render_recent_meal_confirm_text(meal_type, recent_item, amount_g=recent_item.amount_g),
         reply_markup=_build_recent_meal_confirm_keyboard(source_meal_id, meal_type, page, product_index),
+        parse_mode="HTML",
     )
 
 
@@ -917,6 +919,7 @@ async def recent_meal_weight_save_draft(callback: CallbackQuery, state: FSMConte
             int(data.get("recent_meals_page") or 1),
             product_index,
         ),
+        parse_mode="HTML",
     )
 
 
@@ -952,6 +955,7 @@ async def recent_meal_weight_back(callback: CallbackQuery, state: FSMContext):
             int(data.get("recent_meals_page") or 1),
             product_index,
         ),
+        parse_mode="HTML",
     )
 
 
@@ -3453,6 +3457,7 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
                 int(data.get("recent_meals_page") or 1),
                 product_index,
             ),
+            parse_mode="HTML",
         )
         return
 
