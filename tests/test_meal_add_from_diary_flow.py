@@ -165,6 +165,47 @@ def test_expand_recent_meals_splits_multi_product_entries():
     assert items[1].calories == 120
 
 
+def test_format_recent_meals_text_uses_meal_report_bold_style_and_escapes_html():
+    item = meals.RecentMealItem(
+        source_meal_id=7,
+        product_index=0,
+        title="Салат <Курочка>",
+        amount_g=120,
+        calories=67,
+        protein=3.1,
+        fat=5.3,
+        carbs=1.7,
+    )
+
+    text = meals._format_recent_meals_text([item], page=1)
+
+    assert "🕘 <b>Недавно добавленные • страница 1</b>" in text
+    assert "1. <b>Салат &lt;Курочка&gt;</b>" in text
+    assert "<b>120 г • 67 ккал</b>" in text
+    assert "<i>Б 3.1 / Ж 5.3 / У 1.7</i>" in text
+    assert "<Курочка>" not in text
+
+
+def test_show_recent_meals_page_sends_html_parse_mode():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    state = _DummyState()
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Салат",
+        description=None,
+        products_json='[{"name":"Салат","grams":120,"kcal":67,"protein":3.1,"fat":5.3,"carbs":1.7}]',
+        calories=67,
+        protein=3.1,
+        fat=5.3,
+        carbs=1.7,
+    )
+
+    with patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[meal]):
+        asyncio.run(meals._show_recent_meals_page(message, state, meal_type="snack", page=1))
+
+    assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
+
 def test_recent_confirm_uses_single_selected_product():
     callback = _build_callback("recent_meal_confirm:dinner:1:7:1")
     state = _DummyState()
