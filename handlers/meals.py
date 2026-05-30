@@ -233,13 +233,13 @@ def _expand_recent_meals(recent_meals: list, limit: int = 64) -> list[RecentMeal
 
 def _format_recent_meals_text(recent_meals: list[RecentMealItem], page: int) -> str:
     start_idx = (page - 1) * RECENT_MEALS_PAGE_SIZE
-    lines: list[str] = [f"🕘 Недавно добавленные • страница {page}", ""]
+    lines: list[str] = [f"🕘 <b>Недавно добавленные • страница {page}</b>", ""]
     for offset, item in enumerate(recent_meals, start=start_idx + 1):
         lines.extend(
             [
-                f"{offset}. {item.title}",
-                f"{item.amount_g} г • {item.calories:.0f} ккал",
-                f"Б {item.protein:.1f} / Ж {item.fat:.1f} / У {item.carbs:.1f}",
+                f"{offset}. <b>{html.escape(item.title)}</b>",
+                f"<b>{item.amount_g} г • {item.calories:.0f} ккал</b>",
+                f"<i>Б {item.protein:.1f} / Ж {item.fat:.1f} / У {item.carbs:.1f}</i>",
                 "",
             ]
         )
@@ -586,6 +586,7 @@ async def _show_recent_meals_page(
     await message.answer(
         _format_recent_meals_text(page_items, page),
         reply_markup=_build_recent_meals_keyboard(page_items, meal_type, page, has_prev, has_next),
+        parse_mode="HTML",
     )
 
 
