@@ -3016,8 +3016,8 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
 
     meal_title = display_meal_type_with_bold_name(meal_type)
     await callback.message.answer(
-        f"⚖️ Нашёл несколько записей в приёме пищи «{meal_title}» за день — показываю объединённый список <b>продуктов</b>.\n"
-        "Выбери <b>продукт</b> для редактирования:",
+        f"⚖️ Нашёл несколько записей в приёме пищи «{meal_title}» за день — показываю объединённый список продуктов.\n"
+        "<b>Выбери продукт для редактирования:</b>",
         reply_markup=_build_weight_products_keyboard(merged_products),
     )
 
