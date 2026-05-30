@@ -142,6 +142,46 @@ def test_recent_weight_editor_text_bolds_labels_and_uses_kbju_block():
     assert "Б 0.9 / Ж 0.1 / У 37.4" not in text
 
 
+def test_recent_confirm_text_uses_meal_report_style_and_escapes_html():
+    item = meals.RecentMealItem(
+        source_meal_id=7,
+        product_index=0,
+        title="Tea <green>",
+        amount_g=300,
+        calories=0,
+        protein=0.3,
+        fat=0.0,
+        carbs=0.9,
+    )
+
+    text = meals._render_recent_meal_confirm_text("dinner", item, amount_g=300)
+
+    assert "🍽 <b>Ужин</b> • <b>Добавить продукт?</b>" in text
+    assert "• <b>Tea &lt;green&gt;</b> (300 г)" in text
+    assert "<b>0 ккал</b> <i>(Б 0.3 / Ж 0.0 / У 0.9)</i>" in text
+    assert "<b>Выбери действие:</b>" in text
+    assert "Tea <green>" not in text
+
+
+def test_recent_pick_sends_html_parse_mode_for_confirm_card():
+    callback = _build_callback("recent_meal_pick:dinner:1:7:0")
+    state = _DummyState()
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Tea 300 г",
+        description=None,
+        products_json='[{"name":"Tea","grams":300,"kcal":0,"protein":0.3,"fat":0,"carbs":0.9}]',
+        calories=0,
+        protein=0.3,
+        fat=0.0,
+        carbs=0.9,
+    )
+
+    with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal):
+        asyncio.run(meals.recent_meal_pick(callback, state))
+
+    assert callback.message.answer.await_args.kwargs["parse_mode"] == "HTML"
+
 def test_expand_recent_meals_splits_multi_product_entries():
     meal = SimpleNamespace(
         id=7,
