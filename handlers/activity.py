@@ -3,7 +3,7 @@ import asyncio
 import logging
 import re
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from collections import Counter
 from aiogram import Router
 from aiogram.exceptions import TelegramBadRequest
@@ -26,7 +26,7 @@ from utils.calendar_utils import (
     build_activity_analysis_day_actions_keyboard,
 )
 from database.repositories.activity_analysis_repository import ActivityAnalysisRepository
-from database.repositories import AnalyticsRepository
+from database.repositories import AnalyticsRepository, EveningAnalysisNotificationRepository
 from states.user_states import ActivityAnalysisStates
 from services.gemini_service import gemini_service, GeminiServiceTemporaryUnavailableError
 from services.openrouter_service import OpenRouterServiceTemporaryError, openrouter_service
@@ -38,6 +38,11 @@ from services.ai.gigachat import (
 )
 from services.error_logging_service import log_app_error
 from utils.telegram_text import split_telegram_message
+from services.notification_scheduler import (
+    EVENING_ANALYSIS_REMIND_PREFIX,
+    EVENING_ANALYSIS_REMINDER_DELAY,
+    EVENING_ANALYSIS_START_PREFIX,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +54,37 @@ AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT = (
     "Данные сохранены, попробуй чуть позже.\n\n"
     "Можно продолжать пользоваться ботом — всё остальное работает нормально."
 )
+
+
+async def run_daily_activity_analysis(message: Message, user_id: str, target_date: date | None = None) -> bool:
+    """Запускает стандартный ИИ-анализ дня и отправляет результат пользователю."""
+    analysis_date = target_date or date.today()
+    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, analysis_date)
+    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
+    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
+    await message.answer("⏳ Подожди немного, бот анализирует твой день...")
+    try:
+        analysis = await generate_activity_analysis(user_id, analysis_date, analysis_date, "за день")
+        ActivityAnalysisRepository.create_entry(user_id, analysis, analysis_date, source="generated")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
+    except Exception as e:
+        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
+        if _is_gemini_temporarily_unavailable_error(e):
+            push_menu_stack(message.bot, activity_analysis_menu)
+            await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
+            return False
+        log_app_error(
+            source="gemini",
+            error=e,
+            user_id=user_id,
+            context="daily_analysis",
+            extra={"handler": "run_daily_activity_analysis"},
+        )
+        await message.answer("⚠️ Не удалось сгенерировать анализ дня. Попробуй позже.")
+        return False
+    push_menu_stack(message.bot, activity_analysis_menu)
+    await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
+    return True
 
 DAILY_ANALYSIS_REQUIRED_HEADERS = [
     "🏋️ Тренировки",
@@ -1232,31 +1268,30 @@ async def save_manual_activity_analysis(message: Message, state: FSMContext):
 async def analyze_activity_day(message: Message):
     """Анализ за день."""
     user_id = str(message.from_user.id)
-    today = date.today()
-    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
-    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
-    await message.answer("⏳ Подожди немного, бот анализирует твой день...")
-    try:
-        analysis = await generate_activity_analysis(user_id, today, today, "за день")
-        ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="generated")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
-    except Exception as e:
-        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
-        if _is_gemini_temporarily_unavailable_error(e):
-            push_menu_stack(message.bot, activity_analysis_menu)
-            await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
-            return
-        log_app_error(
-            source="gemini",
-            error=e,
-            user_id=user_id,
-            context="daily_analysis",
-            extra={"handler": "analyze_activity_day"},
-        )
-        await message.answer("⚠️ Не удалось сгенерировать анализ дня. Попробуй позже.")
+    await run_daily_activity_analysis(message, user_id)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith(f"{EVENING_ANALYSIS_START_PREFIX}:"))
+async def start_evening_activity_analysis(callback: CallbackQuery):
+    """Запускает анализ дня из вечернего уведомления."""
+    await callback.answer()
+    user_id = str(callback.from_user.id)
+    target_date = date.fromisoformat(callback.data.split(":", 1)[1])
+    await run_daily_activity_analysis(callback.message, user_id, target_date)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith(f"{EVENING_ANALYSIS_REMIND_PREFIX}:"))
+async def remind_evening_activity_analysis_later(callback: CallbackQuery):
+    """Планирует повторное вечернее уведомление анализа дня через 45 минут."""
+    await callback.answer("Хорошо, напомню позже ⏰")
+    user_id = str(callback.from_user.id)
+    target_date = date.fromisoformat(callback.data.split(":", 1)[1])
+    due_at = datetime.utcnow() + EVENING_ANALYSIS_REMINDER_DELAY
+    reminder_number = EveningAnalysisNotificationRepository.schedule_reminder(user_id, target_date, due_at)
+    if reminder_number is None:
+        await callback.message.answer("На сегодня больше не буду напоминать об анализе дня ⏰")
         return
-    push_menu_stack(message.bot, activity_analysis_menu)
-    await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
+    await callback.message.answer("Хорошо, напомню позже ⏰")
 
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES)
@@ -1264,6 +1299,7 @@ async def analyze_activity_day_gigachat(message: Message):
     """Анализ за день через GigaChat."""
     user_id = str(message.from_user.id)
     today = date.today()
+    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, today)
     logger.info("Starting daily activity analysis via GigaChat, user_id=%s", user_id)
     AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
     AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
@@ -1314,6 +1350,7 @@ async def analyze_activity_day_openrouter(message: Message):
     """Анализ дня через OpenRouter."""
     user_id = str(message.from_user.id)
     today = date.today()
+    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, today)
     AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
     AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
     await message.answer("⏳ Подожди немного, бот анализирует твой день через OpenRouter...")

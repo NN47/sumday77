@@ -75,6 +75,8 @@ def init_db():
                 logger.warning(f"Ошибка при добавлении users.{column_name}: {e}")
 
         _add_users_column_if_missing("target_weight", "FLOAT")
+        _add_users_column_if_missing("timezone", "VARCHAR DEFAULT 'Europe/Moscow' NOT NULL")
+        _add_users_column_if_missing("notifications_enabled", "BOOLEAN DEFAULT TRUE NOT NULL")
         # DATETIME не поддерживается в PostgreSQL, поэтому используем TIMESTAMP.
         _add_users_column_if_missing("created_at", "TIMESTAMP", fill_now=True)
         _add_users_column_if_missing("last_seen_at", "TIMESTAMP", fill_now=True)
