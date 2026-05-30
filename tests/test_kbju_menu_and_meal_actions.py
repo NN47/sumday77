@@ -1,7 +1,7 @@
 from datetime import date
 
 from utils.keyboards import kbju_menu
-from utils.meal_formatters import build_meals_actions_keyboard
+from utils.meal_formatters import build_meal_actions_keyboard, build_meals_actions_keyboard
 
 
 
@@ -32,3 +32,17 @@ def test_meal_actions_keyboard_uses_supported_callback_prefixes():
     assert "add_meal:breakfast:2026-04-08" in callback_data
     assert "edit_meal:breakfast:2026-04-08" in callback_data
     assert "clear_meal:breakfast:2026-04-08" in callback_data
+
+
+def test_single_meal_actions_keyboard_uses_stacked_full_width_buttons():
+    keyboard = build_meal_actions_keyboard("dinner", date(2026, 4, 8))
+
+    rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
+    callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
+
+    assert rows == [["➕ Добавить"], ["✏️ Редактировать"], ["🗑 Очистить"]]
+    assert callback_rows == [
+        ["add_meal:dinner:2026-04-08"],
+        ["edit_meal:dinner:2026-04-08"],
+        ["clear_meal:dinner:2026-04-08"],
+    ]

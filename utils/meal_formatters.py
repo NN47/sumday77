@@ -270,16 +270,20 @@ def build_meal_actions_keyboard(meal_type: str, target_date: date) -> InlineKeyb
                 InlineKeyboardButton(
                     text="➕ Добавить",
                     callback_data=f"add_meal:{normalized_meal_type}:{iso_date}",
-                ),
+                )
+            ],
+            [
                 InlineKeyboardButton(
                     text="✏️ Редактировать",
                     callback_data=f"edit_meal:{normalized_meal_type}:{iso_date}",
-                ),
+                )
+            ],
+            [
                 InlineKeyboardButton(
                     text="🗑 Очистить",
                     callback_data=f"clear_meal:{normalized_meal_type}:{iso_date}",
-                ),
-            ]
+                )
+            ],
         ]
     )
 
