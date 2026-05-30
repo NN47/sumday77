@@ -2,12 +2,12 @@
 import asyncio
 import logging
 import json
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from database.session import get_db_session
-from database.models import User, Supplement, KbjuSettings
+from database.models import ActivityAnalysisEntry, User, Supplement, KbjuSettings, EveningAnalysisNotificationState
 from services.error_logging_service import log_app_error
 
 logger = logging.getLogger(__name__)
@@ -17,6 +17,27 @@ MEAL_TYPE_PREPOSITIONAL = {
     "обед": "обеде",
     "ужин": "ужине",
 }
+EVENING_ANALYSIS_TIME = time(21, 45)
+EVENING_ANALYSIS_REMINDER_DELAY = timedelta(minutes=45)
+EVENING_ANALYSIS_MAX_REMINDERS = 2
+EVENING_ANALYSIS_START_PREFIX = "evening_analysis_start"
+EVENING_ANALYSIS_REMIND_PREFIX = "evening_analysis_remind"
+EVENING_ANALYSIS_MAIN_TEXT = (
+    "🌙 Вечерний анализ дня\n\n"
+    "Ты уже добавил все приёмы пищи за сегодня?\n\n"
+    "Если всё на месте — запущу ИИ-анализ дня:\n"
+    "🍽 питание\n"
+    "🔥 калории\n"
+    "💪 белок\n"
+    "🏃 активность\n"
+    "⚖️ вес и заметки\n\n"
+    "Готовы?"
+)
+EVENING_ANALYSIS_REMINDER_TEXT = (
+    "⏰ Напоминаю про анализ дня\n\n"
+    "Ты уже добавил все приёмы пищи за сегодня?\n"
+    "Если дневник заполнен — можем подвести итоги."
+)
 
 
 class NotificationScheduler:
@@ -78,6 +99,130 @@ class NotificationScheduler:
             logger.error(
                 f"Ошибка при отправке уведомлений о {meal_type_prepositional}: {e}"
             )
+
+    def build_evening_analysis_keyboard(self, target_date) -> InlineKeyboardMarkup:
+        """Создаёт inline-кнопки для вечернего анализа дня."""
+        date_payload = target_date.isoformat()
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✅ Да, анализировать день",
+                        callback_data=f"{EVENING_ANALYSIS_START_PREFIX}:{date_payload}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="⏰ Напомнить позже",
+                        callback_data=f"{EVENING_ANALYSIS_REMIND_PREFIX}:{date_payload}",
+                    )
+                ],
+            ]
+        )
+
+    def _get_user_timezone(self, timezone_name: str | None) -> ZoneInfo:
+        """Возвращает таймзону пользователя или московскую по умолчанию."""
+        try:
+            return ZoneInfo(timezone_name or "Europe/Moscow")
+        except Exception:
+            return MSK_TZ
+
+    async def send_evening_analysis_notification(self, user_id: str, target_date, *, is_reminder: bool = False):
+        """Отправляет основное или повторное уведомление анализа дня."""
+        text = EVENING_ANALYSIS_REMINDER_TEXT if is_reminder else EVENING_ANALYSIS_MAIN_TEXT
+        await self.send_notification(
+            user_id,
+            text,
+            reply_markup=self.build_evening_analysis_keyboard(target_date),
+        )
+
+    async def check_and_send_evening_analysis_notifications(self):
+        """Проверяет и отправляет вечерние уведомления ИИ-анализа дня."""
+        try:
+            now_utc = datetime.utcnow()
+            pending_notifications: list[tuple[str, object, bool]] = []
+
+            with get_db_session() as session:
+                users = (
+                    session.query(User)
+                    .join(KbjuSettings, KbjuSettings.user_id == User.user_id)
+                    .filter(User.notifications_enabled.is_(True))
+                    .all()
+                )
+
+                for user in users:
+                    user_tz = self._get_user_timezone(user.timezone)
+                    local_now = datetime.now(user_tz)
+                    local_today = local_now.date()
+
+                    state = (
+                        session.query(EveningAnalysisNotificationState)
+                        .filter(EveningAnalysisNotificationState.user_id == user.user_id)
+                        .first()
+                    )
+                    if state is None:
+                        state = EveningAnalysisNotificationState(user_id=user.user_id)
+                        session.add(state)
+                        session.flush()
+
+                    if state.last_daily_analysis_date == local_today:
+                        state.reminder_due_at = None
+                        continue
+
+                    generated_today_exists = (
+                        session.query(ActivityAnalysisEntry.id)
+                        .filter(ActivityAnalysisEntry.user_id == user.user_id)
+                        .filter(ActivityAnalysisEntry.date == local_today)
+                        .filter(ActivityAnalysisEntry.source == "generated")
+                        .first()
+                        is not None
+                    )
+                    if generated_today_exists:
+                        state.last_daily_analysis_date = local_today
+                        state.reminder_due_at = None
+                        continue
+
+                    if state.reminder_due_at and state.reminder_due_at <= now_utc:
+                        if state.remind_later_date == local_today and state.remind_later_count <= EVENING_ANALYSIS_MAX_REMINDERS:
+                            pending_notifications.append((user.user_id, local_today, True))
+                            state.reminder_due_at = None
+                            state.updated_at = now_utc
+                        continue
+
+                    is_target_minute = (
+                        local_now.hour == EVENING_ANALYSIS_TIME.hour
+                        and local_now.minute == EVENING_ANALYSIS_TIME.minute
+                    )
+                    if is_target_minute and state.last_evening_notification_date != local_today:
+                        state.last_evening_notification_date = local_today
+                        state.remind_later_date = local_today
+                        state.remind_later_count = 0
+                        state.reminder_due_at = None
+                        state.updated_at = now_utc
+                        pending_notifications.append((user.user_id, local_today, False))
+
+            if pending_notifications:
+                logger.info("Отправка вечерних уведомлений анализа дня: %s", len(pending_notifications))
+                tasks = [
+                    self.send_evening_analysis_notification(user_id, target_date, is_reminder=is_reminder)
+                    for user_id, target_date, is_reminder in pending_notifications
+                ]
+                await asyncio.gather(*tasks, return_exceptions=True)
+        except Exception as e:
+            logger.error("Ошибка при проверке вечерних уведомлений анализа дня: %s", e, exc_info=True)
+
+    async def evening_analysis_notification_loop(self):
+        """Цикл проверки вечерних уведомлений ИИ-анализа дня каждую минуту."""
+        while self.running:
+            try:
+                await self.check_and_send_evening_analysis_notifications()
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                logger.info("Цикл вечерних уведомлений анализа дня остановлен")
+                break
+            except Exception as e:
+                logger.error("Ошибка в цикле вечерних уведомлений анализа дня: %s", e, exc_info=True)
+                await asyncio.sleep(60)
     
     def _get_weekday_name(self, weekday: int) -> str:
         """Преобразует номер дня недели (0=Понедельник) в русское сокращение."""
@@ -154,6 +299,8 @@ class NotificationScheduler:
             ),
             # Запускаем цикл проверки уведомлений о добавках
             self.supplement_notification_loop(),
+            # Запускаем независимый цикл вечерних уведомлений анализа дня
+            self.evening_analysis_notification_loop(),
         ]
         
         # Запускаем все задачи параллельно

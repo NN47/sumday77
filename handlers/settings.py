@@ -31,7 +31,8 @@ def delete_user_account(user_id: str) -> bool:
     """Удаляет аккаунт пользователя и все связанные данные."""
     from database.models import (
         Workout, Weight, Measurement, Meal, KbjuSettings,
-        SupplementEntry, Supplement, Procedure, WaterEntry, User
+        SupplementEntry, Supplement, Procedure, WaterEntry, User,
+        EveningAnalysisNotificationState,
     )
     
     with get_db_session() as session:
@@ -46,6 +47,7 @@ def delete_user_account(user_id: str) -> bool:
             session.query(Supplement).filter_by(user_id=user_id).delete()
             session.query(Procedure).filter_by(user_id=user_id).delete()
             session.query(WaterEntry).filter_by(user_id=user_id).delete()
+            session.query(EveningAnalysisNotificationState).filter_by(user_id=user_id).delete()
             session.query(User).filter_by(user_id=user_id).delete()
             
             session.commit()

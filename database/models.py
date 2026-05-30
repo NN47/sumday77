@@ -25,6 +25,22 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     target_weight = Column(Float, nullable=True)
+    timezone = Column(String, default="Europe/Moscow", nullable=False)
+    notifications_enabled = Column(Boolean, default=True, nullable=False)
+
+
+class EveningAnalysisNotificationState(Base):
+    """Состояние вечерних уведомлений ИИ-анализа дня по пользователю."""
+    __tablename__ = "evening_analysis_notification_states"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, unique=True, nullable=False, index=True)
+    last_evening_notification_date = Column(Date, nullable=True)
+    last_daily_analysis_date = Column(Date, nullable=True)
+    remind_later_count = Column(Integer, default=0, nullable=False)
+    remind_later_date = Column(Date, nullable=True)
+    reminder_due_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class Workout(Base):
