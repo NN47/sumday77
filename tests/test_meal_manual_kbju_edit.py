@@ -10,6 +10,7 @@ from handlers.meals import (
     _build_weight_editor_keyboard,
     _format_product_macro_summary,
     _render_product_actions_text,
+    _render_weight_editor_text,
     _parse_kbju_bulk_input,
 )
 from utils.emoji_map import EMOJI_MAP
@@ -135,6 +136,16 @@ def test_product_actions_text_has_bold_labels_and_bju_letters():
     assert "💪 Белки: 10.0 г" in text
     assert "🥑 Жиры: 8.0 г" in text
     assert f"{EMOJI_MAP['carbs']} Углеводы: 5.0 г" in text
+
+
+def test_weight_editor_text_bolds_title_and_colon_labels():
+    text = _render_weight_editor_text({"name": "Творог", "grams": 500}, draft_weight=450)
+
+    assert "<b>✏️ Изменение веса продукта</b>" in text
+    assert "<b>Продукт:</b> Творог" in text
+    assert "<b>Текущий вес:</b> 500 г" in text
+    assert "<b>Новый вес:</b> 450 г" in text
+    assert "<b>Выбери действие:</b>" in text
 
 
 def test_product_actions_keyboard_has_change_name_button():
