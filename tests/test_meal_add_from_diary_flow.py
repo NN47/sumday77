@@ -19,7 +19,6 @@ class _DummyState:
         return dict(self._data)
 
 
-
 def _build_message():
     return SimpleNamespace(answer=AsyncMock(), bot=SimpleNamespace())
 
@@ -114,6 +113,33 @@ def test_recent_weight_editor_keyboard_uses_tenth_scale_on_first_rows():
         "recent_wchg:10",
         "recent_wchg:25",
     ]
+
+
+def test_recent_weight_editor_text_bolds_labels_and_uses_kbju_block():
+    item = meals.RecentMealItem(
+        source_meal_id=7,
+        product_index=0,
+        title="БАЛТИКА БЕЗАЛКОГОЛЬНОЕ ГРЕЙПФРУТ №0",
+        amount_g=500,
+        calories=176,
+        protein=1.0,
+        fat=0.1,
+        carbs=41.6,
+    )
+
+    text = meals._render_recent_weight_editor_text(item, draft_amount_g=450)
+
+    assert "<b>✏️ Изменение веса продукта</b>" in text
+    assert "<b>Продукт:</b> БАЛТИКА БЕЗАЛКОГОЛЬНОЕ ГРЕЙПФРУТ №0" in text
+    assert "<b>Текущий вес:</b> 500 г" in text
+    assert "<b>Новый вес:</b> 450 г" in text
+    assert "🔥 <b>Калории:</b> 158 ккал" in text
+    assert "💪 <b>Белки:</b> 0.9 г" in text
+    assert "🥑 <b>Жиры:</b> 0.1 г" in text
+    assert "🍩 <b>Углеводы:</b> 37.4 г" in text
+    assert "<b>Выбери действие:</b>" in text
+    assert "Итого:" not in text
+    assert "Б 0.9 / Ж 0.1 / У 37.4" not in text
 
 
 def test_expand_recent_meals_splits_multi_product_entries():

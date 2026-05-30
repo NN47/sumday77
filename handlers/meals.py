@@ -689,20 +689,26 @@ def _render_recent_weight_editor_text(item: RecentMealItem, draft_amount_g: int 
     new_amount = int(draft_amount_g or current_amount)
     ratio = new_amount / float(current_amount or 100)
     lines = [
-        "✏️ Изменение веса продукта",
+        "<b>✏️ Изменение веса продукта</b>",
         "",
-        f"Продукт: {item.title}",
-        f"Текущий вес: {current_amount} г",
+        f"<b>Продукт:</b> {item.title}",
+        f"<b>Текущий вес:</b> {current_amount} г",
     ]
     if new_amount != current_amount:
-        lines.append(f"Новый вес: {new_amount} г")
+        lines.append(f"<b>Новый вес:</b> {new_amount} г")
     lines.extend(
         [
             "",
-            f"Итого: {float(item.calories) * ratio:.0f} ккал",
-            f"Б {float(item.protein) * ratio:.1f} / Ж {float(item.fat) * ratio:.1f} / У {float(item.carbs) * ratio:.1f}",
+            _format_kbju_summary_block(
+                {
+                    "calories": float(item.calories) * ratio,
+                    "protein": float(item.protein) * ratio,
+                    "fat": float(item.fat) * ratio,
+                    "carbs": float(item.carbs) * ratio,
+                }
+            ),
             "",
-            "Выбери действие:",
+            "<b>Выбери действие:</b>",
         ]
     )
     return "\n".join(lines)
@@ -2644,15 +2650,15 @@ def _render_weight_editor_text(product: dict, draft_weight: Optional[float] = No
     name = product.get("name") or "продукт"
     current_weight = float(product.get("grams") or 0)
     lines = [
-        "✏️ Изменение веса продукта",
+        "<b>✏️ Изменение веса продукта</b>",
         "",
-        f"Продукт: {name}",
-        f"Текущий вес: {current_weight:.0f} г",
+        f"<b>Продукт:</b> {name}",
+        f"<b>Текущий вес:</b> {current_weight:.0f} г",
     ]
     if draft_weight is not None and round(draft_weight, 2) != round(current_weight, 2):
-        lines.append(f"Новый вес: {draft_weight:.0f} г")
+        lines.append(f"<b>Новый вес:</b> {draft_weight:.0f} г")
 
-    lines.extend(["", "Выбери действие:"])
+    lines.extend(["", "<b>Выбери действие:</b>"])
     return "\n".join(lines)
 
 
