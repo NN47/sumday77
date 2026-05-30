@@ -2428,10 +2428,10 @@ def _format_product_macro_summary(
 ) -> str:
     """Форматирует блок КБЖУ для карточки редактирования продукта."""
     return (
-        f"🔥 Калории: {calories:.0f} ккал\n"
-        f"💪 Белки: {protein:.1f} г\n"
-        f"🥑 Жиры: {fat:.1f} г\n"
-        f"{CARBS_EMOJI} Углеводы: {carbs:.1f} г"
+        f"🔥 <b>Калории:</b> {calories:.0f} ккал\n"
+        f"💪 <b>Белки:</b> {protein:.1f} г\n"
+        f"🥑 <b>Жиры:</b> {fat:.1f} г\n"
+        f"{CARBS_EMOJI} <b>Углеводы:</b> {carbs:.1f} г"
     )
 
 
@@ -2457,7 +2457,7 @@ def _build_product_actions_keyboard(product_idx: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="✏️ Изменить название", callback_data=f"meal_pact_name:{product_idx}")],
             [InlineKeyboardButton(text="⚖️ Изменить вес", callback_data=f"meal_pact_weight:{product_idx}")],
-            [InlineKeyboardButton(text="🧮 Исправить КБЖУ", callback_data=f"meal_pact_kbju:{product_idx}")],
+            [InlineKeyboardButton(text="🧮 Изменить КБЖУ", callback_data=f"meal_pact_kbju:{product_idx}")],
             [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"meal_wdelask:{product_idx}")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="meal_wback_list")],
         ]
@@ -3128,7 +3128,7 @@ async def handle_edit_type_choice(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    if text in {"⚖️ Изменить вес", "🧮 Исправить КБЖУ"}:
+    if text in {"⚖️ Изменить вес", "🧮 Изменить КБЖУ"}:
         await state.set_state(MealEntryStates.editing_meal_weight)
         await state.update_data(weight_drafts={}, kbju_drafts={}, editing_product_idx=None)
 
@@ -3477,7 +3477,7 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
 
 @router.message(MealEntryStates.edit_kbju_menu)
 async def handle_meal_kbju_edit(message: Message):
-    await message.answer("Используй кнопки ниже, чтобы исправить КБЖУ 👇")
+    await message.answer("Используй кнопки ниже, чтобы изменить КБЖУ 👇")
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_kfield:"))
