@@ -2446,7 +2446,7 @@ def _render_product_actions_text(product: dict) -> str:
     lines = [
         "<b>✏️ Редактирование продукта</b>",
         "",
-        f"<b>Продукт:</b> {name}",
+        f"<b>{name}</b>",
         f"<b>Вес:</b> {grams:.0f} г",
         _format_product_macro_summary(calories, protein, fat, carbs),
     ]
