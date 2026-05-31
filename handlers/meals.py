@@ -1798,14 +1798,14 @@ async def kbju_add_via_label(message: Message, state: FSMContext):
     await state.set_state(MealEntryStates.waiting_for_label_photo)
     
     text = (
-        "📋 Анализ этикетки/упаковки\n\n"
-        "Отправь мне фото этикетки или упаковки продукта, и я найду КБЖУ в тексте! 📸\n\n"
+        "<b>📋 Анализ этикетки/упаковки</b>\n\n"
+        "<b>Отправь мне фото этикетки или упаковки продукта, и я найду КБЖУ в тексте! 📸</b>\n\n"
         "Я прочитаю информацию о пищевой ценности и извлеку точные данные о калориях, белках, жирах и углеводах.\n\n"
         "После анализа уточню у тебя, сколько грамм ты съел(а)."
     )
     
     push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu)
+    await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
 
 
 @router.message(lambda m: m.text == "📷 Скан штрих-кода")
