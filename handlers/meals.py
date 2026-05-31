@@ -2850,7 +2850,7 @@ async def edit_last_meal(message: Message, state: FSMContext):
         return
 
     await message.answer(
-        "✏️ Выбери продукт для редактирования:",
+        "<b>✏️ Выбери продукт для редактирования:</b>",
         reply_markup=_build_weight_products_keyboard(products),
     )
 
@@ -2909,7 +2909,7 @@ async def _start_meal_edit_flow(
         return
 
     await message.answer(
-        "✏️ Выбери продукт для редактирования:",
+        "<b>✏️ Выбери продукт для редактирования:</b>",
         reply_markup=_build_weight_products_keyboard(products),
     )
 
@@ -3145,7 +3145,7 @@ async def handle_edit_type_choice(message: Message, state: FSMContext):
         await state.update_data(weight_drafts={}, kbju_drafts={}, editing_product_idx=None)
 
         await message.answer(
-            "✏️ Выбери продукт для редактирования:",
+            "<b>✏️ Выбери продукт для редактирования:</b>",
             reply_markup=_build_weight_products_keyboard(saved_products),
         )
     else:
@@ -3204,12 +3204,12 @@ async def meal_weight_back_to_products(callback: CallbackQuery, state: FSMContex
     await state.set_state(MealEntryStates.editing_meal_weight)
     try:
         await callback.message.edit_text(
-            "✏️ Выбери продукт для редактирования:",
+            "<b>✏️ Выбери продукт для редактирования:</b>",
             reply_markup=_build_weight_products_keyboard(saved_products),
         )
     except TelegramBadRequest:
         await callback.message.answer(
-            "✏️ Выбери продукт для редактирования:",
+            "<b>✏️ Выбери продукт для редактирования:</b>",
             reply_markup=_build_weight_products_keyboard(saved_products),
         )
 
@@ -3826,7 +3826,7 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
     await state.update_data(saved_products=saved_products, weight_drafts=drafts)
     await callback.answer("✅ Вес продукта обновлён")
     await callback.message.edit_text(
-        "✏️ Выбери продукт для редактирования:",
+        "<b>✏️ Выбери продукт для редактирования:</b>",
         reply_markup=_build_weight_products_keyboard(saved_products),
     )
 
@@ -3928,7 +3928,7 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
         else:
             await state.update_data(saved_products=saved_products, weight_drafts=drafts)
             await callback.message.edit_text(
-                "✏️ Выбери продукт для редактирования:",
+                "<b>✏️ Выбери продукт для редактирования:</b>",
                 reply_markup=_build_weight_products_keyboard(saved_products),
             )
             await callback.message.answer("✅ Продукт удалён")
@@ -3956,7 +3956,7 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
 
         await state.update_data(saved_products=saved_products, weight_drafts=drafts)
         await callback.message.edit_text(
-            "✏️ Выбери продукт для редактирования:",
+            "<b>✏️ Выбери продукт для редактирования:</b>",
             reply_markup=_build_weight_products_keyboard(saved_products),
         )
         await callback.message.answer("✅ Продукт удалён")
