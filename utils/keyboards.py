@@ -664,8 +664,10 @@ openrouter_confirm_menu = ReplyKeyboardMarkup(
 
 kbju_weight_input_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="10"), KeyboardButton(text="20"), KeyboardButton(text="30"), KeyboardButton(text="40")],
-        [KeyboardButton(text="50"), KeyboardButton(text="60"), KeyboardButton(text="70"), KeyboardButton(text="80")],
+        [KeyboardButton(text="10"), KeyboardButton(text="15"), KeyboardButton(text="20"), KeyboardButton(text="25")],
+        [KeyboardButton(text="30"), KeyboardButton(text="35"), KeyboardButton(text="40"), KeyboardButton(text="45")],
+        [KeyboardButton(text="50"), KeyboardButton(text="55"), KeyboardButton(text="60"), KeyboardButton(text="65")],
+        [KeyboardButton(text="70"), KeyboardButton(text="75"), KeyboardButton(text="80"), KeyboardButton(text="85")],
         [KeyboardButton(text="90"), KeyboardButton(text="100"), KeyboardButton(text="150"), KeyboardButton(text="200")],
         [KeyboardButton(text="250"), KeyboardButton(text="300"), KeyboardButton(text="350"), KeyboardButton(text="500")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
