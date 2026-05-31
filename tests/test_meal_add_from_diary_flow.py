@@ -413,6 +413,20 @@ def test_recent_search_results_keyboard_marks_pick_origin_as_search():
     assert keyboard.inline_keyboard[0][0].callback_data == "recent_meal_pick:dinner:1:7:2:search"
 
 
+def test_recent_search_results_keyboard_uses_absolute_numbers_on_later_pages():
+    items = [
+        meals.RecentMealItem(21, 0, "Сыр полутвердый", 70, 97, 14, 4.2, 0.7),
+        meals.RecentMealItem(22, 0, "Карпаччо куриное", 60, 64, 10.2, 1.8, 1.8),
+    ]
+
+    keyboard = meals._build_recent_search_results_keyboard(
+        items, meal_type="dinner", page=3, has_prev=True, has_next=True
+    )
+
+    assert keyboard.inline_keyboard[0][0].text.startswith("17️⃣ ")
+    assert keyboard.inline_keyboard[1][0].text.startswith("18️⃣ ")
+
+
 def test_recent_meal_back_returns_to_search_results_when_product_opened_from_search():
     callback = _build_callback("recent_meal_back:dinner:1")
     state = _DummyState()
