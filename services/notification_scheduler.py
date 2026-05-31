@@ -22,6 +22,9 @@ EVENING_ANALYSIS_REMINDER_DELAY = timedelta(minutes=45)
 EVENING_ANALYSIS_MAX_REMINDERS = 2
 EVENING_ANALYSIS_START_PREFIX = "evening_analysis_start"
 EVENING_ANALYSIS_REMIND_PREFIX = "evening_analysis_remind"
+SUPPLEMENT_CONFIRM_PREFIX = "sup_confirm"
+SUPPLEMENT_REMIND_LATER_PREFIX = "sup_remind"
+SUPPLEMENT_REMINDER_DELAY = timedelta(minutes=30)
 EVENING_ANALYSIS_MAIN_TEXT = (
     "<b>🌙 Вечерний анализ дня</b>\n\n"
     "Ты уже добавил все приёмы пищи за сегодня?\n\n"
@@ -38,6 +41,26 @@ EVENING_ANALYSIS_REMINDER_TEXT = (
     "Ты уже добавил все приёмы пищи за сегодня?\n"
     "Если дневник заполнен — можем подвести итоги."
 )
+
+
+def build_supplement_notification_keyboard(supplement_id: int, time_text: str) -> InlineKeyboardMarkup:
+    """Создаёт inline-кнопки для уведомления о приёме добавки."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Подтвердить прием",
+                    callback_data=f"{SUPPLEMENT_CONFIRM_PREFIX}:{supplement_id}:{time_text}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⏰ Напомнить позже",
+                    callback_data=f"{SUPPLEMENT_REMIND_LATER_PREFIX}:{supplement_id}:{time_text}",
+                )
+            ],
+        ]
+    )
 
 
 class NotificationScheduler:
@@ -361,22 +384,13 @@ class NotificationScheduler:
                             f"⏰ {current_time_str}\n\n"
                             "Нажмите кнопку после приёма:"
                         )
-                        confirm_markup = InlineKeyboardMarkup(
-                            inline_keyboard=[
-                                [
-                                    InlineKeyboardButton(
-                                        text="✅ Подтвердить прием",
-                                        callback_data=(
-                                            f"sup_confirm:{supplement.id}:{current_time_str}"
-                                        ),
-                                    )
-                                ]
-                            ]
-                        )
                         await self.send_notification(
                             supplement.user_id,
                             message,
-                            reply_markup=confirm_markup,
+                            reply_markup=build_supplement_notification_keyboard(
+                                supplement.id,
+                                current_time_str,
+                            ),
                         )
                         
                         # Помечаем уведомление как отправленное

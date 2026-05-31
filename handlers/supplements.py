@@ -1,11 +1,12 @@
 """Обработчики для добавок."""
+import asyncio
 import logging
 import re
 import json
 from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
-from aiogram import Router, F
+from aiogram import Bot, Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
@@ -35,6 +36,11 @@ from utils.calendar_utils import (
 from database.repositories import SupplementRepository
 from states.user_states import SupplementStates
 from utils.validators import parse_date
+from services.notification_scheduler import (
+    SUPPLEMENT_REMIND_LATER_PREFIX,
+    SUPPLEMENT_REMINDER_DELAY,
+    build_supplement_notification_keyboard,
+)
 
 logger = logging.getLogger(__name__)
 MSK_TZ = ZoneInfo("Europe/Moscow")
@@ -1868,6 +1874,80 @@ async def edit_supplement_entry(callback: CallbackQuery, state: FSMContext):
         "Укажи новое время приёма в формате ЧЧ:ММ\n"
         "или нажми «⏭️ Пропустить», чтобы оставить текущее время.",
         reply_markup=supplement_history_time_menu(),
+    )
+
+
+async def send_supplement_reminder_later(
+    bot: Bot,
+    user_id: str,
+    supplement_id: int,
+    time_text: str,
+) -> None:
+    """Отправляет повторное уведомление о добавке после задержки."""
+    try:
+        await asyncio.sleep(SUPPLEMENT_REMINDER_DELAY.total_seconds())
+
+        supplements_list = SupplementRepository.get_supplements(user_id)
+        target = next((item for item in supplements_list if item.get("id") == supplement_id), None)
+        if not target or not target.get("notifications_enabled", True):
+            return
+
+        await bot.send_message(
+            chat_id=user_id,
+            text=(
+                "🔔 Напоминаю принять добавку!\n\n"
+                f"💊 {target['name']}\n"
+                f"⏰ {time_text}\n\n"
+                "Нажмите кнопку после приёма:"
+            ),
+            reply_markup=build_supplement_notification_keyboard(supplement_id, time_text),
+        )
+    except Exception as e:
+        logger.error(
+            "Ошибка при отправке отложенного напоминания о добавке %s пользователю %s: %s",
+            supplement_id,
+            user_id,
+            e,
+            exc_info=True,
+        )
+
+
+@router.callback_query(lambda c: c.data.startswith(f"{SUPPLEMENT_REMIND_LATER_PREFIX}:"))
+async def remind_supplement_later_from_notification(callback: CallbackQuery):
+    """Откладывает уведомление о приёме добавки."""
+    user_id = str(callback.from_user.id)
+
+    try:
+        _, supplement_id_raw, time_text = callback.data.split(":", 2)
+        supplement_id = int(supplement_id_raw)
+    except (ValueError, AttributeError):
+        await callback.answer("Не удалось отложить напоминание", show_alert=True)
+        return
+
+    supplements_list = SupplementRepository.get_supplements(user_id)
+    target = next((item for item in supplements_list if item.get("id") == supplement_id), None)
+    if not target:
+        await callback.answer("Добавка не найдена", show_alert=True)
+        return
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    asyncio.create_task(
+        send_supplement_reminder_later(
+            callback.message.bot,
+            user_id,
+            supplement_id,
+            time_text,
+        )
+    )
+
+    delay_minutes = int(SUPPLEMENT_REMINDER_DELAY.total_seconds() // 60)
+    await callback.answer(f"Напомню через {delay_minutes} минут")
+    await callback.message.answer(
+        f"⏰ Хорошо, напомню принять «{target['name']}» через {delay_minutes} минут."
     )
 
 
