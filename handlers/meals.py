@@ -106,6 +106,38 @@ def _format_label_result_header(source: str, product_name: str) -> str:
     return f"📋 <b>Анализ этикетки:</b> {safe_product_name}\n"
 
 
+def _format_label_weight_prompt(
+    *,
+    product_name: str,
+    kcal_100g: float,
+    protein_100g: float,
+    fat_100g: float,
+    carbs_100g: float,
+    package_weight: float | None = None,
+) -> str:
+    """Форматирует сообщение с найденной на этикетке КБЖУ и вопросом о весе."""
+    safe_product_name = html.escape(product_name or "Продукт")
+    lines = [
+        "✅ <b>Нашёл КБЖУ на этикетке!</b>",
+        "",
+        f"📦 <b>Продукт:</b> {safe_product_name}",
+        "📊 <b>КБЖУ на 100 г:</b>",
+        f"🔥 <b>Калории:</b> {kcal_100g:.0f} ккал",
+        f"💪 <b>Белки:</b> {protein_100g:.1f} г",
+        f"🥑 <b>Жиры:</b> {fat_100g:.1f} г",
+        f"🍩 <b>Углеводы:</b> {carbs_100g:.1f} г",
+        "",
+    ]
+
+    if package_weight is not None and package_weight > 0:
+        lines.append(f"📦 <b>В упаковке {package_weight:.0f} г, сколько Вы съели?</b>")
+    else:
+        lines.append("❓ <b>Вес в упаковке не найден, сколько вы съели?</b>")
+
+    lines.append("Можешь выбрать кнопку или ввести вес вручную.")
+    return "\n".join(lines)
+
+
 RECENT_MEALS_PAGE_SIZE = 8
 
 
@@ -1980,48 +2012,24 @@ async def handle_label_photo(message: Message, state: FSMContext):
     
     push_menu_stack(message.bot, kbju_add_menu)
 
-    # Формируем сообщение в зависимости от того, найден ли вес
+    prompt_package_weight = None
     if found_weight and package_weight is not None:
         weight = safe_float(package_weight)
         if weight > 0:
-            await message.answer(
-                f"✅ Нашёл КБЖУ на этикетке!\n\n"
-                f"📦 Продукт: {product_name}\n"
-                f"📊 КБЖУ на 100 г:\n"
-                f"🔥 Калории: {kcal_100g:.0f} ккал\n"
-                f"💪 Белки: {protein_100g:.1f} г\n"
-                f"🥑 Жиры: {fat_100g:.1f} г\n"
-                f"🍩 Углеводы: {carbs_100g:.1f} г\n\n"
-                f"📦 В упаковке {weight:.0f} г, сколько Вы съели?\n"
-                f"Можешь выбрать кнопку или ввести вес вручную.",
-                reply_markup=kbju_weight_input_menu,
-            )
-        else:
-            await message.answer(
-                f"✅ Нашёл КБЖУ на этикетке!\n\n"
-                f"📦 Продукт: {product_name}\n"
-                f"📊 КБЖУ на 100 г:\n"
-                f"🔥 Калории: {kcal_100g:.0f} ккал\n"
-                f"💪 Белки: {protein_100g:.1f} г\n"
-                f"🥑 Жиры: {fat_100g:.1f} г\n"
-                f"🍩 Углеводы: {carbs_100g:.1f} г\n\n"
-                f"❓ Вес в упаковке не найден, сколько вы съели?\n"
-                f"Можешь выбрать кнопку или ввести вес вручную.",
-                reply_markup=kbju_weight_input_menu,
-            )
-    else:
-        await message.answer(
-            f"✅ Нашёл КБЖУ на этикетке!\n\n"
-            f"📦 Продукт: {product_name}\n"
-            f"📊 КБЖУ на 100 г:\n"
-            f"🔥 Калории: {kcal_100g:.0f} ккал\n"
-            f"💪 Белки: {protein_100g:.1f} г\n"
-            f"🥑 Жиры: {fat_100g:.1f} г\n"
-            f"🍩 Углеводы: {carbs_100g:.1f} г\n\n"
-            f"❓ Вес в упаковке не найден, сколько вы съели?\n"
-            f"Можешь выбрать кнопку или ввести вес вручную.",
-            reply_markup=kbju_weight_input_menu,
-        )
+            prompt_package_weight = weight
+
+    await message.answer(
+        _format_label_weight_prompt(
+            product_name=product_name,
+            kcal_100g=kcal_100g,
+            protein_100g=protein_100g,
+            fat_100g=fat_100g,
+            carbs_100g=carbs_100g,
+            package_weight=prompt_package_weight,
+        ),
+        reply_markup=kbju_weight_input_menu,
+        parse_mode="HTML",
+    )
 
 
 @router.message(MealEntryStates.waiting_for_barcode_photo, F.photo)
