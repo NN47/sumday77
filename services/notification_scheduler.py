@@ -23,9 +23,9 @@ EVENING_ANALYSIS_MAX_REMINDERS = 2
 EVENING_ANALYSIS_START_PREFIX = "evening_analysis_start"
 EVENING_ANALYSIS_REMIND_PREFIX = "evening_analysis_remind"
 EVENING_ANALYSIS_MAIN_TEXT = (
-    "🌙 Вечерний анализ дня\n\n"
+    "<b>🌙 Вечерний анализ дня</b>\n\n"
     "Ты уже добавил все приёмы пищи за сегодня?\n\n"
-    "Если всё на месте — запущу ИИ-анализ дня:\n"
+    "Если всё на месте — <b>запущу ИИ-анализ дня</b>:\n"
     "🍽 питание\n"
     "🔥 калории\n"
     "💪 белок\n"
