@@ -131,6 +131,7 @@ def test_product_actions_text_shows_bold_product_label_and_plain_name():
 
     assert "<b>✏️ Редактирование продукта</b>" in text
     assert "<b>Продукт:</b> Творог" in text
+    assert "<b>Продукт:</b> Творог\n\n⚖️ <b>Вес:</b> 50 г" in text
     assert "<b>Творог</b>" not in text
     assert "⚖️ <b>Вес:</b> 50 г" in text
     assert "🔥 <b>Калории:</b> 182 ккал" in text
@@ -144,6 +145,7 @@ def test_weight_editor_text_bolds_title_and_colon_labels():
 
     assert "<b>✏️ Изменение веса продукта</b>" in text
     assert "<b>Продукт:</b> Творог" in text
+    assert "<b>Продукт:</b> Творог\n\n<b>Текущий вес:</b> 500 г" in text
     assert "<b>Текущий вес:</b> 500 г" in text
     assert "<b>Новый вес:</b> 450 г" in text
     assert "<b>Выбери действие:</b>" in text
