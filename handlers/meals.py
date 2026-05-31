@@ -752,8 +752,12 @@ def _render_recent_meal_confirm_text(meal_type: str, meal, amount_g: int = 100) 
     safe_title = html.escape(title or "Продукт")
     return (
         f"{meal_ui} • <b>Добавить продукт?</b>\n\n"
-        f"• <b>{safe_title}</b> ({amount_g} г)\n"
-        f"<b>{calories:.0f} ккал</b> <i>(Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f})</i>\n\n"
+        f"<b>Продукт:</b> {safe_title}\n"
+        f"⚖️ <b>Вес:</b> {amount_g} г\n"
+        f"🔥 <b>Калории:</b> {calories:.0f} ккал\n"
+        f"💪 <b>Белки:</b> {protein:.1f} г\n"
+        f"🥑 <b>Жиры:</b> {fat:.1f} г\n"
+        f"🍩 <b>Углеводы:</b> {carbs:.1f} г\n\n"
         f"<b>Выбери действие:</b>"
     )
 
@@ -838,11 +842,11 @@ def _render_recent_weight_editor_text(item: RecentMealItem, draft_amount_g: int 
     lines = [
         "<b>✏️ Изменение веса продукта</b>",
         "",
-        f"<b>Продукт:</b> {item.title}",
-        f"<b>Текущий вес:</b> {current_amount} г",
+        f"<b>Продукт:</b> {html.escape(item.title or 'Продукт')}",
+        f"⚖️ <b>Текущий вес:</b> {current_amount} г",
     ]
     if new_amount != current_amount:
-        lines.append(f"<b>Новый вес:</b> {new_amount} г")
+        lines.append(f"⚖️ <b>Новый вес:</b> {new_amount} г")
     lines.extend(
         [
             "",
@@ -1077,6 +1081,7 @@ async def recent_meal_edit_weight(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         _render_recent_weight_editor_text(recent_item, draft_amount_g=custom_amount),
         reply_markup=_build_recent_weight_editor_keyboard(),
+        parse_mode="HTML",
     )
 
 
@@ -1108,6 +1113,7 @@ async def recent_meal_weight_change_draft(callback: CallbackQuery, state: FSMCon
     await callback.message.edit_text(
         _render_recent_weight_editor_text(recent_item, draft_amount_g=new_amount),
         reply_markup=_build_recent_weight_editor_keyboard(),
+        parse_mode="HTML",
     )
 
 
