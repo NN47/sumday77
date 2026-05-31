@@ -119,7 +119,7 @@ def test_format_product_macro_summary_matches_edit_card_example():
     )
 
 
-def test_product_actions_text_bolds_product_name_without_product_label():
+def test_product_actions_text_shows_bold_product_label_and_plain_name():
     text = _render_product_actions_text({
         "name": "Творог",
         "grams": 50,
@@ -130,9 +130,9 @@ def test_product_actions_text_bolds_product_name_without_product_label():
     })
 
     assert "<b>✏️ Редактирование продукта</b>" in text
-    assert "<b>Творог</b>" in text
-    assert "<b>Продукт:</b>" not in text
-    assert "<b>Вес:</b> 50 г" in text
+    assert "<b>Продукт:</b> Творог" in text
+    assert "<b>Творог</b>" not in text
+    assert "⚖️ <b>Вес:</b> 50 г" in text
     assert "🔥 <b>Калории:</b> 182 ккал" in text
     assert "💪 <b>Белки:</b> 10.0 г" in text
     assert "🥑 <b>Жиры:</b> 8.0 г" in text
