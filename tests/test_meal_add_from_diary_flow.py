@@ -182,6 +182,26 @@ def test_recent_pick_sends_html_parse_mode_for_confirm_card():
 
     assert callback.message.answer.await_args.kwargs["parse_mode"] == "HTML"
 
+
+def test_label_intro_message_bolds_title_and_send_paragraph():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    state = _DummyState()
+    state._data["meal_type"] = meals.MealType.SNACK.value
+
+    with patch("handlers.meals.push_menu_stack"):
+        asyncio.run(meals.kbju_add_via_label(message, state))
+
+    text = message.answer.await_args.args[0]
+
+    assert text.startswith("<b>📋 Анализ этикетки/упаковки</b>")
+    assert (
+        "<b>Отправь мне фото этикетки или упаковки продукта, "
+        "и я найду КБЖУ в тексте! 📸</b>"
+    ) in text
+    assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
+
+
 def test_expand_recent_meals_splits_multi_product_entries():
     meal = SimpleNamespace(
         id=7,
