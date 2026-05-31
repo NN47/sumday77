@@ -752,7 +752,7 @@ def _render_recent_meal_confirm_text(meal_type: str, meal, amount_g: int = 100) 
     safe_title = html.escape(title or "Продукт")
     return (
         f"{meal_ui} • <b>Добавить продукт?</b>\n\n"
-        f"<b>Продукт:</b> {safe_title}\n"
+        f"<b>Продукт:</b> {safe_title}\n\n"
         f"⚖️ <b>Вес:</b> {amount_g} г\n"
         f"🔥 <b>Калории:</b> {calories:.0f} ккал\n"
         f"💪 <b>Белки:</b> {protein:.1f} г\n"
@@ -843,6 +843,7 @@ def _render_recent_weight_editor_text(item: RecentMealItem, draft_amount_g: int 
         "<b>✏️ Изменение веса продукта</b>",
         "",
         f"<b>Продукт:</b> {html.escape(item.title or 'Продукт')}",
+        "",
         f"⚖️ <b>Текущий вес:</b> {current_amount} г",
     ]
     if new_amount != current_amount:
@@ -2681,6 +2682,7 @@ def _render_product_actions_text(product: dict) -> str:
         "<b>✏️ Редактирование продукта</b>",
         "",
         f"<b>Продукт:</b> {name}",
+        "",
         f"⚖️ <b>Вес:</b> {grams:.0f} г",
         _format_product_macro_summary(calories, protein, fat, carbs),
     ]
@@ -2892,6 +2894,7 @@ def _render_weight_editor_text(product: dict, draft_weight: Optional[float] = No
         "<b>✏️ Изменение веса продукта</b>",
         "",
         f"<b>Продукт:</b> {name}",
+        "",
         f"<b>Текущий вес:</b> {current_weight:.0f} г",
     ]
     if draft_weight is not None and round(draft_weight, 2) != round(current_weight, 2):
@@ -2930,6 +2933,7 @@ def _render_kbju_editor_text(product: dict, draft: Optional[dict] = None) -> str
         "🧮 Ручная правка КБЖУ",
         "",
         f"Продукт: {name}",
+        "",
         f"Текущий вес: {grams:.0f} г",
         "",
         f"🔥 Калории: {calories:.0f} ккал",
@@ -2993,6 +2997,7 @@ def _render_kbju_field_editor_text(product: dict, field: str, current_value: flo
             f"{emoji} Изменение {title}",
             "",
             f"Продукт: {name}",
+            "",
             f"Текущий вес: {grams:.0f} г",
             "",
             f"Текущее значение: {formatted_value} {unit}",

@@ -131,6 +131,7 @@ def test_recent_weight_editor_text_bolds_labels_and_uses_kbju_block():
 
     assert "<b>✏️ Изменение веса продукта</b>" in text
     assert "<b>Продукт:</b> БАЛТИКА БЕЗАЛКОГОЛЬНОЕ ГРЕЙПФРУТ №0" in text
+    assert "<b>Продукт:</b> БАЛТИКА БЕЗАЛКОГОЛЬНОЕ ГРЕЙПФРУТ №0\n\n⚖️ <b>Текущий вес:</b> 500 г" in text
     assert "⚖️ <b>Текущий вес:</b> 500 г" in text
     assert "⚖️ <b>Новый вес:</b> 450 г" in text
     assert "🔥 <b>Калории:</b> 158 ккал" in text
@@ -158,6 +159,7 @@ def test_recent_confirm_text_uses_photo_style_kbju_and_escapes_html():
 
     assert "🍽 <b>Ужин</b> • <b>Добавить продукт?</b>" in text
     assert "<b>Продукт:</b> Tea &lt;green&gt;" in text
+    assert "<b>Продукт:</b> Tea &lt;green&gt;\n\n⚖️ <b>Вес:</b> 300 г" in text
     assert "<b>Tea &lt;green&gt;</b>" not in text
     assert "⚖️ <b>Вес:</b> 300 г" in text
     assert "🔥 <b>Калории:</b> 0 ккал" in text
