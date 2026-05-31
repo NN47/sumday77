@@ -345,7 +345,7 @@ def _build_recent_search_results_keyboard(
             [
                 InlineKeyboardButton(
                     text=f"{offset}️⃣ {title}",
-                    callback_data=f"recent_meal_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}",
+                    callback_data=f"recent_meal_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}:search",
                 )
             ]
         )
@@ -1007,6 +1007,7 @@ async def recent_meal_pick(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     _, meal_type, page_str, source_meal_id_str, *product_idx_parts = parts
     product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
+    pick_origin = product_idx_parts[1] if len(product_idx_parts) > 1 else "recent"
     source_meal_id = int(source_meal_id_str)
     page = int(page_str)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
@@ -1019,6 +1020,7 @@ async def recent_meal_pick(callback: CallbackQuery, state: FSMContext):
         recent_source_product_idx=product_index,
         recent_custom_amount_g=None,
         recent_meals_page=page,
+        recent_pick_origin="search" if pick_origin == "search" else "recent",
         meal_type=meal_type,
     )
     await callback.message.answer(
@@ -1032,6 +1034,20 @@ async def recent_meal_pick(callback: CallbackQuery, state: FSMContext):
 async def recent_meal_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     _, meal_type, page_str = callback.data.split(":", maxsplit=2)
+    data = await state.get_data()
+    if data.get("recent_pick_origin") == "search":
+        query = str(data.get("recent_search_query") or "").strip()
+        if query:
+            await _show_recent_search_results(
+                callback.message,
+                state,
+                user_id=str(callback.from_user.id),
+                meal_type=meal_type,
+                query=query,
+                page=int(data.get("recent_search_page") or page_str),
+            )
+            return
+
     await _show_recent_meals_page(
         callback.message,
         state,

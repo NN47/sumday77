@@ -392,6 +392,71 @@ def test_recent_search_empty_result_shows_retry_back_and_main_buttons():
     ]
 
 
+def test_recent_search_results_keyboard_marks_pick_origin_as_search():
+    item = meals.RecentMealItem(
+        source_meal_id=7,
+        product_index=2,
+        title="Патиссоны маринованные",
+        amount_g=20,
+        calories=7,
+        protein=0.2,
+        fat=0.1,
+        carbs=1.8,
+    )
+
+    keyboard = meals._build_recent_search_results_keyboard(
+        [item], meal_type="dinner", page=1, has_prev=False, has_next=False
+    )
+
+    assert keyboard.inline_keyboard[0][0].callback_data == "recent_meal_pick:dinner:1:7:2:search"
+
+
+def test_recent_meal_back_returns_to_search_results_when_product_opened_from_search():
+    callback = _build_callback("recent_meal_back:dinner:1")
+    state = _DummyState()
+    state._data.update(
+        {
+            "recent_pick_origin": "search",
+            "recent_search_query": "Марин",
+            "recent_search_page": 2,
+        }
+    )
+
+    with patch("handlers.meals._show_recent_search_results", new=AsyncMock()) as show_search, patch(
+        "handlers.meals._show_recent_meals_page", new=AsyncMock()
+    ) as show_recent:
+        asyncio.run(meals.recent_meal_back(callback, state))
+
+    show_search.assert_awaited_once_with(
+        callback.message,
+        state,
+        user_id="12345",
+        meal_type="dinner",
+        query="Марин",
+        page=2,
+    )
+    show_recent.assert_not_awaited()
+
+
+def test_recent_meal_back_returns_to_recent_list_for_regular_recent_pick():
+    callback = _build_callback("recent_meal_back:dinner:3")
+    state = _DummyState()
+    state._data.update({"recent_pick_origin": "recent", "recent_search_query": "Марин"})
+
+    with patch("handlers.meals._show_recent_search_results", new=AsyncMock()) as show_search, patch(
+        "handlers.meals._show_recent_meals_page", new=AsyncMock()
+    ) as show_recent:
+        asyncio.run(meals.recent_meal_back(callback, state))
+
+    show_recent.assert_awaited_once_with(
+        callback.message,
+        state,
+        meal_type="dinner",
+        page=3,
+        user_id="12345",
+    )
+    show_search.assert_not_awaited()
+
 def test_recent_confirm_uses_single_selected_product():
     callback = _build_callback("recent_meal_confirm:dinner:1:7:1")
     state = _DummyState()
