@@ -22,6 +22,8 @@ MEALS_BUTTON_ALIASES = {
     "КБЖУ",
 }
 AI_ANALYSIS_BUTTON_TEXT = "🧠 ИИ анализ"
+KBJU_ADD_MEAL_BUTTON_TEXT = "➕ Добавить прием пищи"
+KBJU_ADD_MEAL_BUTTON_ALIASES = {KBJU_ADD_MEAL_BUTTON_TEXT, "➕ Добавить"}
 
 ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT = "📅 Сегодня"
 ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT = "📅 Сегодня через GigaChat"
@@ -396,7 +398,7 @@ def build_exercise_selection_menu(exercises: list[str]) -> ReplyKeyboardMarkup:
 # Меню КБЖУ
 kbju_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="➕ Добавить")],
+        [KeyboardButton(text=KBJU_ADD_MEAL_BUTTON_TEXT)],
         [KeyboardButton(text="📆 Календарь КБЖУ")],
         [KeyboardButton(text="🎯 Цель / Норма КБЖУ")],
         [main_menu_button],
