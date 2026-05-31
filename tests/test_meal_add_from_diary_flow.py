@@ -266,6 +266,116 @@ def test_show_recent_meals_page_sends_html_parse_mode():
 
     assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
 
+
+def test_recent_meals_keyboard_has_search_button():
+    item = meals.RecentMealItem(
+        source_meal_id=7,
+        product_index=0,
+        title="Сыр творожный",
+        amount_g=120,
+        calories=180,
+        protein=10,
+        fat=12,
+        carbs=3,
+    )
+
+    keyboard = meals._build_recent_meals_keyboard([item], meal_type="snack", page=1, has_prev=False, has_next=False)
+
+    assert keyboard.inline_keyboard[0][0].text == "🔎 Поиск продукта"
+    assert keyboard.inline_keyboard[0][0].callback_data == "recent_search_start:snack"
+
+
+def test_search_recent_items_matches_any_part_case_insensitive():
+    items = [
+        meals.RecentMealItem(1, 0, "Плавленый сыр сливочный", 100, 250, 12, 20, 3),
+        meals.RecentMealItem(2, 0, "Сыр творожный", 100, 180, 11, 12, 4),
+        meals.RecentMealItem(3, 0, "Бутерброд с сыром", 100, 310, 13, 14, 32),
+        meals.RecentMealItem(4, 0, "Курица гриль", 100, 180, 25, 8, 0),
+    ]
+
+    assert [item.title for item in meals._search_recent_items(items, "СЫР")] == [
+        "Плавленый сыр сливочный",
+        "Сыр творожный",
+        "Бутерброд с сыром",
+    ]
+    assert [item.title for item in meals._search_recent_items(items, "кур")] == ["Курица гриль"]
+
+
+def test_format_recent_search_results_text_uses_recent_format_and_escapes_query():
+    item = meals.RecentMealItem(
+        source_meal_id=7,
+        product_index=0,
+        title="Сыр <творожный>",
+        amount_g=120,
+        calories=67,
+        protein=3.1,
+        fat=5.3,
+        carbs=1.7,
+    )
+
+    text = meals._format_recent_search_results_text("сыр <", [item], page=1)
+
+    assert "🔎 <b>Результаты поиска: сыр &lt;</b>" in text
+    assert "1. <b>Сыр &lt;творожный&gt;</b>" in text
+    assert "<b>120 г • 67 ккал</b>" in text
+    assert "<i>Б 3.1 / Ж 5.3 / У 1.7</i>" in text
+
+
+def test_recent_search_query_uses_full_user_history_not_recent_page():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    message.text = "сыр"
+    state = _DummyState()
+    state._data.update({"meal_type": "snack"})
+    meal = SimpleNamespace(
+        id=70,
+        raw_query="Плавленый сыр сливочный",
+        description=None,
+        products_json='[{"name":"Плавленый сыр сливочный","grams":50,"kcal":140,"protein":6,"fat":11,"carbs":2}]',
+        calories=140,
+        protein=6,
+        fat=11,
+        carbs=2,
+    )
+
+    with patch("handlers.meals.MealRepository.get_user_meal_history", return_value=[meal]) as history, patch(
+        "handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]
+    ) as recent:
+        asyncio.run(meals.handle_recent_meal_search_query(message, state))
+
+    history.assert_called_once_with("12345")
+    recent.assert_not_called()
+    assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
+    assert "Плавленый сыр сливочный" in message.answer.await_args.args[0]
+
+
+def test_recent_search_empty_result_shows_retry_back_and_main_buttons():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    state = _DummyState()
+
+    with patch("handlers.meals.MealRepository.get_user_meal_history", return_value=[]):
+        asyncio.run(
+            meals._show_recent_search_results(
+                message,
+                state,
+                user_id="12345",
+                meal_type="snack",
+                query="сыр",
+                page=1,
+            )
+        )
+
+    text = message.answer.await_args.args[0]
+    keyboard = message.answer.await_args.kwargs["reply_markup"]
+    assert "Ничего не нашёл 😕" in text
+    assert [row[0].text for row in keyboard.inline_keyboard] == [
+        "🔎 Искать ещё",
+        "⬅️ К недавним продуктам",
+        "🔄 Главное меню",
+    ]
+
+
 def test_recent_confirm_uses_single_selected_product():
     callback = _build_callback("recent_meal_confirm:dinner:1:7:1")
     state = _DummyState()

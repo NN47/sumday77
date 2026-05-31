@@ -19,6 +19,7 @@ from utils.keyboards import (
     LEGACY_MEALS_BUTTON_TEXT,
     MEALS_BUTTON_ALIASES,
     KBJU_ADD_MEAL_BUTTON_ALIASES,
+    main_menu,
     kbju_menu,
     kbju_add_menu,
     kbju_meal_type_menu,
@@ -279,8 +280,33 @@ def _format_recent_meals_text(recent_meals: list[RecentMealItem], page: int) -> 
     return "\n".join(lines).strip()
 
 
+def _format_recent_search_results_text(query: str, items: list[RecentMealItem], page: int) -> str:
+    start_idx = (page - 1) * RECENT_MEALS_PAGE_SIZE
+    safe_query = html.escape((query or "").strip())
+    lines: list[str] = [f"🔎 <b>Результаты поиска: {safe_query}</b>", ""]
+    for offset, item in enumerate(items, start=start_idx + 1):
+        lines.extend(
+            [
+                f"{offset}. <b>{html.escape(item.title)}</b>",
+                f"<b>{item.amount_g} г • {item.calories:.0f} ккал</b>",
+                f"<i>Б {item.protein:.1f} / Ж {item.fat:.1f} / У {item.carbs:.1f}</i>",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip()
+
+
+def _search_recent_items(items: list[RecentMealItem], query: str) -> list[RecentMealItem]:
+    normalized_query = (query or "").strip().casefold()
+    if not normalized_query:
+        return []
+    return [item for item in items if normalized_query in (item.title or "").casefold()]
+
+
 def _build_recent_meals_keyboard(recent_meals: list[RecentMealItem], meal_type: str, page: int, has_prev: bool, has_next: bool) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="🔎 Поиск продукта", callback_data=f"recent_search_start:{meal_type}")]
+    ]
     for offset, item in enumerate(recent_meals, start=1):
         title = _truncate_recent_name(item.title)
         number = (page - 1) * RECENT_MEALS_PAGE_SIZE + offset
@@ -302,6 +328,48 @@ def _build_recent_meals_keyboard(recent_meals: list[RecentMealItem], meal_type: 
     if nav_row:
         rows.append(nav_row)
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _build_recent_search_results_keyboard(
+    items: list[RecentMealItem],
+    meal_type: str,
+    page: int,
+    has_prev: bool,
+    has_next: bool,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for offset, item in enumerate(items, start=1):
+        title = _truncate_recent_name(item.title)
+        product_idx = "" if item.product_index is None else str(item.product_index)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{offset}️⃣ {title}",
+                    callback_data=f"recent_meal_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}",
+                )
+            ]
+        )
+
+    nav_row: list[InlineKeyboardButton] = []
+    if has_prev:
+        nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"recent_search_page:{meal_type}:{page-1}"))
+    if has_next:
+        nav_row.append(InlineKeyboardButton(text="➡️ Показать ещё", callback_data=f"recent_search_page:{meal_type}:{page+1}"))
+    if nav_row:
+        rows.append(nav_row)
+    rows.append([InlineKeyboardButton(text="🔎 Искать ещё", callback_data=f"recent_search_start:{meal_type}")])
+    rows.append([InlineKeyboardButton(text="⬅️ К недавним продуктам", callback_data=f"recent_search_back:{meal_type}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _build_recent_search_empty_keyboard(meal_type: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔎 Искать ещё", callback_data=f"recent_search_start:{meal_type}")],
+            [InlineKeyboardButton(text="⬅️ К недавним продуктам", callback_data=f"recent_search_back:{meal_type}")],
+            [InlineKeyboardButton(text="🔄 Главное меню", callback_data="recent_search_main_menu")],
+        ]
+    )
 
 AI_TEMPORARY_UNAVAILABLE_TEXT = "Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
 AI_QUOTA_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за лимита запросов."
@@ -623,6 +691,50 @@ async def _show_recent_meals_page(
     )
 
 
+def _get_all_recent_items_for_search(user_id: str) -> list[RecentMealItem]:
+    source_meals = MealRepository.get_user_meal_history(user_id)
+    return _expand_recent_meals(source_meals, limit=10_000)
+
+
+async def _show_recent_search_results(
+    message: Message,
+    state: FSMContext,
+    *,
+    user_id: str,
+    meal_type: str,
+    query: str,
+    page: int = 1,
+) -> None:
+    all_items = _get_all_recent_items_for_search(user_id)
+    matched_items = _search_recent_items(all_items, query)
+    await state.update_data(recent_search_query=query, meal_type=meal_type)
+
+    if not matched_items:
+        await message.answer(
+            "Ничего не нашёл 😕\n"
+            "Попробуй ввести другое название или часть названия.",
+            reply_markup=_build_recent_search_empty_keyboard(meal_type),
+        )
+        return
+
+    total_pages = max(1, math.ceil(len(matched_items) / RECENT_MEALS_PAGE_SIZE))
+    page = min(max(1, page), total_pages)
+    start = (page - 1) * RECENT_MEALS_PAGE_SIZE
+    page_items = matched_items[start : start + RECENT_MEALS_PAGE_SIZE]
+    await state.update_data(recent_search_page=page)
+    await message.answer(
+        _format_recent_search_results_text(query, page_items, page),
+        reply_markup=_build_recent_search_results_keyboard(
+            page_items,
+            meal_type,
+            page,
+            has_prev=page > 1,
+            has_next=page < total_pages,
+        ),
+        parse_mode="HTML",
+    )
+
+
 def _render_recent_meal_confirm_text(meal_type: str, meal, amount_g: int = 100) -> str:
     meal_ui = display_meal_type_with_bold_name(meal_type)
     if isinstance(meal, RecentMealItem):
@@ -791,6 +903,97 @@ def _build_adjusted_recent_item(item: RecentMealItem, amount_g: int) -> RecentMe
         fat=float(item.fat) * ratio,
         carbs=float(item.carbs) * ratio,
     )
+
+
+@router.callback_query(lambda c: c.data.startswith("recent_search_start:"))
+async def recent_search_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    _, meal_type = callback.data.split(":", maxsplit=1)
+    await state.set_state(MealEntryStates.waiting_for_recent_meal_search)
+    await state.update_data(meal_type=meal_type, recent_search_page=1)
+    await callback.message.answer(
+        "Введите название продукта или часть названия 👇\n\n"
+        "Например:\n"
+        "сыр\n"
+        "йог\n"
+        "кур"
+    )
+
+
+@router.message(MealEntryStates.waiting_for_recent_meal_search)
+async def handle_recent_meal_search_query(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+
+    if text in MAIN_MENU_BUTTON_ALIASES:
+        await state.clear()
+        from handlers.common import go_main_menu
+
+        await go_main_menu(message, state)
+        return
+
+    if text in BACK_BUTTON_TEXTS:
+        await state.set_state(MealEntryStates.choosing_meal_type)
+        await _show_recent_meals_page(message, state, meal_type=meal_type, page=int(data.get("recent_meals_page") or 1))
+        return
+
+    if not text:
+        await message.answer("Введите название продукта или часть названия 👇")
+        return
+
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await _show_recent_search_results(
+        message,
+        state,
+        user_id=str(message.from_user.id),
+        meal_type=meal_type,
+        query=text,
+        page=1,
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("recent_search_page:"))
+async def recent_search_page(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    _, meal_type, page_str = callback.data.split(":", maxsplit=2)
+    data = await state.get_data()
+    query = str(data.get("recent_search_query") or "").strip()
+    if not query:
+        await state.set_state(MealEntryStates.waiting_for_recent_meal_search)
+        await callback.message.answer("Введите название продукта или часть названия 👇")
+        return
+    await _show_recent_search_results(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
+        meal_type=meal_type,
+        query=query,
+        page=int(page_str),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("recent_search_back:"))
+async def recent_search_back(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    _, meal_type = callback.data.split(":", maxsplit=1)
+    data = await state.get_data()
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await _show_recent_meals_page(
+        callback.message,
+        state,
+        meal_type=meal_type,
+        page=int(data.get("recent_meals_page") or 1),
+        user_id=str(callback.from_user.id),
+    )
+
+
+@router.callback_query(lambda c: c.data == "recent_search_main_menu")
+async def recent_search_main_menu(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    push_menu_stack(callback.message.bot, main_menu)
+    await callback.message.answer("⬇️ Главное меню", reply_markup=main_menu)
 
 
 @router.callback_query(lambda c: c.data.startswith("recent_meal_pick:"))
