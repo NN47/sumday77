@@ -263,9 +263,10 @@ def test_edit_last_meal_single_label_product_opens_product_actions_menu():
     answer_kwargs = message.answer.await_args.kwargs
     answer_text = message.answer.await_args.args[0]
     assert "✏️ Редактирование продукта" in answer_text
-    assert "<b>Продукт:</b> Eichbaum Radler Lemon" in answer_text
+    assert "<b>Eichbaum Radler Lemon</b>" in answer_text
+    assert "<b>Продукт:</b>" not in answer_text
     button_texts = [button.text for row in answer_kwargs["reply_markup"].inline_keyboard for button in row]
-    assert button_texts == ["✏️ Изменить название", "⚖️ Изменить вес", "🧮 Исправить КБЖУ", "🗑 Удалить", "⬅️ Назад"]
+    assert button_texts == ["✏️ Изменить название", "⚖️ Изменить вес", "🧮 Изменить КБЖУ", "🗑 Удалить", "⬅️ Назад"]
 
 
 def test_return_to_food_diary_sends_diary_menu_and_refreshes_today():

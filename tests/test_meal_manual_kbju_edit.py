@@ -112,14 +112,14 @@ def test_weight_editor_uses_smaller_first_two_step_rows():
 
 def test_format_product_macro_summary_matches_edit_card_example():
     assert _format_product_macro_summary(112, 1.8, 0, 26.9) == (
-        "🔥 Калории: 112 ккал\n"
-        "💪 Белки: 1.8 г\n"
-        "🥑 Жиры: 0.0 г\n"
-        f"{EMOJI_MAP['carbs']} Углеводы: 26.9 г"
+        "🔥 <b>Калории:</b> 112 ккал\n"
+        "💪 <b>Белки:</b> 1.8 г\n"
+        "🥑 <b>Жиры:</b> 0.0 г\n"
+        f"{EMOJI_MAP['carbs']} <b>Углеводы:</b> 26.9 г"
     )
 
 
-def test_product_actions_text_has_bold_labels_and_bju_letters():
+def test_product_actions_text_bolds_product_name_without_product_label():
     text = _render_product_actions_text({
         "name": "Творог",
         "grams": 50,
@@ -130,12 +130,13 @@ def test_product_actions_text_has_bold_labels_and_bju_letters():
     })
 
     assert "<b>✏️ Редактирование продукта</b>" in text
-    assert "<b>Продукт:</b> Творог" in text
+    assert "<b>Творог</b>" in text
+    assert "<b>Продукт:</b>" not in text
     assert "<b>Вес:</b> 50 г" in text
-    assert "🔥 Калории: 182 ккал" in text
-    assert "💪 Белки: 10.0 г" in text
-    assert "🥑 Жиры: 8.0 г" in text
-    assert f"{EMOJI_MAP['carbs']} Углеводы: 5.0 г" in text
+    assert "🔥 <b>Калории:</b> 182 ккал" in text
+    assert "💪 <b>Белки:</b> 10.0 г" in text
+    assert "🥑 <b>Жиры:</b> 8.0 г" in text
+    assert f"{EMOJI_MAP['carbs']} <b>Углеводы:</b> 5.0 г" in text
 
 
 def test_weight_editor_text_bolds_title_and_colon_labels():
@@ -156,4 +157,4 @@ def test_product_actions_keyboard_has_change_name_button():
     assert rows[0] == ["✏️ Изменить название"]
     assert callback_rows[0] == ["meal_pact_name:2"]
     assert ["⚖️ Изменить вес"] in rows
-    assert ["🧮 Исправить КБЖУ"] in rows
+    assert ["🧮 Изменить КБЖУ"] in rows
