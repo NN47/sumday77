@@ -338,13 +338,15 @@ def _build_recent_search_results_keyboard(
     has_next: bool,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
+    start_idx = (page - 1) * RECENT_MEALS_PAGE_SIZE
     for offset, item in enumerate(items, start=1):
         title = _truncate_recent_name(item.title)
+        number = start_idx + offset
         product_idx = "" if item.product_index is None else str(item.product_index)
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{offset}️⃣ {title}",
+                    text=f"{number}️⃣ {title}",
                     callback_data=f"recent_meal_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}:search",
                 )
             ]
