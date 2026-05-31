@@ -916,7 +916,7 @@ async def recent_search_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(MealEntryStates.waiting_for_recent_meal_search)
     await state.update_data(meal_type=meal_type, recent_search_page=1)
     await callback.message.answer(
-        "Введите название продукта или часть названия 👇\n\n"
+        "<b>Введите название продукта или часть названия 👇</b>\n\n"
         "Например:\n"
         "сыр\n"
         "йог\n"

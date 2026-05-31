@@ -272,6 +272,17 @@ def test_show_recent_meals_page_sends_html_parse_mode():
     assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
 
 
+def test_recent_search_start_bolds_prompt_first_sentence():
+    callback = _build_callback("recent_search_start:snack")
+    state = _DummyState()
+
+    asyncio.run(meals.recent_search_start(callback, state))
+
+    text = callback.message.answer.await_args.args[0]
+    assert text.startswith("<b>Введите название продукта или часть названия 👇</b>\n\n")
+    assert "Например:\nсыр\nйог\nкур" in text
+
+
 def test_recent_meals_keyboard_has_search_button():
     item = meals.RecentMealItem(
         source_meal_id=7,
