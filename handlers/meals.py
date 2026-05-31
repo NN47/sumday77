@@ -18,6 +18,7 @@ from utils.keyboards import (
     MEALS_BUTTON_TEXT,
     LEGACY_MEALS_BUTTON_TEXT,
     MEALS_BUTTON_ALIASES,
+    KBJU_ADD_MEAL_BUTTON_ALIASES,
     kbju_menu,
     kbju_add_menu,
     kbju_meal_type_menu,
@@ -1127,7 +1128,7 @@ async def show_kbju_goal(message: Message, state: FSMContext):
     )
 
 
-@router.message(lambda m: m.text == "➕ Добавить")
+@router.message(lambda m: m.text in KBJU_ADD_MEAL_BUTTON_ALIASES)
 async def calories_add(message: Message, state: FSMContext):
     """Начинает процесс добавления приёма пищи."""
     # Проверяем, что пользователь НЕ находится в состоянии редактирования добавок

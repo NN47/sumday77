@@ -1,6 +1,6 @@
 from datetime import date
 
-from utils.keyboards import kbju_menu
+from utils.keyboards import KBJU_ADD_MEAL_BUTTON_ALIASES, KBJU_ADD_MEAL_BUTTON_TEXT, kbju_menu
 from utils.meal_formatters import build_meals_actions_keyboard
 
 
@@ -13,8 +13,15 @@ def test_kbju_menu_hides_duplicate_daily_report_button():
     texts = _reply_keyboard_texts(kbju_menu)
 
     assert "📊 Дневной отчёт" not in texts
+    assert KBJU_ADD_MEAL_BUTTON_TEXT in texts
+    assert "➕ Добавить" not in texts
     assert "📆 Календарь КБЖУ" in texts
 
+
+
+def test_kbju_add_meal_button_aliases_keep_legacy_text():
+    assert KBJU_ADD_MEAL_BUTTON_TEXT in KBJU_ADD_MEAL_BUTTON_ALIASES
+    assert "➕ Добавить" in KBJU_ADD_MEAL_BUTTON_ALIASES
 
 
 def test_meal_actions_keyboard_uses_supported_callback_prefixes():
