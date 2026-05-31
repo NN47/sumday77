@@ -131,8 +131,8 @@ def test_recent_weight_editor_text_bolds_labels_and_uses_kbju_block():
 
     assert "<b>✏️ Изменение веса продукта</b>" in text
     assert "<b>Продукт:</b> БАЛТИКА БЕЗАЛКОГОЛЬНОЕ ГРЕЙПФРУТ №0" in text
-    assert "<b>Текущий вес:</b> 500 г" in text
-    assert "<b>Новый вес:</b> 450 г" in text
+    assert "⚖️ <b>Текущий вес:</b> 500 г" in text
+    assert "⚖️ <b>Новый вес:</b> 450 г" in text
     assert "🔥 <b>Калории:</b> 158 ккал" in text
     assert "💪 <b>Белки:</b> 0.9 г" in text
     assert "🥑 <b>Жиры:</b> 0.1 г" in text
@@ -142,7 +142,7 @@ def test_recent_weight_editor_text_bolds_labels_and_uses_kbju_block():
     assert "Б 0.9 / Ж 0.1 / У 37.4" not in text
 
 
-def test_recent_confirm_text_uses_meal_report_style_and_escapes_html():
+def test_recent_confirm_text_uses_photo_style_kbju_and_escapes_html():
     item = meals.RecentMealItem(
         source_meal_id=7,
         product_index=0,
@@ -157,8 +157,13 @@ def test_recent_confirm_text_uses_meal_report_style_and_escapes_html():
     text = meals._render_recent_meal_confirm_text("dinner", item, amount_g=300)
 
     assert "🍽 <b>Ужин</b> • <b>Добавить продукт?</b>" in text
-    assert "• <b>Tea &lt;green&gt;</b> (300 г)" in text
-    assert "<b>0 ккал</b> <i>(Б 0.3 / Ж 0.0 / У 0.9)</i>" in text
+    assert "<b>Продукт:</b> Tea &lt;green&gt;" in text
+    assert "<b>Tea &lt;green&gt;</b>" not in text
+    assert "⚖️ <b>Вес:</b> 300 г" in text
+    assert "🔥 <b>Калории:</b> 0 ккал" in text
+    assert "💪 <b>Белки:</b> 0.3 г" in text
+    assert "🥑 <b>Жиры:</b> 0.0 г" in text
+    assert "🍩 <b>Углеводы:</b> 0.9 г" in text
     assert "<b>Выбери действие:</b>" in text
     assert "Tea <green>" not in text
 
