@@ -76,6 +76,33 @@ def test_weight_dashboard_hides_progress_bar_and_shows_decrease_trend():
     assert "Рост веса 📈" not in text
 
 
+def test_weight_dashboard_period_change_ignores_entries_older_than_period():
+    weights = [
+        weight_entry(76.9, date(2026, 6, 1), 8),
+        weight_entry(76.2, date(2026, 5, 29), 7),
+        weight_entry(76.9, date(2026, 5, 28), 6),
+        weight_entry(76.7, date(2026, 5, 28), 5),
+        weight_entry(76.0, date(2026, 5, 27), 4),
+        weight_entry(79.5, date(2026, 4, 21), 3),
+        weight_entry(79.0, date(2026, 4, 19), 2),
+    ]
+    message = DummyMessage()
+
+    with (
+        patch("handlers.weight.AnalyticsRepository.track_event"),
+        patch("handlers.weight.WeightRepository.get_weights", return_value=weights),
+        patch("handlers.weight.WeightRepository.get_target_weight", return_value=73.0),
+        patch("handlers.weight.push_menu_stack"),
+    ):
+        asyncio.run(my_weight(message))
+
+    text, _ = message.answers[0]
+
+    assert "<b>За 7 дней:</b> +0.9 кг" in text
+    assert "<b>За 30 дней:</b> +0.9 кг" in text
+    assert "<b>За 7 дней:</b> -2.6 кг" not in text
+
+
 def test_weight_menu_renames_graph_button_to_archive():
     rows = [[button.text for button in row] for row in weight_menu.keyboard]
 
