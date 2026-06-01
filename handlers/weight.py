@@ -267,6 +267,25 @@ def _find_reference_weight(weights: list, current_date: date, days_ago: int):
     return None
 
 
+def _find_period_start_weight(weights: list, current_date: date, days_ago: int):
+    """Возвращает самую раннюю запись внутри выбранного периода.
+
+    Для блока «Изменение» нельзя брать записи старше границы периода:
+    иначе недельная динамика может считаться по весу месячной давности,
+    если внутри недели нет записи ровно на дату начала периода.
+    """
+    period_start = current_date - timedelta(days=days_ago)
+    period_entry = None
+    for weight in weights:
+        if weight.date == current_date:
+            continue
+        if period_start <= weight.date <= current_date:
+            period_entry = weight
+        elif weight.date < period_start:
+            break
+    return period_entry
+
+
 def _format_change(current_value: float, reference_value: Optional[float]) -> str:
     """Форматирует изменение между двумя значениями веса."""
     if reference_value is None:
@@ -417,8 +436,8 @@ async def my_weight(message: Message):
         await message.answer("⚠️ Не удалось прочитать последнее значение веса.", reply_markup=weight_menu)
         return
 
-    reference_7 = _find_reference_weight(weights, current_entry.date, 7)
-    reference_30 = _find_reference_weight(weights, current_entry.date, 30)
+    reference_7 = _find_period_start_weight(weights, current_entry.date, 7)
+    reference_30 = _find_period_start_weight(weights, current_entry.date, 30)
 
     change_7 = _format_change(current_weight, _to_float_weight(reference_7.value) if reference_7 else None)
     change_30 = _format_change(current_weight, _to_float_weight(reference_30.value) if reference_30 else None)
