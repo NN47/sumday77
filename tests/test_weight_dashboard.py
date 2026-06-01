@@ -68,6 +68,8 @@ def test_weight_dashboard_hides_progress_bar_and_shows_decrease_trend():
     assert "⚖️ <b>Вес</b>" in text
     assert "<b>Текущий вес:</b> <b>76.90 кг</b>" in text
     assert "📉 <b>Изменение:</b>" in text
+    assert "🎯 <b>До цели:</b>" in text
+    assert "<b>Цель: 73.0 кг\nОсталось: 3.9 кг</b>" in text
     assert "📊 <b>Диапазон:</b>" in text
     assert "<b>Мин: 76.00 кг • Макс: 79.50 кг</b>" in text
     assert "<b>Снижение веса 📉</b>" in text
