@@ -135,25 +135,36 @@ async def quick_today_workout_cb(callback: CallbackQuery, state: FSMContext):
     await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
 
 
-@router.message(lambda m: m.text == "💪 Тренировка")
-async def add_training_entry(message: Message, state: FSMContext):
-    """Начинает процесс добавления тренировки."""
-    user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} started adding workout")
-    
-    await state.update_data(entry_date=date.today().isoformat())
+async def start_exercise_selection(
+    message: Message,
+    state: FSMContext,
+    target_date: date | None = None,
+):
+    """Открывает выбор упражнения для записи тренировки."""
+    entry_date = target_date or date.today()
+    await state.update_data(entry_date=entry_date.isoformat())
     await state.set_state(WorkoutStates.choosing_exercise)
     push_menu_stack(message.bot, exercise_picker_menu)
     await message.answer(
-        "Выбери упражнение:\n\nЧастые:\n- Отжимания\n- Подтягивания\n- Приседания\n- Планка\n- Бег\n- Йога",
+        f"📅 Дата: {entry_date.strftime('%d.%m.%Y')}\n\nВыбери упражнение:",
         reply_markup=exercise_picker_menu,
     )
+
+
+@router.message(lambda m: m.text == "💪 Тренировка")
+async def add_training_entry(message: Message, state: FSMContext):
+    """Показывает тренировки за сегодня и быстрые действия для них."""
+    user_id = str(message.from_user.id)
+    logger.info(f"User {user_id} opened today's workout details")
+
+    await state.clear()
+    await show_day_workouts(message, user_id, date.today(), include_calendar_back=False)
 
 
 @router.message(lambda m: m.text == "➕ Добавить другое упражнение")
 async def add_another_exercise(message: Message, state: FSMContext):
     """Позволяет быстро добавить следующее упражнение."""
-    await add_training_entry(message, state)
+    await start_exercise_selection(message, state)
 
 
 @router.message(StateFilter(None), lambda m: m.text == "✅ Завершить упражнение")
@@ -193,14 +204,24 @@ async def show_workout_calendar(message: Message, user_id: str, year: Optional[i
     )
 
 
-async def show_day_workouts(message: Message, user_id: str, target_date: date):
+async def show_day_workouts(
+    message: Message,
+    user_id: str,
+    target_date: date,
+    *,
+    include_calendar_back: bool = True,
+):
     """Показывает тренировки за день."""
     workouts = WorkoutRepository.get_workouts_for_day(user_id, target_date)
     
     if not workouts:
         await message.answer(
             f"{target_date.strftime('%d.%m.%Y')}: нет тренировок.",
-            reply_markup=build_day_actions_keyboard([], target_date),
+            reply_markup=build_day_actions_keyboard(
+                [],
+                target_date,
+                include_calendar_back=include_calendar_back,
+            ),
         )
         return
     
@@ -235,7 +256,11 @@ async def show_day_workouts(message: Message, user_id: str, target_date: date):
     
     await message.answer(
         "\n".join(text),
-        reply_markup=build_day_actions_keyboard(workouts, target_date),
+        reply_markup=build_day_actions_keyboard(
+            workouts,
+            target_date,
+            include_calendar_back=include_calendar_back,
+        ),
     )
 
 
@@ -276,13 +301,7 @@ async def add_workout_from_calendar(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
     target_date = date.fromisoformat(parts[1])
     
-    await state.update_data(entry_date=target_date.isoformat())
-    await state.set_state(WorkoutStates.choosing_exercise)
-    push_menu_stack(callback.message.bot, exercise_picker_menu)
-    await callback.message.answer(
-        f"📅 Дата: {target_date.strftime('%d.%m.%Y')}\n\nВыбери упражнение:",
-        reply_markup=exercise_picker_menu,
-    )
+    await start_exercise_selection(callback.message, state, target_date)
 
 
 @router.callback_query(lambda c: c.data.startswith("wrk_edit:"))
