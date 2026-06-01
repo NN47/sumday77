@@ -141,24 +141,29 @@ def _format_weight_input_screen(
     )
 
 
+def _format_weight_delta(delta: float) -> str:
+    """Форматирует изменение веса с понятным знаком и emoji."""
+    if delta < 0:
+        return f"{delta:.1f} кг 📉"
+    if delta > 0:
+        return f"+{delta:.1f} кг 📈"
+    return "0.0 кг ➖"
+
+
 def _format_weight_confirmation_text(
     weight_value: float,
     entry_date: date,
     previous_weight_value: Optional[float],
+    previous_weight_date: Optional[date] = None,
 ) -> str:
     """Формирует экран подтверждения веса перед сохранением."""
-    delta_text = "<b>Изменение:</b> недостаточно данных"
-    if previous_weight_value is not None:
-        delta = weight_value - previous_weight_value
-        direction = "📉" if delta < 0 else "📈" if delta > 0 else "⚖️"
-        delta_text = f"<b>Изменение:</b> {delta:+.2f} кг с прошлой записи {direction}"
-
-    return (
-        "✅ <b>Проверь вес перед сохранением</b>\n\n"
-        f"📅 <b>Дата:</b> {entry_date.strftime('%d.%m.%Y')}\n"
-        f"⚖️ <b>Вес:</b> {weight_value:.1f} кг\n"
-        f"{delta_text}\n\n"
-        "Нажми <b>✅ Сохранить</b>, чтобы записать вес."
+    return _format_weight_draft_text(
+        weight_value,
+        entry_date,
+        previous_weight_value,
+        previous_weight_date,
+        save_hint="Нажми <b>✅ Сохранить</b>, чтобы записать вес.",
+        title="✅ <b>Проверь вес перед сохранением</b>\n\n",
     )
 
 
@@ -166,26 +171,37 @@ def _format_weight_draft_text(
     weight_value: float,
     entry_date: date,
     previous_weight_value: Optional[float],
+    previous_weight_date: Optional[date] = None,
     current_weight_value: Optional[float] = None,
+    *,
+    save_hint: str = "Можно ещё изменить вес кнопками ниже или нажать <b>✅ Сохранить</b>.",
+    title: str = "",
 ) -> str:
     """Формирует сообщение о черновом весе после быстрой правки."""
-    delta_text = "<b>Изменение:</b> недостаточно данных"
-    if previous_weight_value is not None:
+    lines = [
+        f"{title}⚖️ <b>Вес сейчас:</b> {weight_value:.1f} кг",
+        f"📅 <b>Дата:</b> {entry_date.strftime('%d.%m.%Y')}",
+    ]
+
+    if previous_weight_value is None or previous_weight_date is None:
+        lines.extend([
+            "",
+            "Это первая запись веса.",
+            "После сохранения бот начнёт отслеживать динамику.",
+        ])
+    else:
         delta = weight_value - previous_weight_value
-        direction = "📉" if delta < 0 else "📈" if delta > 0 else "⚖️"
-        delta_text = f"<b>Изменение:</b> {delta:+.2f} кг с прошлой записи {direction}"
+        lines.extend([
+            "",
+            "<b>Предыдущая запись:</b>",
+            f"⚖️ {previous_weight_value:.1f} кг",
+            f"📅 {previous_weight_date.strftime('%d.%m.%Y')}",
+            "",
+            f"<b>Изменение с предыдущей записи:</b> {_format_weight_delta(delta)}",
+        ])
 
-    current_weight_text = "нет данных"
-    if current_weight_value is not None:
-        current_weight_text = f"{current_weight_value:.1f} кг"
-
-    return (
-        f"⚖️ <b>Текущий вес:</b> {current_weight_text}\n"
-        f"⚖️ <b>Новый вес:</b> {weight_value:.1f} кг\n"
-        f"📅 <b>Дата:</b> {entry_date.strftime('%d.%m.%Y')}\n"
-        f"{delta_text}\n\n"
-        "Можно ещё изменить вес кнопками ниже или нажать <b>✅ Сохранить</b>."
-    )
+    lines.extend(["", save_hint])
+    return "\n".join(lines)
 
 
 def _resolve_base_weight(user_id: str, existing_weight_value: Optional[str | float] = None) -> Optional[float]:
@@ -742,8 +758,27 @@ def _resolve_weight_entry_date(entry_date_value) -> date:
     return date.today()
 
 
-def _find_previous_weight_value(user_id: str, entry_date: date, weight_id: Optional[int]) -> Optional[float]:
-    """Находит предыдущий вес для расчёта динамики."""
+def _resolve_optional_weight_date(entry_date_value) -> Optional[date]:
+    """Возвращает дату записи веса из FSM или None."""
+    if not entry_date_value:
+        return None
+    if isinstance(entry_date_value, date):
+        return entry_date_value
+    if isinstance(entry_date_value, str):
+        try:
+            return date.fromisoformat(entry_date_value)
+        except ValueError:
+            parsed = parse_date(entry_date_value)
+            return parsed.date() if isinstance(parsed, datetime) else None
+    return None
+
+
+def _find_previous_weight_entry(
+    user_id: str,
+    entry_date: date,
+    weight_id: Optional[int],
+) -> tuple[Optional[float], Optional[date]]:
+    """Находит последнюю сохранённую запись веса до текущей записи."""
     existing_weights = WeightRepository.get_weights(user_id)
     for existing in existing_weights:
         existing_value = _to_float_weight(existing.value)
@@ -752,8 +787,14 @@ def _find_previous_weight_value(user_id: str, entry_date: date, weight_id: Optio
         if weight_id and existing.id == weight_id:
             continue
         if existing.date <= entry_date:
-            return existing_value
-    return None
+            return existing_value, existing.date
+    return None, None
+
+
+def _find_previous_weight_value(user_id: str, entry_date: date, weight_id: Optional[int]) -> Optional[float]:
+    """Находит предыдущий вес для расчёта динамики."""
+    previous_weight_value, _ = _find_previous_weight_entry(user_id, entry_date, weight_id)
+    return previous_weight_value
 
 
 def _resolve_current_weight_value_for_draft(
@@ -797,6 +838,7 @@ async def _show_weight_input_screen_from_state(message: Message, state: FSMConte
     await state.update_data(
         draft_weight_value=None,
         draft_previous_weight_value=None,
+        draft_previous_weight_date=None,
         quick_base_weight=base_weight or 70.0,
     )
     await state.set_state(WeightStates.entering_weight)
@@ -894,12 +936,13 @@ async def _apply_weight_value_to_editor(
     data = await state.get_data()
     entry_date = _resolve_weight_entry_date(data.get("entry_date", date.today().isoformat()))
     weight_id = data.get("weight_id")
-    previous_weight_value = _find_previous_weight_value(user_id, entry_date, weight_id)
+    previous_weight_value, previous_weight_date = _find_previous_weight_entry(user_id, entry_date, weight_id)
     current_weight_value = _resolve_current_weight_value_for_draft(user_id, entry_date, weight_id, data)
 
     await state.update_data(
         draft_weight_value=weight_value,
         draft_previous_weight_value=previous_weight_value,
+        draft_previous_weight_date=previous_weight_date.isoformat() if previous_weight_date else None,
         draft_current_weight_value=current_weight_value,
         entry_date=entry_date.isoformat(),
         quick_base_weight=weight_value,
@@ -908,7 +951,13 @@ async def _apply_weight_value_to_editor(
     await _update_weight_editor_from_message(
         message,
         state,
-        _format_weight_draft_text(weight_value, entry_date, previous_weight_value, current_weight_value),
+        _format_weight_draft_text(
+            weight_value,
+            entry_date,
+            previous_weight_value,
+            previous_weight_date,
+            current_weight_value,
+        ),
         weight_value,
     )
 
@@ -1004,12 +1053,14 @@ async def handle_weight_inline_manual(callback: CallbackQuery, state: FSMContext
     draft_weight = _to_float_weight(data.get("draft_weight_value"))
     base_weight = draft_weight or _to_float_weight(data.get("quick_base_weight")) or 70.0
     previous_weight_value = _to_float_weight(data.get("draft_previous_weight_value"))
+    previous_weight_date = _resolve_optional_weight_date(data.get("draft_previous_weight_date"))
     current_weight_value = _to_float_weight(data.get("draft_current_weight_value"))
     if draft_weight is not None:
         draft_text = _format_weight_draft_text(
             draft_weight,
             entry_date,
             previous_weight_value,
+            previous_weight_date,
             current_weight_value,
         )
         text = (

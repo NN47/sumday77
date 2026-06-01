@@ -219,8 +219,14 @@ def test_weight_input_keeps_quick_buttons_and_requires_save_before_repository_wr
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows[0] == ["-1", "-0,5", "+0,5", "+1"]
     assert rows[3] == ["✅ Сохранить"]
-    assert "⚖️ <b>Текущий вес:</b> 76.9 кг" in text
-    assert "⚖️ <b>Новый вес:</b> 76.4 кг" in text
+    assert "⚖️ <b>Вес сейчас:</b> 76.4 кг" in text
+    assert "📅 <b>Дата:</b> 29.05.2026" in text
+    assert "<b>Предыдущая запись:</b>" in text
+    assert "⚖️ 76.9 кг" in text
+    assert "📅 28.05.2026" in text
+    assert "<b>Изменение с предыдущей записи:</b> -0.5 кг 📉" in text
+    assert "Текущий вес" not in text
+    assert "Новый вес" not in text
 
 
 def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
@@ -243,8 +249,34 @@ def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
     text, reply_markup = message.answers[-1]
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows[1] == ["-0,2", "-0,1", "+0,1", "+0,2"]
-    assert "⚖️ <b>Текущий вес:</b> 76.9 кг" in text
-    assert "⚖️ <b>Новый вес:</b> 76.0 кг" in text
+    assert "⚖️ <b>Вес сейчас:</b> 76.0 кг" in text
+    assert "⚖️ 76.9 кг" in text
+    assert "📅 28.05.2026" in text
+    assert "<b>Изменение с предыдущей записи:</b> -0.9 кг 📉" in text
+    assert "Текущий вес" not in text
+    assert "Новый вес" not in text
+
+
+def test_weight_draft_text_shows_first_entry_message_without_previous_weight():
+    from handlers.weight import _format_weight_draft_text
+
+    text = _format_weight_draft_text(75.9, date(2026, 6, 1), None, None)
+
+    assert "⚖️ <b>Вес сейчас:</b> 75.9 кг" in text
+    assert "📅 <b>Дата:</b> 01.06.2026" in text
+    assert "Это первая запись веса." in text
+    assert "После сохранения бот начнёт отслеживать динамику." in text
+    assert "Предыдущая запись" not in text
+
+
+def test_weight_draft_text_formats_positive_and_zero_delta():
+    from handlers.weight import _format_weight_draft_text
+
+    positive_text = _format_weight_draft_text(76.9, date(2026, 6, 1), 75.9, date(2026, 5, 25))
+    zero_text = _format_weight_draft_text(75.9, date(2026, 6, 1), 75.9, date(2026, 5, 25))
+
+    assert "<b>Изменение с предыдущей записи:</b> +1.0 кг 📈" in positive_text
+    assert "<b>Изменение с предыдущей записи:</b> 0.0 кг ➖" in zero_text
 
 
 def test_weight_day_actions_for_existing_weight_show_requested_buttons():
