@@ -232,6 +232,16 @@ def test_expand_recent_meals_splits_multi_product_entries():
     assert items[1].calories == 120
 
 
+def test_format_emoji_number_uses_full_emoji_digits():
+    assert meals._format_emoji_number(1) == "1️⃣"
+    assert meals._format_emoji_number(9) == "9️⃣"
+    assert meals._format_emoji_number(10) == "🔟"
+    assert meals._format_emoji_number(11) == "1️⃣1️⃣"
+    assert meals._format_emoji_number(12) == "1️⃣2️⃣"
+    assert meals._format_emoji_number(13) == "1️⃣3️⃣"
+    assert meals._format_emoji_number(20) == "2️⃣0️⃣"
+
+
 def test_format_recent_meals_text_uses_meal_report_bold_style_and_escapes_html():
     item = meals.RecentMealItem(
         source_meal_id=7,
@@ -247,7 +257,7 @@ def test_format_recent_meals_text_uses_meal_report_bold_style_and_escapes_html()
     text = meals._format_recent_meals_text([item], page=1)
 
     assert "🕘 <b>Недавно добавленные • страница 1</b>" in text
-    assert "1. <b>Салат &lt;Курочка&gt;</b>" in text
+    assert "1️⃣ <b>Салат &lt;Курочка&gt;</b>" in text
     assert "<b>120 г • 67 ккал</b>" in text
     assert "<i>Б 3.1 / Ж 5.3 / У 1.7</i>" in text
     assert "<Курочка>" not in text
@@ -334,7 +344,7 @@ def test_format_recent_search_results_text_uses_recent_format_and_escapes_query(
     text = meals._format_recent_search_results_text("сыр <", [item], page=1)
 
     assert "🔎 <b>Результаты поиска: сыр &lt;</b>" in text
-    assert "1. <b>Сыр &lt;творожный&gt;</b>" in text
+    assert "1️⃣ <b>Сыр &lt;творожный&gt;</b>" in text
     assert "<b>120 г • 67 ккал</b>" in text
     assert "<i>Б 3.1 / Ж 5.3 / У 1.7</i>" in text
 
@@ -394,6 +404,24 @@ def test_recent_search_empty_result_shows_retry_back_and_main_buttons():
     ]
 
 
+def test_recent_meals_keyboard_uses_full_emoji_numbers_on_later_pages():
+    items = [
+        meals.RecentMealItem(9, 0, "Продукт 9", 100, 100, 1, 1, 1),
+        meals.RecentMealItem(10, 0, "Продукт 10", 100, 100, 1, 1, 1),
+        meals.RecentMealItem(11, 0, "Продукт 11", 100, 100, 1, 1, 1),
+        meals.RecentMealItem(12, 0, "Продукт 12", 100, 100, 1, 1, 1),
+    ]
+
+    keyboard = meals._build_recent_meals_keyboard(
+        items, meal_type="snack", page=2, has_prev=True, has_next=True
+    )
+
+    assert keyboard.inline_keyboard[1][0].text.startswith("9️⃣ ")
+    assert keyboard.inline_keyboard[2][0].text.startswith("🔟 ")
+    assert keyboard.inline_keyboard[3][0].text.startswith("1️⃣1️⃣ ")
+    assert keyboard.inline_keyboard[4][0].text.startswith("1️⃣2️⃣ ")
+
+
 def test_recent_search_results_keyboard_marks_pick_origin_as_search():
     item = meals.RecentMealItem(
         source_meal_id=7,
@@ -423,8 +451,8 @@ def test_recent_search_results_keyboard_uses_absolute_numbers_on_later_pages():
         items, meal_type="dinner", page=3, has_prev=True, has_next=True
     )
 
-    assert keyboard.inline_keyboard[0][0].text.startswith("17️⃣ ")
-    assert keyboard.inline_keyboard[1][0].text.startswith("18️⃣ ")
+    assert keyboard.inline_keyboard[0][0].text.startswith("1️⃣7️⃣ ")
+    assert keyboard.inline_keyboard[1][0].text.startswith("1️⃣8️⃣ ")
 
 
 def test_recent_meal_back_returns_to_search_results_when_product_opened_from_search():

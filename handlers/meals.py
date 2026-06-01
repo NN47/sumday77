@@ -143,6 +143,27 @@ def _format_label_weight_prompt(
 RECENT_MEALS_PAGE_SIZE = 8
 
 
+_EMOJI_DIGITS = {
+    "0": "0️⃣",
+    "1": "1️⃣",
+    "2": "2️⃣",
+    "3": "3️⃣",
+    "4": "4️⃣",
+    "5": "5️⃣",
+    "6": "6️⃣",
+    "7": "7️⃣",
+    "8": "8️⃣",
+    "9": "9️⃣",
+}
+
+
+def _format_emoji_number(number: int) -> str:
+    """Форматирует порядковый номер только emoji-цифрами."""
+    if number == 10:
+        return "🔟"
+    return "".join(_EMOJI_DIGITS[digit] for digit in str(number))
+
+
 @dataclass(frozen=True)
 class RecentMealItem:
     """Один продукт для отображения в списке недавних продуктов."""
@@ -271,7 +292,7 @@ def _format_recent_meals_text(recent_meals: list[RecentMealItem], page: int) -> 
     for offset, item in enumerate(recent_meals, start=start_idx + 1):
         lines.extend(
             [
-                f"{offset}. <b>{html.escape(item.title)}</b>",
+                f"{_format_emoji_number(offset)} <b>{html.escape(item.title)}</b>",
                 f"<b>{item.amount_g} г • {item.calories:.0f} ккал</b>",
                 f"<i>Б {item.protein:.1f} / Ж {item.fat:.1f} / У {item.carbs:.1f}</i>",
                 "",
@@ -287,7 +308,7 @@ def _format_recent_search_results_text(query: str, items: list[RecentMealItem], 
     for offset, item in enumerate(items, start=start_idx + 1):
         lines.extend(
             [
-                f"{offset}. <b>{html.escape(item.title)}</b>",
+                f"{_format_emoji_number(offset)} <b>{html.escape(item.title)}</b>",
                 f"<b>{item.amount_g} г • {item.calories:.0f} ккал</b>",
                 f"<i>Б {item.protein:.1f} / Ж {item.fat:.1f} / У {item.carbs:.1f}</i>",
                 "",
@@ -314,7 +335,7 @@ def _build_recent_meals_keyboard(recent_meals: list[RecentMealItem], meal_type: 
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{number}️⃣ {title}",
+                    text=f"{_format_emoji_number(number)} {title}",
                     callback_data=f"recent_meal_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}",
                 )
             ]
@@ -346,7 +367,7 @@ def _build_recent_search_results_keyboard(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{number}️⃣ {title}",
+                    text=f"{_format_emoji_number(number)} {title}",
                     callback_data=f"recent_meal_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}:search",
                 )
             ]
@@ -2647,7 +2668,7 @@ def _build_weight_products_keyboard(products: list[dict]) -> InlineKeyboardMarku
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{idx}. {name} — {grams:.0f} г{corrected_badge}",
+                    text=f"{_format_emoji_number(idx)} {name} — {grams:.0f} г{corrected_badge}",
                     callback_data=f"meal_wsel:{idx - 1}",
                 )
             ]
