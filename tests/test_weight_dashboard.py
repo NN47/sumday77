@@ -219,7 +219,8 @@ def test_weight_input_keeps_quick_buttons_and_requires_save_before_repository_wr
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows[0] == ["-1", "-0,5", "+0,5", "+1"]
     assert rows[3] == ["✅ Сохранить"]
-    assert "<b>Новый вес:</b> 76.4 кг" in text
+    assert "⚖️ <b>Текущий вес:</b> 76.9 кг" in text
+    assert "⚖️ <b>Новый вес:</b> 76.4 кг" in text
 
 
 def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
@@ -230,6 +231,7 @@ def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
         "entry_date": date(2026, 5, 29).isoformat(),
         "quick_base_weight": 76.4,
         "draft_weight_value": 76.2,
+        "draft_current_weight_value": 76.9,
     })
     message.text = "-0,2"
 
@@ -241,7 +243,8 @@ def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
     text, reply_markup = message.answers[-1]
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows[1] == ["-0,2", "-0,1", "+0,1", "+0,2"]
-    assert "<b>Новый вес:</b> 76.0 кг" in text
+    assert "⚖️ <b>Текущий вес:</b> 76.9 кг" in text
+    assert "⚖️ <b>Новый вес:</b> 76.0 кг" in text
 
 
 def test_weight_day_actions_for_existing_weight_show_requested_buttons():
