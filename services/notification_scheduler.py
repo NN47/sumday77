@@ -8,6 +8,7 @@ from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from database.session import get_db_session
 from database.models import ActivityAnalysisEntry, User, Supplement, KbjuSettings, EveningAnalysisNotificationState
+from database.repositories.evening_analysis_notification_repository import EveningAnalysisNotificationRepository
 from services.error_logging_service import log_app_error
 
 logger = logging.getLogger(__name__)
@@ -77,8 +78,8 @@ class NotificationScheduler:
         user_id: str,
         message: str,
         reply_markup: InlineKeyboardMarkup | None = None,
-    ):
-        """Отправляет уведомление пользователю."""
+    ) -> bool:
+        """Отправляет уведомление пользователю и возвращает успешность отправки."""
         try:
             await self.bot.send_message(
                 chat_id=user_id,
@@ -86,6 +87,7 @@ class NotificationScheduler:
                 reply_markup=reply_markup,
             )
             logger.info(f"Уведомление отправлено пользователю {user_id}")
+            return True
         except Exception as e:
             log_app_error(
                 source="telegram",
@@ -94,6 +96,7 @@ class NotificationScheduler:
                 context="send_message",
                 extra={"message_preview": message[:80]},
             )
+            return False
     
     async def send_meal_notifications(self, meal_type: str, message_text: str):
         """Отправляет уведомления о приёме пищи всем пользователям."""
@@ -150,10 +153,10 @@ class NotificationScheduler:
         except Exception:
             return MSK_TZ
 
-    async def send_evening_analysis_notification(self, user_id: str, target_date, *, is_reminder: bool = False):
+    async def send_evening_analysis_notification(self, user_id: str, target_date, *, is_reminder: bool = False) -> bool:
         """Отправляет основное или повторное уведомление анализа дня."""
         text = EVENING_ANALYSIS_REMINDER_TEXT if is_reminder else EVENING_ANALYSIS_MAIN_TEXT
-        await self.send_notification(
+        return await self.send_notification(
             user_id,
             text,
             reply_markup=self.build_evening_analysis_keyboard(target_date),
@@ -208,29 +211,32 @@ class NotificationScheduler:
                     if state.reminder_due_at and state.reminder_due_at <= now_utc:
                         if state.remind_later_date == local_today and state.remind_later_count <= EVENING_ANALYSIS_MAX_REMINDERS:
                             pending_notifications.append((user.user_id, local_today, True))
-                            state.reminder_due_at = None
-                            state.updated_at = now_utc
                         continue
 
-                    is_target_minute = (
-                        local_now.hour == EVENING_ANALYSIS_TIME.hour
-                        and local_now.minute == EVENING_ANALYSIS_TIME.minute
-                    )
-                    if is_target_minute and state.last_evening_notification_date != local_today:
-                        state.last_evening_notification_date = local_today
-                        state.remind_later_date = local_today
-                        state.remind_later_count = 0
-                        state.reminder_due_at = None
-                        state.updated_at = now_utc
+                    is_target_time_reached = local_now.time() >= EVENING_ANALYSIS_TIME
+                    if is_target_time_reached and state.last_evening_notification_date != local_today:
                         pending_notifications.append((user.user_id, local_today, False))
 
             if pending_notifications:
                 logger.info("Отправка вечерних уведомлений анализа дня: %s", len(pending_notifications))
-                tasks = [
-                    self.send_evening_analysis_notification(user_id, target_date, is_reminder=is_reminder)
-                    for user_id, target_date, is_reminder in pending_notifications
-                ]
-                await asyncio.gather(*tasks, return_exceptions=True)
+                results = await asyncio.gather(
+                    *(
+                        self.send_evening_analysis_notification(user_id, target_date, is_reminder=is_reminder)
+                        for user_id, target_date, is_reminder in pending_notifications
+                    ),
+                    return_exceptions=True,
+                )
+                for (user_id, target_date, is_reminder), result in zip(pending_notifications, results):
+                    if result is not True:
+                        logger.warning(
+                            "Вечернее уведомление анализа дня не доставлено, повторим позже: user_id=%s",
+                            user_id,
+                        )
+                        continue
+                    if is_reminder:
+                        EveningAnalysisNotificationRepository.mark_reminder_sent(user_id, target_date)
+                    else:
+                        EveningAnalysisNotificationRepository.mark_evening_notification_sent(user_id, target_date)
         except Exception as e:
             logger.error("Ошибка при проверке вечерних уведомлений анализа дня: %s", e, exc_info=True)
 
