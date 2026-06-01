@@ -166,6 +166,7 @@ def _format_weight_draft_text(
     weight_value: float,
     entry_date: date,
     previous_weight_value: Optional[float],
+    current_weight_value: Optional[float] = None,
 ) -> str:
     """Формирует сообщение о черновом весе после быстрой правки."""
     delta_text = "<b>Изменение:</b> недостаточно данных"
@@ -174,7 +175,12 @@ def _format_weight_draft_text(
         direction = "📉" if delta < 0 else "📈" if delta > 0 else "⚖️"
         delta_text = f"<b>Изменение:</b> {delta:+.2f} кг с прошлой записи {direction}"
 
+    current_weight_text = "нет данных"
+    if current_weight_value is not None:
+        current_weight_text = f"{current_weight_value:.1f} кг"
+
     return (
+        f"⚖️ <b>Текущий вес:</b> {current_weight_text}\n"
         f"⚖️ <b>Новый вес:</b> {weight_value:.1f} кг\n"
         f"📅 <b>Дата:</b> {entry_date.strftime('%d.%m.%Y')}\n"
         f"{delta_text}\n\n"
@@ -731,6 +737,26 @@ def _find_previous_weight_value(user_id: str, entry_date: date, weight_id: Optio
     return None
 
 
+def _resolve_current_weight_value_for_draft(
+    user_id: str,
+    entry_date: date,
+    weight_id: Optional[int],
+    data: dict,
+) -> Optional[float]:
+    """Возвращает исходный текущий вес для отображения рядом с новым весом."""
+    remembered_current_weight = _to_float_weight(data.get("draft_current_weight_value"))
+    if remembered_current_weight is not None:
+        return remembered_current_weight
+
+    if weight_id:
+        existing_weight = WeightRepository.get_weight_for_date(user_id, entry_date)
+        existing_weight_value = _to_float_weight(existing_weight.value if existing_weight else None)
+        if existing_weight_value is not None:
+            return existing_weight_value
+
+    return _to_float_weight(data.get("quick_base_weight"))
+
+
 async def _show_weight_input_screen_from_state(message: Message, state: FSMContext):
     """Возвращает пользователя на экран выбора веса без сохранения draft."""
     data = await state.get_data()
@@ -850,10 +876,12 @@ async def _apply_weight_value_to_editor(
     entry_date = _resolve_weight_entry_date(data.get("entry_date", date.today().isoformat()))
     weight_id = data.get("weight_id")
     previous_weight_value = _find_previous_weight_value(user_id, entry_date, weight_id)
+    current_weight_value = _resolve_current_weight_value_for_draft(user_id, entry_date, weight_id, data)
 
     await state.update_data(
         draft_weight_value=weight_value,
         draft_previous_weight_value=previous_weight_value,
+        draft_current_weight_value=current_weight_value,
         entry_date=entry_date.isoformat(),
         quick_base_weight=weight_value,
     )
@@ -861,7 +889,7 @@ async def _apply_weight_value_to_editor(
     await _update_weight_editor_from_message(
         message,
         state,
-        _format_weight_draft_text(weight_value, entry_date, previous_weight_value),
+        _format_weight_draft_text(weight_value, entry_date, previous_weight_value, current_weight_value),
         weight_value,
     )
 
@@ -957,9 +985,16 @@ async def handle_weight_inline_manual(callback: CallbackQuery, state: FSMContext
     draft_weight = _to_float_weight(data.get("draft_weight_value"))
     base_weight = draft_weight or _to_float_weight(data.get("quick_base_weight")) or 70.0
     previous_weight_value = _to_float_weight(data.get("draft_previous_weight_value"))
+    current_weight_value = _to_float_weight(data.get("draft_current_weight_value"))
     if draft_weight is not None:
+        draft_text = _format_weight_draft_text(
+            draft_weight,
+            entry_date,
+            previous_weight_value,
+            current_weight_value,
+        )
         text = (
-            f"{_format_weight_draft_text(draft_weight, entry_date, previous_weight_value)}\n\n"
+            f"{draft_text}\n\n"
             "✍️ Введи вес в килограммах сообщением, например 72,5."
         )
     else:
