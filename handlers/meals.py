@@ -42,6 +42,11 @@ from services.openrouter_service import (
     OpenRouterServiceError,
     OpenRouterServiceTemporaryError,
 )
+from services.deepseek_service import (
+    deepseek_service,
+    DeepSeekServiceConfigError,
+    DeepSeekServiceError,
+)
 from services.ai.gigachat import (
     gigachat_service,
     GigaChatServiceError,
@@ -76,6 +81,7 @@ ADD_METHOD_TEXTS = {
     "calorieninjas": "➕ Через CalorieNinjas",
     "ai": "📝 Ввести приём пищи текстом (AI-анализ)",
     "openrouter": "🧪 Ввести текст через OpenRouter",
+    "deepseek": "🤖 Ввести приём пищи через DeepSeek",
     "gigachat": "🧠 Ввести текст через GigaChat",
     "photo": "📷 Анализ еды по фото",
     "label": "📋 Анализ этикетки",
@@ -409,6 +415,9 @@ async def _reroute_add_method_button_if_needed(message: Message, state: FSMConte
         return True
     if text == ADD_METHOD_TEXTS["openrouter"]:
         await kbju_add_via_openrouter(message, state)
+        return True
+    if text == ADD_METHOD_TEXTS["deepseek"]:
+        await kbju_add_via_deepseek(message, state)
         return True
     if text == ADD_METHOD_TEXTS["gigachat"]:
         await kbju_add_via_gigachat(message, state)
@@ -1422,6 +1431,12 @@ async def select_meal_type(message: Message, state: FSMContext):
         if pending_method == "openrouter":
             await kbju_add_via_openrouter(message, state)
             return
+        if pending_method == "deepseek":
+            await kbju_add_via_deepseek(message, state)
+            return
+        if pending_method == "gigachat":
+            await kbju_add_via_gigachat(message, state)
+            return
         if pending_method == "photo":
             await kbju_add_via_photo(message, state)
             return
@@ -1521,6 +1536,23 @@ async def kbju_add_via_openrouter(message: Message, state: FSMContext):
     )
 
 
+@router.message(lambda m: m.text == "🤖 Ввести приём пищи через DeepSeek")
+async def kbju_add_via_deepseek(message: Message, state: FSMContext):
+    """Обработчик отдельного сценария DeepSeek."""
+    if not await _ensure_meal_type_selected(message, state, "deepseek"):
+        return
+    await state.update_data(pending_add_method=None)
+    await state.set_state(MealEntryStates.waiting_for_deepseek_food_input)
+
+    push_menu_stack(message.bot, kbju_add_menu)
+    await message.answer(
+        "🤖 DeepSeek\n\n"
+        "Отправь продукты и количество одним сообщением — как в AI-анализе текстом. "
+        "Я разберу описание через DeepSeek и сохраню приём пищи.",
+        reply_markup=kbju_add_menu,
+    )
+
+
 @router.message(lambda m: m.text == "🧠 Ввести текст через GigaChat")
 async def kbju_add_via_gigachat(message: Message, state: FSMContext):
     """Обработчик отдельного сценария GigaChat."""
@@ -1556,9 +1588,14 @@ async def _handle_provider_food_input(
     try:
         raw = await asyncio.to_thread(analyzer, user_text)
         kbju_data = openrouter_service.parse_kbju_json(raw)
-    except (OpenRouterServiceError, GigaChatServiceError, ValueError, json.JSONDecodeError):
+    except DeepSeekServiceConfigError:
+        logger.exception("%s: API key is not configured", provider_name)
+        await message.answer("⚠️ DeepSeek временно недоступен: не настроен DEEPSEEK_API_KEY.")
+        await message.answer("Можешь выбрать другой способ добавления или попробовать позже.")
+        return
+    except (OpenRouterServiceError, DeepSeekServiceError, GigaChatServiceError, ValueError, json.JSONDecodeError):
         logger.exception("%s: failed to process user text", provider_name)
-        await message.answer(f"Не удалось обработать через {provider_name}. Попробуй позже.")
+        await message.answer(f"Не удалось обработать через {provider_name}: пустой ответ или ошибка API. Попробуй позже.")
         await message.answer("Можешь отправить текст ещё раз.")
         return
 
@@ -1634,6 +1671,18 @@ async def handle_openrouter_food_input(message: Message, state: FSMContext):
         provider_name="OpenRouter",
         provider_title="🧪 OpenRouter (free)",
         analyzer=openrouter_service.analyze_food_text,
+    )
+
+
+@router.message(MealEntryStates.waiting_for_deepseek_food_input)
+async def handle_deepseek_food_input(message: Message, state: FSMContext):
+    """Обрабатывает текст пользователя через DeepSeek с автосохранением."""
+    await _handle_provider_food_input(
+        message,
+        state,
+        provider_name="DeepSeek",
+        provider_title="🤖 DeepSeek",
+        analyzer=deepseek_service.analyze_food_text,
     )
 
 
