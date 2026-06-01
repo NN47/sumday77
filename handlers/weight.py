@@ -427,12 +427,14 @@ async def my_weight(message: Message):
     to_goal_text = "Цель веса не задана"
     if target_weight is not None:
         delta_to_target = target_weight - current_weight
+        target_goal_text = f"Цель: {target_weight:.1f} кг"
         if abs(delta_to_target) < 0.05:
-            to_goal_text = "Цель достигнута 🎉"
+            remaining_goal_text = "Цель достигнута 🎉"
         elif delta_to_target > 0:
-            to_goal_text = f"Осталось набрать: {delta_to_target:.1f} кг"
+            remaining_goal_text = f"Осталось набрать: {delta_to_target:.1f} кг"
         else:
-            to_goal_text = f"Осталось: {abs(delta_to_target):.1f} кг"
+            remaining_goal_text = f"Осталось: {abs(delta_to_target):.1f} кг"
+        to_goal_text = f"{target_goal_text}\n{remaining_goal_text}"
 
     trend_text = _detect_trend(weights)
 
