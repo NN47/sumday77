@@ -38,6 +38,43 @@ JSON должен быть такого вида:
 """.strip()
 
 
+OPENAI_FOOD_PHOTO_PROMPT = """
+Проанализируй фото блюда.
+Определи, какие продукты/ингредиенты видны на изображении.
+Оцени примерную массу блюда и КБЖУ.
+
+Верни строго валидный JSON без пояснений:
+
+{
+  "dish_name": null,
+  "estimated_weight_g": null,
+  "calories": null,
+  "protein": null,
+  "fat": null,
+  "carbs": null,
+  "items": [
+    {
+      "name": null,
+      "estimated_weight_g": null,
+      "calories": null,
+      "protein": null,
+      "fat": null,
+      "carbs": null
+    }
+  ],
+  "confidence": "low"
+}
+
+Правила:
+- не придумывай точные данные;
+- если фото неоднозначное, ставь confidence = "low";
+- если блюдо видно хорошо, confidence = "medium" или "high";
+- все значения КБЖУ должны быть примерной оценкой;
+- значения должны быть числами, не строками;
+- если значение невозможно оценить, верни null.
+""".strip()
+
+
 class OpenAILabelServiceError(Exception):
     """Base domain error for OpenAI label analysis."""
 
@@ -152,6 +189,117 @@ class OpenAILabelService:
         normalized = self._normalize_label_payload(parsed)
         return normalized if normalized else None
 
+    def analyze_food_photo_openai(
+        self,
+        image_bytes: bytes,
+        *,
+        user_id: str | int | None = None,
+        feature: str = "food_photo_analysis",
+    ) -> Optional[dict]:
+        """Return food photo analysis in the same normalized shape as Gemini photo analysis."""
+        if not self.api_key:
+            log_ai_usage(
+                provider="openai",
+                feature=feature,
+                model=self.model,
+                status="error",
+                user_id=user_id,
+                error_message="OpenAI API key не настроен на сервере.",
+            )
+            raise OpenAILabelServiceConfigError("OpenAI API key не настроен на сервере.")
+
+        started = time.perf_counter()
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+        mime_type = self._detect_mime_type(image_bytes)
+        client = OpenAI(api_key=self.api_key, timeout=self.timeout_seconds)
+
+        try:
+            response = client.responses.create(
+                model=self.model,
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": OPENAI_FOOD_PHOTO_PROMPT},
+                            {
+                                "type": "input_image",
+                                "image_url": f"data:{mime_type};base64,{image_base64}",
+                            },
+                        ],
+                    }
+                ],
+                text={"format": {"type": "json_object"}},
+            )
+        except APITimeoutError as exc:
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            logger.error("OpenAI food photo analysis timed out: %s", exc, exc_info=True)
+            log_ai_usage(
+                provider="openai",
+                feature=feature,
+                model=self.model,
+                status="error",
+                user_id=user_id,
+                latency_ms=latency_ms,
+                error_message=str(exc),
+            )
+            raise OpenAILabelServiceTimeoutError("OpenAI API request timed out") from exc
+        except OpenAIError as exc:
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            logger.error("OpenAI food photo analysis API error: %s", exc, exc_info=True)
+            log_ai_usage(
+                provider="openai",
+                feature=feature,
+                model=self.model,
+                status="error",
+                user_id=user_id,
+                latency_ms=latency_ms,
+                error_message=str(exc),
+            )
+            raise OpenAILabelServiceAPIError(str(exc)) from exc
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        usage = getattr(response, "usage", None)
+        input_tokens = getattr(usage, "input_tokens", None) if usage is not None else None
+        output_tokens = getattr(usage, "output_tokens", None) if usage is not None else None
+        total_tokens = getattr(usage, "total_tokens", None) if usage is not None else None
+        raw = (getattr(response, "output_text", "") or "").strip()
+
+        try:
+            parsed = self._parse_json_response(raw)
+        except OpenAILabelServiceInvalidJSONError as exc:
+            log_ai_usage(
+                provider="openai",
+                feature=feature,
+                model=self.model,
+                status="error",
+                user_id=user_id,
+                latency_ms=latency_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                estimated_cost_usd=calculate_ai_cost("openai", self.model, input_tokens, output_tokens),
+                error_message=str(exc),
+                raw_metadata={"response_id": getattr(response, "id", None)},
+            )
+            raise
+
+        log_ai_usage(
+            provider="openai",
+            feature=feature,
+            model=self.model,
+            status="success",
+            user_id=user_id,
+            latency_ms=latency_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_usd=calculate_ai_cost("openai", self.model, input_tokens, output_tokens),
+            raw_metadata={"response_id": getattr(response, "id", None), "confidence": parsed.get("confidence")},
+        )
+
+        normalized = self._normalize_food_photo_payload(parsed)
+        return normalized if normalized else None
+
     @staticmethod
     def _detect_mime_type(image_bytes: bytes) -> str:
         if image_bytes.startswith(b"\x89PNG"):
@@ -241,6 +389,53 @@ class OpenAILabelService:
             "found_weight": found_weight,
             "source": "openai",
         }
+
+    @classmethod
+    def _normalize_food_photo_payload(cls, payload: dict) -> Optional[dict]:
+        if not isinstance(payload, dict):
+            return None
+
+        def safe_float(value) -> float:
+            parsed = cls._to_float(value)
+            return parsed if parsed is not None else 0.0
+
+        items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        normalized_items = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name") or item.get("title") or item.get("dish") or "продукт"
+            if not isinstance(name, str):
+                name = str(name)
+            normalized_items.append(
+                {
+                    "name": name.strip() or "продукт",
+                    "grams": safe_float(item.get("estimated_weight_g") or item.get("grams") or item.get("weight_g")),
+                    "kcal": safe_float(item.get("calories") or item.get("kcal")),
+                    "protein": safe_float(item.get("protein") or item.get("protein_g")),
+                    "fat": safe_float(item.get("fat") or item.get("fat_g")),
+                    "carbs": safe_float(item.get("carbs") or item.get("carbohydrates") or item.get("carbohydrates_g")),
+                }
+            )
+
+        total = {
+            "kcal": safe_float(payload.get("calories") or payload.get("kcal")),
+            "protein": safe_float(payload.get("protein") or payload.get("protein_g")),
+            "fat": safe_float(payload.get("fat") or payload.get("fat_g")),
+            "carbs": safe_float(payload.get("carbs") or payload.get("carbohydrates") or payload.get("carbohydrates_g")),
+        }
+
+        if not any(total.values()) and normalized_items:
+            total = {
+                "kcal": sum(i["kcal"] for i in normalized_items),
+                "protein": sum(i["protein"] for i in normalized_items),
+                "fat": sum(i["fat"] for i in normalized_items),
+                "carbs": sum(i["carbs"] for i in normalized_items),
+            }
+
+        if not normalized_items and not any(total.values()):
+            return None
+        return {"items": normalized_items, "total": total, "source": "openai", "confidence": payload.get("confidence")}
 
 
 openai_label_service = OpenAILabelService()

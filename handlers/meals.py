@@ -58,6 +58,7 @@ from services.ai.gigachat import (
     gigachat_service,
     GigaChatServiceError,
 )
+from services.ai_usage_logger import log_ai_usage
 from utils.validators import parse_date
 from datetime import datetime
 from utils.meal_types import (
@@ -91,6 +92,7 @@ ADD_METHOD_TEXTS = {
     "deepseek": "🤖 Ввести приём пищи через DeepSeek",
     "gigachat": "🧠 Ввести текст через GigaChat",
     "photo": "📷 Анализ еды по фото",
+    "photo_openai": "🧪 Анализ еды OpenAI",
     "label": "📋 Анализ этикетки",
     "label_openai": "🧪 Анализ этикетки OpenAI",
     "barcode": "📷 Скан штрих-кода",
@@ -433,8 +435,14 @@ async def _reroute_add_method_button_if_needed(message: Message, state: FSMConte
     if text == ADD_METHOD_TEXTS["photo"]:
         await kbju_add_via_photo(message, state)
         return True
+    if text == ADD_METHOD_TEXTS["photo_openai"]:
+        await kbju_add_via_photo_openai(message, state)
+        return True
     if text == ADD_METHOD_TEXTS["label"]:
         await kbju_add_via_label(message, state)
+        return True
+    if text == ADD_METHOD_TEXTS["label_openai"]:
+        await kbju_add_via_label_openai(message, state)
         return True
     if text == ADD_METHOD_TEXTS["barcode"]:
         await kbju_add_via_barcode(message, state)
@@ -632,6 +640,22 @@ async def _send_openai_label_error_message(message: Message, error: Exception) -
     await message.answer("⚠️ Не удалось получить ответ OpenAI. Попробуй ещё раз позже.")
 
 
+async def _send_openai_food_error_message(message: Message, error: Exception) -> None:
+    if isinstance(error, OpenAILabelServiceConfigError):
+        await message.answer("OpenAI API key не настроен на сервере.")
+        return
+    if isinstance(error, OpenAILabelServiceTimeoutError):
+        await message.answer("⚠️ OpenAI не успел обработать фото. Попробуй ещё раз позже.")
+        return
+    if isinstance(error, OpenAILabelServiceInvalidJSONError):
+        await message.answer("⚠️ OpenAI вернул невалидный JSON. Попробуй ещё раз или используй обычный анализ еды по фото.")
+        return
+    if isinstance(error, OpenAILabelServiceAPIError):
+        await message.answer("⚠️ OpenAI API вернул ошибку. Попробуй ещё раз позже.")
+        return
+    await message.answer("⚠️ Не удалось получить ответ OpenAI. Попробуй ещё раз позже.")
+
+
 async def _run_gemini_task(func, *args, timeout_seconds: float = 45.0, **kwargs):
     """Запускает синхронный Gemini-вызов в отдельном потоке с timeout."""
     if gemini_service is None:
@@ -647,6 +671,16 @@ async def _run_openai_label_task(func, *args, timeout_seconds: float = 45.0, **k
     try:
         return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout_seconds)
     except asyncio.TimeoutError as exc:
+        service = getattr(func, "__self__", None)
+        log_ai_usage(
+            provider="openai",
+            feature=kwargs.get("feature") or "label_analysis",
+            model=getattr(service, "model", "unknown"),
+            status="error",
+            user_id=kwargs.get("user_id"),
+            latency_ms=int(timeout_seconds * 1000),
+            error_message="OpenAI API request timed out",
+        )
         raise OpenAILabelServiceTimeoutError("OpenAI API request timed out") from exc
 
 
@@ -722,6 +756,7 @@ async def _show_input_methods(message: Message, state: FSMContext, *, user_id: s
         "• 🧪 Ввести текст через OpenRouter\n"
         "• 🧠 Ввести текст через GigaChat\n"
         "• 📷 Анализ еды по фото\n"
+        "• 🧪 Анализ еды OpenAI\n"
         "• 📋 Анализ этикетки\n"
         "• 🧪 Анализ этикетки OpenAI"
     )
@@ -1473,8 +1508,14 @@ async def select_meal_type(message: Message, state: FSMContext):
         if pending_method == "photo":
             await kbju_add_via_photo(message, state)
             return
+        if pending_method == "photo_openai":
+            await kbju_add_via_photo_openai(message, state)
+            return
         if pending_method == "label":
             await kbju_add_via_label(message, state)
+            return
+        if pending_method == "label_openai":
+            await kbju_add_via_label_openai(message, state)
             return
         if pending_method == "barcode":
             await kbju_add_via_barcode(message, state)
@@ -1823,6 +1864,25 @@ async def kbju_add_via_photo(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=kbju_add_menu)
 
 
+@router.message(lambda m: m.text == "🧪 Анализ еды OpenAI")
+async def kbju_add_via_photo_openai(message: Message, state: FSMContext):
+    """Тестовый обработчик анализа еды по фото через OpenAI."""
+    if not await _ensure_meal_type_selected(message, state, "photo_openai"):
+        return
+    reset_user_state(message)
+    await state.update_data(pending_add_method=None)
+    await state.set_state(MealEntryStates.waiting_for_openai_food_photo)
+
+    text = (
+        "📷 Анализ еды по фото\n\n"
+        "Отправь мне фото еды, и я определю КБЖУ с помощью ИИ!\n\n"
+        "Сделай фото так, чтобы еда была хорошо видна на изображении."
+    )
+
+    push_menu_stack(message.bot, kbju_add_menu)
+    await message.answer(text, reply_markup=kbju_add_menu)
+
+
 @router.message(MealEntryStates.waiting_for_food_input)
 async def handle_food_input(message: Message, state: FSMContext):
     """Обрабатывает ввод текста для CalorieNinjas."""
@@ -2079,10 +2139,17 @@ async def kbju_add_via_barcode(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=kbju_add_menu)
 
 
-@router.message(MealEntryStates.waiting_for_photo, F.photo)
-async def handle_photo_input(message: Message, state: FSMContext):
-    """Обрабатывает фото еды."""
-    
+async def _handle_food_photo_analysis(
+    message: Message,
+    state: FSMContext,
+    *,
+    provider: str,
+    analyzer,
+    runner,
+    error_sender,
+    raw_query: str = "[Анализ по фото]",
+):
+    """Общая логика обработки фото еды для Gemini и OpenAI."""
     user_id = str(message.from_user.id)
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
@@ -2098,34 +2165,34 @@ async def handle_photo_input(message: Message, state: FSMContext):
             entry_date = date.today()
     else:
         entry_date = date.today()
-    
-    # Показываем сообщение об анализе
+
+    logger.info("food_photo_analysis_provider=%s user_id=%s", provider, user_id)
     await message.answer("📷 Анализирую фото с помощью ИИ, секунду...")
-    
-    # Скачиваем фото
+
     photo = message.photo[-1]  # Берём самое большое разрешение
     file = await message.bot.get_file(photo.file_id)
     image_bytes = await message.bot.download_file(file.file_path)
     image_data = image_bytes.read()
-    
-    # Анализируем через Gemini
+
     try:
-        kbju_data = await _run_gemini_task(gemini_service.estimate_kbju_from_photo, image_data)
+        if provider == "openai":
+            kbju_data = await runner(analyzer, image_data, user_id=user_id, feature="food_photo_analysis")
+        else:
+            kbju_data = await runner(analyzer, image_data)
     except Exception as e:
-        await _send_ai_error_message(message, e)
+        await error_sender(message, e)
         return
-    
+
     if not kbju_data or "total" not in kbju_data:
         await message.answer(
             "⚠️ Не получилось определить КБЖУ по фото.\n"
             "Попробуй сделать фото получше или используй другой способ."
         )
         return
-    
+
     items = kbju_data.get("items", [])
     total = kbju_data.get("total", {})
-    
-    # Безопасное преобразование значений
+
     def safe_float(value) -> float:
         try:
             if value is None:
@@ -2133,18 +2200,16 @@ async def handle_photo_input(message: Message, state: FSMContext):
             return float(value)
         except (TypeError, ValueError):
             return 0.0
-    
-    # Формируем детальный ответ
+
     lines = ["📷 Анализ фото еды (ИИ):\n"]
-    
+
     totals_for_db = {
         "calories": safe_float(total.get("kcal")),
         "protein": safe_float(total.get("protein")),
         "fat": safe_float(total.get("fat")),
         "carbs": safe_float(total.get("carbs")),
     }
-    
-    # Показываем каждый продукт
+
     for item in items:
         name = item.get("name") or "продукт"
         grams = safe_float(item.get("grams"))
@@ -2152,11 +2217,11 @@ async def handle_photo_input(message: Message, state: FSMContext):
         p = safe_float(item.get("protein"))
         f = safe_float(item.get("fat"))
         c = safe_float(item.get("carbs"))
-        
+
         lines.append(
             f"• {name} ({grams:.0f} г) — {cal:.0f} ккал (Б {p:.1f} / Ж {f:.1f} / У {c:.1f})"
         )
-    
+
     lines.append("\nИТОГО:")
     lines.append(
         f"🔥 Калории: {totals_for_db['calories']:.0f} ккал\n"
@@ -2164,11 +2229,10 @@ async def handle_photo_input(message: Message, state: FSMContext):
         f"🥑 Жиры: {totals_for_db['fat']:.1f} г\n"
         f"🍩 Углеводы: {totals_for_db['carbs']:.1f} г"
     )
-    
-    # Сохраняем в БД
+
     saved_meal = MealRepository.save_meal(
         user_id=user_id,
-        raw_query="[Анализ по фото]",
+        raw_query=raw_query,
         calories=totals_for_db["calories"],
         protein=totals_for_db["protein"],
         fat=totals_for_db["fat"],
@@ -2177,20 +2241,55 @@ async def handle_photo_input(message: Message, state: FSMContext):
         products_json=json.dumps(items),
         meal_type=meal_type,
     )
-    
-    # Сохраняем ID последнего приёма для редактирования
+
     if not hasattr(message.bot, "last_meal_ids"):
         message.bot.last_meal_ids = {}
     message.bot.last_meal_ids[user_id] = saved_meal.id
-    
-    # Показываем суммарные данные за день
+
     daily_totals = MealRepository.get_daily_totals(user_id, entry_date)
     lines.append("\n<b>СУММА ЗА СЕГОДНЯ:</b>")
     lines.append(_format_kbju_summary_block(daily_totals))
-    
+
     await state.clear()
     push_menu_stack(message.bot, kbju_after_meal_menu)
     await message.answer("\n".join(lines), reply_markup=kbju_after_meal_menu)
+
+
+@router.message(MealEntryStates.waiting_for_photo, F.photo)
+async def handle_photo_input(message: Message, state: FSMContext):
+    """Обрабатывает фото еды через Gemini."""
+    await _handle_food_photo_analysis(
+        message,
+        state,
+        provider="gemini",
+        analyzer=gemini_service.estimate_kbju_from_photo,
+        runner=_run_gemini_task,
+        error_sender=_send_ai_error_message,
+    )
+
+
+@router.message(MealEntryStates.waiting_for_openai_food_photo, F.photo)
+async def handle_openai_food_photo(message: Message, state: FSMContext):
+    """Обрабатывает фото еды через OpenAI."""
+    await _handle_food_photo_analysis(
+        message,
+        state,
+        provider="openai",
+        analyzer=openai_label_service.analyze_food_photo_openai,
+        runner=_run_openai_label_task,
+        error_sender=_send_openai_food_error_message,
+        raw_query="[Анализ по фото OpenAI]",
+    )
+
+
+@router.message(MealEntryStates.waiting_for_openai_food_photo)
+async def handle_openai_food_non_photo(message: Message, state: FSMContext):
+    """Просит прислать именно фото для OpenAI-анализа еды."""
+    if message.text in BACK_BUTTON_TEXTS:
+        from handlers.common import go_back
+        await go_back(message, state)
+        return
+    await message.answer("Пожалуйста, отправь фото еды для OpenAI-анализа.")
 
 
 async def _handle_label_photo_analysis(
