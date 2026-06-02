@@ -6,8 +6,8 @@ class MealEntryStates(StatesGroup):
     """Состояния для добавления приёма пищи."""
     choosing_meal_type = State()  # Выбор типа приёма пищи
     waiting_for_food_input = State()  # CalorieNinjas
-    waiting_for_ai_food_input = State()  # Gemini AI
-    confirming_ai_meal = State()  # Подтверждение сохранения Gemini результата
+    waiting_for_ai_food_input = State()  # AI-анализ через DeepSeek
+    confirming_ai_meal = State()  # Legacy: подтверждение сохранения AI-результата
     waiting_for_openrouter_food_input = State()  # OpenRouter free
     waiting_for_deepseek_food_input = State()  # DeepSeek
     waiting_for_gigachat_food_input = State()  # GigaChat

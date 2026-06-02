@@ -600,3 +600,40 @@ def test_format_kbju_summary_block_bolds_only_names_by_default():
     assert "🥑 <b>Жиры:</b> 5.3 г" in text
     assert "🍩 <b>Углеводы:</b> 1.7 г" in text
     assert "<b>67 ккал</b>" not in text
+
+
+def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
+    message = _build_message()
+    message.text = "200 г курицы"
+    message.from_user = SimpleNamespace(id=12345)
+    state = _DummyState()
+    state._data["meal_type"] = meals.MealType.LUNCH.value
+    raw_deepseek_json = (
+        '{"items":[{"name":"Курица","grams":200,"kcal":330,'
+        '"protein":62,"fat":7,"carbs":0}],'
+        '"total":{"kcal":330,"protein":62,"fat":7,"carbs":0}}'
+    )
+    saved_meal = SimpleNamespace(id=77)
+
+    def fail_gemini(*_args, **_kwargs):
+        raise AssertionError("Gemini must not be called for main AI text meal analysis")
+
+    with patch.object(meals.deepseek_service, "analyze_food_text", return_value=raw_deepseek_json) as deepseek_analyze, \
+        patch("handlers.meals._run_gemini_task", side_effect=fail_gemini) as gemini_task, \
+        patch("handlers.meals.MealRepository.save_meal", return_value=saved_meal) as save_meal, \
+        patch(
+            "handlers.meals.MealRepository.get_daily_totals",
+            return_value={"calories": 330, "protein": 62, "fat": 7, "carbs": 0},
+        ), \
+        patch("handlers.meals.push_menu_stack"):
+        caplog.set_level("INFO", logger="handlers.meals")
+        asyncio.run(meals.handle_ai_food_input(message, state))
+
+    deepseek_analyze.assert_called_once_with("200 г курицы")
+    gemini_task.assert_not_called()
+    save_meal.assert_called_once()
+    assert save_meal.call_args.kwargs["calories"] == 330
+    assert save_meal.call_args.kwargs["meal_type"] == meals.MealType.LUNCH.value
+    assert state.clear.await_count == 1
+    assert "AI text meal analysis provider=deepseek" in caplog.text
+    assert any("AI-анализ (DeepSeek)" in call.args[0] for call in message.answer.await_args_list)
