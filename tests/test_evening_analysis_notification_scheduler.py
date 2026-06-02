@@ -72,7 +72,7 @@ def test_evening_analysis_notification_is_sent_after_target_time_if_exact_minute
     session = FakeSession([user])
     bot = SimpleNamespace(send_message=AsyncMock())
     scheduler = NotificationScheduler(bot)
-    fixed_now = datetime(2026, 4, 8, 21, 46, tzinfo=ZoneInfo("Europe/Moscow"))
+    fixed_now = datetime(2026, 4, 8, 22, 1, tzinfo=ZoneInfo("Europe/Moscow"))
 
     class FixedDateTime(datetime):
         @classmethod
@@ -103,7 +103,7 @@ def test_evening_analysis_notification_uses_app_timezone_not_stale_user_timezone
     session = FakeSession([user])
     bot = SimpleNamespace(send_message=AsyncMock())
     scheduler = NotificationScheduler(bot)
-    fixed_now = datetime(2026, 4, 8, 21, 46, tzinfo=ZoneInfo("Europe/Moscow"))
+    fixed_now = datetime(2026, 4, 8, 22, 1, tzinfo=ZoneInfo("Europe/Moscow"))
 
     class FixedDateTime(datetime):
         @classmethod
@@ -134,7 +134,7 @@ def test_evening_analysis_notification_is_retried_when_telegram_send_fails():
     session = FakeSession([user])
     bot = SimpleNamespace(send_message=AsyncMock(side_effect=RuntimeError("telegram unavailable")))
     scheduler = NotificationScheduler(bot)
-    fixed_now = datetime(2026, 4, 8, 21, 46, tzinfo=ZoneInfo("Europe/Moscow"))
+    fixed_now = datetime(2026, 4, 8, 22, 1, tzinfo=ZoneInfo("Europe/Moscow"))
 
     class FixedDateTime(datetime):
         @classmethod
