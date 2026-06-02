@@ -626,6 +626,7 @@ kbju_add_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="🤖 Ввести приём пищи через DeepSeek")],
         [KeyboardButton(text="🧠 Ввести текст через GigaChat")],
         [KeyboardButton(text="📷 Анализ еды по фото")],
+        [KeyboardButton(text="🧪 Анализ еды OpenAI")],
         [KeyboardButton(text="📋 Анализ этикетки")],
         [KeyboardButton(text="🧪 Анализ этикетки OpenAI")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
