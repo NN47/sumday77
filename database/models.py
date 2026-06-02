@@ -10,8 +10,9 @@ from sqlalchemy import (
     Text,
     Boolean,
     UniqueConstraint,
+    JSON,
 )
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import json
 
 Base = declarative_base()
@@ -266,6 +267,26 @@ class ErrorLog(Base):
     module = Column(String, nullable=True, index=True)
     function_name = Column(String, nullable=True)
     traceback_text = Column(Text, nullable=True)
+
+
+class AIUsageLog(Base):
+    """Универсальный лог usage/tokens/cost для AI-провайдеров."""
+    __tablename__ = "ai_usage_logs"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    user_id = Column(String, nullable=True, index=True)
+    provider = Column(String, nullable=False, index=True)  # openai | deepseek
+    feature = Column(String, nullable=False, index=True)
+    model = Column(String, nullable=False, index=True)
+    status = Column(String, nullable=False, index=True)  # success | error
+    latency_ms = Column(Integer, nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    estimated_cost_usd = Column(Float, nullable=True)
+    error_message = Column(Text, nullable=True)
+    raw_metadata = Column(JSON, nullable=True)
 
 
 class GeminiAccount(Base):

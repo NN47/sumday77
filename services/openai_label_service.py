@@ -3,11 +3,13 @@ import base64
 import json
 import logging
 import re
+import time
 from typing import Optional
 
 from openai import APITimeoutError, OpenAI, OpenAIError
 
 from config import OPENAI_API_KEY
+from services.ai_usage_logger import calculate_ai_cost, log_ai_usage
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +66,20 @@ class OpenAILabelService:
         self.model = model
         self.timeout_seconds = 45.0
 
-    def extract_kbju_from_label(self, image_bytes: bytes) -> Optional[dict]:
+    def extract_kbju_from_label(self, image_bytes: bytes, *, user_id: str | int | None = None, feature: str = "label_analysis") -> Optional[dict]:
         """Return label data in the same normalized shape as Gemini label analysis."""
         if not self.api_key:
+            log_ai_usage(
+                provider="openai",
+                feature=feature,
+                model=self.model,
+                status="error",
+                user_id=user_id,
+                error_message="OpenAI API key не настроен на сервере.",
+            )
             raise OpenAILabelServiceConfigError("OpenAI API key не настроен на сервере.")
 
+        started = time.perf_counter()
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
         mime_type = self._detect_mime_type(image_bytes)
         client = OpenAI(api_key=self.api_key, timeout=self.timeout_seconds)
@@ -91,11 +102,50 @@ class OpenAILabelService:
                 text={"format": {"type": "json_object"}},
             )
         except APITimeoutError as exc:
+            latency_ms = int((time.perf_counter() - started) * 1000)
             logger.error("OpenAI label analysis timed out: %s", exc, exc_info=True)
+            log_ai_usage(
+                provider="openai",
+                feature=feature,
+                model=self.model,
+                status="error",
+                user_id=user_id,
+                latency_ms=latency_ms,
+                error_message=str(exc),
+            )
             raise OpenAILabelServiceTimeoutError("OpenAI API request timed out") from exc
         except OpenAIError as exc:
+            latency_ms = int((time.perf_counter() - started) * 1000)
             logger.error("OpenAI label analysis API error: %s", exc, exc_info=True)
+            log_ai_usage(
+                provider="openai",
+                feature=feature,
+                model=self.model,
+                status="error",
+                user_id=user_id,
+                latency_ms=latency_ms,
+                error_message=str(exc),
+            )
             raise OpenAILabelServiceAPIError(str(exc)) from exc
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        usage = getattr(response, "usage", None)
+        input_tokens = getattr(usage, "input_tokens", None) if usage is not None else None
+        output_tokens = getattr(usage, "output_tokens", None) if usage is not None else None
+        total_tokens = getattr(usage, "total_tokens", None) if usage is not None else None
+        log_ai_usage(
+            provider="openai",
+            feature=feature,
+            model=self.model,
+            status="success",
+            user_id=user_id,
+            latency_ms=latency_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_usd=calculate_ai_cost("openai", self.model, input_tokens, output_tokens),
+            raw_metadata={"response_id": getattr(response, "id", None)},
+        )
 
         raw = (getattr(response, "output_text", "") or "").strip()
         parsed = self._parse_json_response(raw)
