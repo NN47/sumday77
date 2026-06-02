@@ -627,6 +627,7 @@ kbju_add_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="🧠 Ввести текст через GigaChat")],
         [KeyboardButton(text="📷 Анализ еды по фото")],
         [KeyboardButton(text="📋 Анализ этикетки")],
+        [KeyboardButton(text="🧪 Анализ этикетки OpenAI")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,
