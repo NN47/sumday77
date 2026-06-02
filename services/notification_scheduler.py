@@ -18,7 +18,7 @@ MEAL_TYPE_PREPOSITIONAL = {
     "обед": "обеде",
     "ужин": "ужине",
 }
-EVENING_ANALYSIS_TIME = time(21, 45)
+EVENING_ANALYSIS_TIME = time(22, 0)
 EVENING_ANALYSIS_REMINDER_DELAY = timedelta(minutes=45)
 EVENING_ANALYSIS_MAX_REMINDERS = 2
 EVENING_ANALYSIS_START_PREFIX = "evening_analysis_start"
@@ -180,7 +180,7 @@ class NotificationScheduler:
                     # Вечерний анализ — такое же ежедневное уведомление, как приёмы пищи
                     # и добавки, поэтому ориентируемся на единый часовой пояс приложения.
                     # Иначе пользователи с пустой/ошибочной timezone в БД не получают
-                    # напоминание в ожидаемые 21:45 по Москве.
+                    # напоминание в ожидаемые 22:00 по Москве.
                     local_now = datetime.now(MSK_TZ)
                     local_today = local_now.date()
 
