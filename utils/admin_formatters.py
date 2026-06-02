@@ -180,7 +180,8 @@ def format_recent_events(events: list) -> str:
 
     lines = ["🕘 <b>Последние события</b>", ""]
     for event in events:
-        time_part = event.created_at.strftime("%H:%M") if event.created_at else "--:--"
+        created_at_msk = to_moscow(event.created_at)
+        time_part = created_at_msk.strftime("%H:%M") if created_at_msk else "--:--"
         lines.append(f"{time_part} — {event.user_id} — {human_event_name(event.event_name)}")
     return "\n".join(lines)
 

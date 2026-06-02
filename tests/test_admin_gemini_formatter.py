@@ -1,17 +1,22 @@
 import importlib.util
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "utils" / "admin_formatters.py"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+MODULE_PATH = REPO_ROOT / "utils" / "admin_formatters.py"
 spec = importlib.util.spec_from_file_location("admin_formatters", MODULE_PATH)
 module = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 translate_gemini_admin_stats = module.translate_gemini_admin_stats
+format_recent_events = module.format_recent_events
 
 
 def _account(**kwargs):
@@ -117,3 +122,33 @@ def test_translate_gemini_admin_stats_compact_mode() -> None:
     assert "Всего: " not in result
     assert "Запросы: <b>8</b>, Ошибки: <b>0</b>" in result
     assert "🕘 <b>Последние события</b>" in result
+
+
+def test_format_recent_events_displays_naive_utc_as_moscow_time() -> None:
+    events = [
+        SimpleNamespace(
+            created_at=datetime(2026, 4, 9, 8, 33),
+            user_id="12345",
+            event_name="open_main_menu",
+        )
+    ]
+
+    result = format_recent_events(events)
+
+    assert "11:33 — 12345 — 📱 Открыл главное меню" in result
+    assert "08:33" not in result
+
+
+def test_format_recent_events_displays_aware_utc_as_moscow_time() -> None:
+    events = [
+        SimpleNamespace(
+            created_at=datetime(2026, 4, 9, 8, 33, tzinfo=timezone.utc),
+            user_id="12345",
+            event_name="open_main_menu",
+        )
+    ]
+
+    result = format_recent_events(events)
+
+    assert "11:33 — 12345 — 📱 Открыл главное меню" in result
+    assert "08:33" not in result
