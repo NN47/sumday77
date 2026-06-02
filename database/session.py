@@ -137,6 +137,14 @@ def init_db():
         except Exception as e:
             logger.warning(f"Ошибка при проверке meals.meal_type: {e}")
 
+        # ai_usage_logs универсальная таблица usage/tokens/cost
+        try:
+            if "ai_usage_logs" not in inspector.get_table_names():
+                Base.metadata.tables["ai_usage_logs"].create(bind=conn, checkfirst=True)
+                logger.info("Создана таблица ai_usage_logs")
+        except Exception as e:
+            logger.warning(f"Ошибка при проверке ai_usage_logs: {e}")
+
         # gemini_accounts расширенные статусы и метрики
         try:
             gemini_columns = {col["name"] for col in inspector.get_columns("gemini_accounts")}

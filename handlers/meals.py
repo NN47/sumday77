@@ -632,20 +632,20 @@ async def _send_openai_label_error_message(message: Message, error: Exception) -
     await message.answer("⚠️ Не удалось получить ответ OpenAI. Попробуй ещё раз позже.")
 
 
-async def _run_gemini_task(func, *args, timeout_seconds: float = 45.0):
+async def _run_gemini_task(func, *args, timeout_seconds: float = 45.0, **kwargs):
     """Запускает синхронный Gemini-вызов в отдельном потоке с timeout."""
     if gemini_service is None:
         raise GeminiServiceTemporaryUnavailableError("Gemini service is not initialized")
     try:
-        return await asyncio.wait_for(asyncio.to_thread(func, *args), timeout=timeout_seconds)
+        return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout_seconds)
     except asyncio.TimeoutError as exc:
         raise GeminiServiceTemporaryUnavailableError(AI_TIMEOUT_UNAVAILABLE_TEXT) from exc
 
 
-async def _run_openai_label_task(func, *args, timeout_seconds: float = 45.0):
+async def _run_openai_label_task(func, *args, timeout_seconds: float = 45.0, **kwargs):
     """Запускает синхронный OpenAI-вызов анализа этикетки в отдельном потоке с timeout."""
     try:
-        return await asyncio.wait_for(asyncio.to_thread(func, *args), timeout=timeout_seconds)
+        return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout_seconds)
     except asyncio.TimeoutError as exc:
         raise OpenAILabelServiceTimeoutError("OpenAI API request timed out") from exc
 
@@ -1617,6 +1617,7 @@ async def _handle_provider_food_input(
         await message.answer("Напиши, пожалуйста, что ты съел(а) 🙏")
         return
 
+    user_id = str(message.from_user.id)
     await message.answer("Обрабатываю…")
     try:
         raw = await asyncio.to_thread(analyzer, user_text)
@@ -1656,7 +1657,6 @@ async def _handle_provider_food_input(
         f"🥑 Жиры: {float(total.get('fat', 0)):.1f} г\n"
         f"🍩 Углеводы: {float(total.get('carbs', 0)):.1f} г"
     )
-    user_id = str(message.from_user.id)
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
@@ -2229,7 +2229,10 @@ async def _handle_label_photo_analysis(
     image_data = image_bytes.read()
 
     try:
-        label_data = await runner(analyzer, image_data)
+        if provider == "openai":
+            label_data = await runner(analyzer, image_data, user_id=user_id, feature="label_analysis")
+        else:
+            label_data = await runner(analyzer, image_data)
     except Exception as e:
         await error_sender(message, e)
         return

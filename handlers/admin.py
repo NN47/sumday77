@@ -5,7 +5,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from config import ADMIN_ID
+from config import ADMIN_ID, OPENAI_API_KEY, DEEPSEEK_API_KEY
 from services.admin_stats_service import AdminStatsService
 from utils.admin_formatters import (
     format_dashboard,
@@ -18,6 +18,8 @@ from utils.admin_formatters import (
     format_gemini,
     format_gigachat,
     format_openrouter,
+    format_openai_ai,
+    format_deepseek_ai,
 )
 
 router = Router()
@@ -40,6 +42,8 @@ def _admin_menu_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Gemini / AI", callback_data="admin:gemini")],
             [InlineKeyboardButton(text="GigaChat / AI", callback_data="admin:gigachat")],
             [InlineKeyboardButton(text="OpenRouter / AI", callback_data="admin:openrouter")],
+            [InlineKeyboardButton(text="🤖 OpenAI / AI", callback_data="admin:openai_ai")],
+            [InlineKeyboardButton(text="🧠 DeepSeek / AI", callback_data="admin:deepseek_ai")],
             [InlineKeyboardButton(text="🕘 Последние события", callback_data="admin:events")],
             [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin:refresh")],
         ]
@@ -140,6 +144,16 @@ async def admin_callbacks(callback: CallbackQuery):
 
     if action == "openrouter":
         text = format_openrouter(AdminStatsService.get_openrouter_metrics())
+        await _edit_or_answer(callback.message, text, _back_kb())
+        return
+
+    if action == "openai_ai":
+        text = format_openai_ai(AdminStatsService.get_ai_usage_metrics("openai"), key_configured=bool(OPENAI_API_KEY))
+        await _edit_or_answer(callback.message, text, _back_kb())
+        return
+
+    if action == "deepseek_ai":
+        text = format_deepseek_ai(AdminStatsService.get_ai_usage_metrics("deepseek"), key_configured=bool(DEEPSEEK_API_KEY))
         await _edit_or_answer(callback.message, text, _back_kb())
         return
 

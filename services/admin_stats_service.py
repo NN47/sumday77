@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from database.repositories import UserRepository, AnalyticsRepository, ErrorLogRepository, GeminiRepository, OpenRouterRepository
+from database.repositories import UserRepository, AnalyticsRepository, ErrorLogRepository, GeminiRepository, OpenRouterRepository, AIUsageRepository
 
 
 NAVIGATION_EVENTS = ["open_main_menu", "open_kbju", "open_weight", "open_activity", "open_notes"]
@@ -157,6 +157,10 @@ class AdminStatsService:
     @staticmethod
     def get_openrouter_metrics() -> dict:
         return OpenRouterRepository.get_metrics()
+
+    @staticmethod
+    def get_ai_usage_metrics(provider: str) -> dict:
+        return AIUsageRepository.get_provider_metrics(provider)
 
     @staticmethod
     def get_gigachat_metrics() -> dict:

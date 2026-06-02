@@ -488,3 +488,67 @@ def format_gigachat(metrics: dict) -> str:
         f"• Отправлено: <b>{metrics.get('sent_total', 0)}</b>\n"
         f"• Ошибок: <b>{metrics.get('failed_total', 0)}</b>"
     )
+
+def _fmt_cost(value) -> str:
+    try:
+        return f"${float(value or 0):.4f}"
+    except (TypeError, ValueError):
+        return "$0.0000"
+
+
+def _fmt_event_time(value) -> str:
+    if isinstance(value, datetime):
+        value_msk = to_moscow(value)
+        return value_msk.strftime("%H:%M") if value_msk else "—"
+    return "—"
+
+
+def _format_ai_usage(metrics: dict, *, title: str, key_configured: bool) -> str:
+    lines = [
+        f"<b>{title}</b>",
+        "",
+        f"🔑 Ключ: {'✅ настроен' if key_configured else '❌ не настроен'}",
+        "📅 <b>Сегодня:</b>",
+        f"• запросов: <b>{metrics.get('requests_today', 0)}</b>",
+        f"• успешно: <b>{metrics.get('success_today', 0)}</b>",
+        f"• ошибок: <b>{metrics.get('errors_today', 0)}</b>",
+        f"• input tokens: <b>{metrics.get('input_tokens_today', 0)}</b>",
+        f"• output tokens: <b>{metrics.get('output_tokens_today', 0)}</b>",
+        f"• total tokens: <b>{metrics.get('total_tokens_today', 0)}</b>",
+        f"• стоимость: <b>{_fmt_cost(metrics.get('estimated_cost_today'))}</b>",
+        "",
+        "🧾 <b>Последние события:</b>",
+    ]
+    events = metrics.get("latest_events") or []
+    if not events:
+        lines.append("• —")
+        return "\n".join(lines)
+
+    for event in events:
+        parts = [
+            _fmt_event_time(getattr(event, "created_at", None)),
+            getattr(event, "feature", None) or "—",
+            getattr(event, "status", None) or "—",
+        ]
+        if getattr(event, "status", None) == "success":
+            total_tokens = getattr(event, "total_tokens", None)
+            latency_ms = getattr(event, "latency_ms", None)
+            cost = getattr(event, "estimated_cost_usd", None)
+            parts.append(f"{total_tokens} ток." if total_tokens is not None else "— ток.")
+            parts.append(f"{latency_ms} ms" if latency_ms is not None else "— ms")
+            if cost is not None:
+                parts.append(_fmt_cost(cost))
+        else:
+            error = clean_text(getattr(event, "error_message", None), max_length=80)
+            if error != "—":
+                parts.append(error)
+        lines.append("• " + " — ".join(parts))
+    return "\n".join(lines)
+
+
+def format_openai_ai(metrics: dict, *, key_configured: bool) -> str:
+    return _format_ai_usage(metrics, title="🤖 OpenAI / AI", key_configured=key_configured)
+
+
+def format_deepseek_ai(metrics: dict, *, key_configured: bool) -> str:
+    return _format_ai_usage(metrics, title="🧠 DeepSeek / AI", key_configured=key_configured)
