@@ -177,8 +177,11 @@ class NotificationScheduler:
                 )
 
                 for user in users:
-                    user_tz = self._get_user_timezone(user.timezone)
-                    local_now = datetime.now(user_tz)
+                    # Вечерний анализ — такое же ежедневное уведомление, как приёмы пищи
+                    # и добавки, поэтому ориентируемся на единый часовой пояс приложения.
+                    # Иначе пользователи с пустой/ошибочной timezone в БД не получают
+                    # напоминание в ожидаемые 21:45 по Москве.
+                    local_now = datetime.now(MSK_TZ)
                     local_today = local_now.date()
 
                     state = (
