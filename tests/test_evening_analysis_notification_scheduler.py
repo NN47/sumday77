@@ -67,12 +67,12 @@ def fake_db_session(session):
     yield session
 
 
-def test_evening_analysis_notification_is_sent_after_target_time_if_exact_minute_was_missed():
+def test_evening_analysis_notification_is_sent_after_2222_if_exact_minute_was_missed():
     user = SimpleNamespace(user_id="12345", timezone="Europe/Moscow")
     session = FakeSession([user])
     bot = SimpleNamespace(send_message=AsyncMock())
     scheduler = NotificationScheduler(bot)
-    fixed_now = datetime(2026, 4, 8, 22, 1, tzinfo=ZoneInfo("Europe/Moscow"))
+    fixed_now = datetime(2026, 4, 8, 22, 23, tzinfo=ZoneInfo("Europe/Moscow"))
 
     class FixedDateTime(datetime):
         @classmethod
@@ -97,13 +97,41 @@ def test_evening_analysis_notification_is_sent_after_target_time_if_exact_minute
     assert bot.send_message.await_args.kwargs["text"] == EVENING_ANALYSIS_MAIN_TEXT
     mark_sent.assert_called_once_with("12345", date(2026, 4, 8))
 
+def test_evening_analysis_notification_is_not_sent_before_2222():
+    user = SimpleNamespace(user_id="12345", timezone="Europe/Moscow")
+    session = FakeSession([user])
+    bot = SimpleNamespace(send_message=AsyncMock())
+    scheduler = NotificationScheduler(bot)
+    fixed_now = datetime(2026, 4, 8, 22, 21, tzinfo=ZoneInfo("Europe/Moscow"))
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now.astimezone(tz) if tz else fixed_now.replace(tzinfo=None)
+
+        @classmethod
+        def utcnow(cls):
+            return fixed_now.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+    with (
+        patch("services.notification_scheduler.datetime", FixedDateTime),
+        patch("services.notification_scheduler.get_db_session", return_value=fake_db_session(session)),
+        patch(
+            "services.notification_scheduler.EveningAnalysisNotificationRepository.mark_evening_notification_sent"
+        ) as mark_sent,
+    ):
+        asyncio.run(scheduler.check_and_send_evening_analysis_notifications())
+
+    bot.send_message.assert_not_awaited()
+    mark_sent.assert_not_called()
+
 
 def test_evening_analysis_notification_uses_app_timezone_not_stale_user_timezone():
     user = SimpleNamespace(user_id="12345", timezone="UTC")
     session = FakeSession([user])
     bot = SimpleNamespace(send_message=AsyncMock())
     scheduler = NotificationScheduler(bot)
-    fixed_now = datetime(2026, 4, 8, 22, 1, tzinfo=ZoneInfo("Europe/Moscow"))
+    fixed_now = datetime(2026, 4, 8, 22, 23, tzinfo=ZoneInfo("Europe/Moscow"))
 
     class FixedDateTime(datetime):
         @classmethod
@@ -134,7 +162,7 @@ def test_evening_analysis_notification_is_retried_when_telegram_send_fails():
     session = FakeSession([user])
     bot = SimpleNamespace(send_message=AsyncMock(side_effect=RuntimeError("telegram unavailable")))
     scheduler = NotificationScheduler(bot)
-    fixed_now = datetime(2026, 4, 8, 22, 1, tzinfo=ZoneInfo("Europe/Moscow"))
+    fixed_now = datetime(2026, 4, 8, 22, 23, tzinfo=ZoneInfo("Europe/Moscow"))
 
     class FixedDateTime(datetime):
         @classmethod
