@@ -1493,7 +1493,7 @@ async def kbju_add_via_calorieninjas(message: Message, state: FSMContext):
 
 @router.message(lambda m: m.text == "📝 Ввести приём пищи текстом (AI-анализ)")
 async def kbju_add_via_ai(message: Message, state: FSMContext):
-    """Обработчик добавления через Gemini AI."""
+    """Обработчик добавления через AI-анализ на DeepSeek."""
     if not await _ensure_meal_type_selected(message, state, "ai"):
         return
     await state.update_data(pending_add_method=None)
@@ -1899,120 +1899,20 @@ async def handle_food_input(message: Message, state: FSMContext):
 
 @router.message(MealEntryStates.waiting_for_ai_food_input)
 async def handle_ai_food_input(message: Message, state: FSMContext):
-    """Обрабатывает ввод текста для Gemini AI."""
-    user_text = (message.text or "").strip()
-    if await _reroute_add_method_button_if_needed(message, state, user_text):
-        return
-    if not user_text:
-        await message.answer("Напиши, пожалуйста, что ты съел(а) 🙏")
-        return
-    
-    data = await state.get_data()
-    
-    # Показываем сообщение об анализе
-    await message.answer("Считаю КБЖУ с помощью ИИ, секунду...")
-    
-    # Получаем КБЖУ через Gemini
-    try:
-        kbju_data = await _run_gemini_task(gemini_service.estimate_kbju, user_text)
-    except Exception as e:
-        await _send_ai_error_message(message, e)
-        return
-    
-    if not kbju_data or "total" not in kbju_data:
-        await message.answer(
-            "⚠️ Не получилось определить КБЖУ.\n"
-            "Попробуй ещё раз или используй другой способ добавления."
-        )
-        return
-    
-    items = kbju_data.get("items", [])
-    total = kbju_data.get("total", {})
-    
-    # Безопасное преобразование значений
-    def safe_float(value) -> float:
-        try:
-            if value is None:
-                return 0.0
-            return float(value)
-        except (TypeError, ValueError):
-            return 0.0
-    
-    # Формируем детальный ответ
-    lines = ["Оценка по ИИ для этого приёма пищи:\n"]
-    
-    totals_for_db = {
-        "calories": safe_float(total.get("kcal")),
-        "protein": safe_float(total.get("protein")),
-        "fat": safe_float(total.get("fat")),
-        "carbs": safe_float(total.get("carbs")),
-    }
-    
-    # Показываем каждый продукт
-    for item in items:
-        name = item.get("name") or "продукт"
-        grams = safe_float(item.get("grams"))
-        cal = safe_float(item.get("kcal"))
-        p = safe_float(item.get("protein"))
-        f = safe_float(item.get("fat"))
-        c = safe_float(item.get("carbs"))
-        
-        lines.append(
-            f"• {name} ({grams:.0f} г) — {cal:.0f} ккал (Б {p:.1f} / Ж {f:.1f} / У {c:.1f})"
-        )
-    
-    lines.append("\nИТОГО:")
-    lines.append(
-        f"🔥 Калории: {totals_for_db['calories']:.0f} ккал\n"
-        f"💪 Белки: {totals_for_db['protein']:.1f} г\n"
-        f"🥑 Жиры: {totals_for_db['fat']:.1f} г\n"
-        f"🍩 Углеводы: {totals_for_db['carbs']:.1f} г"
+    """Обрабатывает основной AI-анализ текста еды через DeepSeek."""
+    logger.info("AI text meal analysis provider=deepseek")
+    await _handle_provider_food_input(
+        message,
+        state,
+        provider_name="DeepSeek",
+        provider_title="📝 AI-анализ (DeepSeek)",
+        analyzer=deepseek_service.analyze_food_text,
     )
-    user_id = str(message.from_user.id)
-    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    entry_date_str = data.get("entry_date")
-    if entry_date_str and isinstance(entry_date_str, str):
-        try:
-            entry_date = date.fromisoformat(entry_date_str)
-        except ValueError:
-            parsed = parse_date(entry_date_str)
-            entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
-    else:
-        entry_date = date.today()
-
-    saved_meal = MealRepository.save_meal(
-        user_id=user_id,
-        raw_query=user_text,
-        calories=float(totals_for_db.get("calories", 0)),
-        protein=float(totals_for_db.get("protein", 0)),
-        fat=float(totals_for_db.get("fat", 0)),
-        carbs=float(totals_for_db.get("carbs", 0)),
-        entry_date=entry_date,
-        products_json=json.dumps(items),
-        meal_type=meal_type,
-    )
-
-    if not hasattr(message.bot, "last_meal_ids"):
-        message.bot.last_meal_ids = {}
-    message.bot.last_meal_ids[user_id] = saved_meal.id
-
-    daily_totals = MealRepository.get_daily_totals(user_id, entry_date)
-    await state.clear()
-    push_menu_stack(message.bot, kbju_after_meal_menu)
-    lines.append("\n✅ Приём пищи автоматически сохранён.")
-    lines.append(
-        "\nСУММА ЗА СЕГОДНЯ:\n"
-        f"🔥 Калории: {daily_totals.get('calories', 0):.0f} ккал\n"
-        f"💪 Белки: {daily_totals.get('protein', 0):.1f} г\n"
-        f"🥑 Жиры: {daily_totals.get('fat', 0):.1f} г\n"
-        f"🍩 Углеводы: {daily_totals.get('carbs', 0):.1f} г"
-    )
-    await message.answer("\n".join(lines), reply_markup=kbju_after_meal_menu)
 
 
 @router.message(MealEntryStates.confirming_ai_meal)
 async def handle_ai_confirm(message: Message, state: FSMContext):
-    """Подтверждение сохранения результата Gemini (AI-анализ)."""
+    """Legacy-подтверждение сохранения результата AI-анализа."""
     text = (message.text or "").strip()
 
     if text in MAIN_MENU_BUTTON_ALIASES:
