@@ -685,38 +685,142 @@ async def _run_openai_label_task(func, *args, timeout_seconds: float = 45.0, **k
 
 
 class AllProvidersUnavailableError(RuntimeError):
-    """Все AI-провайдеры анализа этикетки недоступны."""
+    """Все AI-провайдеры анализа изображения недоступны."""
+
+
+@dataclass(frozen=True)
+class ProviderAnalysisResult:
+    """Результат AI-анализа с провайдером, который реально дал ответ."""
+
+    payload: dict
+    provider: str
+
+
+async def _analyze_image_with_openai(
+    openai_analyzer,
+    image_data: bytes,
+    *,
+    user_id: str | int | None = None,
+    feature: str,
+    operation_log_name: str,
+) -> Optional[dict]:
+    """Выполняет анализ изображения через OpenAI и логирует fallback-вызов."""
+    try:
+        result = await _run_openai_label_task(
+            openai_analyzer,
+            image_data,
+            user_id=user_id,
+            feature=feature,
+        )
+    except Exception as exc:
+        logger.error("[OpenAI] %s failed: %s", operation_log_name, exc, exc_info=True)
+        raise
+
+    logger.info("[OpenAI] %s completed successfully", operation_log_name)
+    return result
 
 
 async def _analyze_label_with_openai(image_data: bytes, *, user_id: str | int | None = None) -> Optional[dict]:
     """Выполняет анализ этикетки через OpenAI и логирует результат fallback-вызова."""
-    try:
-        result = await _run_openai_label_task(
-            openai_label_service.extract_kbju_from_label,
-            image_data,
-            user_id=user_id,
-            feature="label_analysis_fallback",
-        )
-    except Exception as exc:
-        logger.error("[OpenAI] Failed: %s", exc, exc_info=True)
-        raise
-
-    logger.info("[OpenAI] Analysis completed successfully")
+    result = await _analyze_image_with_openai(
+        openai_label_service.extract_kbju_from_label,
+        image_data,
+        user_id=user_id,
+        feature="label_analysis_fallback",
+        operation_log_name="label analysis",
+    )
     logger.info("[Fallback] OpenAI fallback used for label analysis")
     return result
+
+
+async def _run_image_analysis_with_openai_fallback(
+    gemini_analyzer,
+    image_data: bytes,
+    *,
+    user_id: str | int | None = None,
+    openai_analyzer,
+    openai_feature: str,
+    operation_type: str,
+    success_validator=None,
+) -> ProviderAnalysisResult:
+    """Запускает анализ изображения через Gemini, а при недоступности/пустом ответе — через OpenAI."""
+    logger.info("Gemini attempt for %s", operation_type)
+    try:
+        gemini_result = await _run_gemini_task(gemini_analyzer, image_data)
+        if success_validator is None or success_validator(gemini_result):
+            logger.info("%s completed successfully via Gemini", operation_type)
+            return ProviderAnalysisResult(payload=gemini_result, provider="gemini")
+        logger.warning("Gemini returned no usable result for %s", operation_type)
+    except Exception as gemini_error:
+        logger.error("Gemini error for %s: %s", operation_type, gemini_error, exc_info=True)
+
+    logger.info("Fallback: переход на OpenAI для %s", operation_type)
+    try:
+        openai_result = await _analyze_image_with_openai(
+            openai_analyzer,
+            image_data,
+            user_id=user_id,
+            feature=openai_feature,
+            operation_log_name=operation_type,
+        )
+        if success_validator is None or success_validator(openai_result):
+            logger.info("OpenAI success for %s", operation_type)
+            logger.info("%s completed successfully via OpenAI", operation_type)
+            return ProviderAnalysisResult(payload=openai_result, provider="openai")
+        logger.error("OpenAI returned no usable result for %s", operation_type)
+    except Exception as openai_error:
+        logger.error("OpenAI error for %s: %s", operation_type, openai_error, exc_info=True)
+        raise AllProvidersUnavailableError("All providers unavailable") from openai_error
+
+    logger.error("%s failed: all providers unavailable", operation_type)
+    raise AllProvidersUnavailableError("All providers unavailable")
 
 
 async def _run_label_analysis_with_openai_fallback(analyzer, image_data: bytes, *, user_id: str | int | None = None):
     """Запускает анализ этикетки через Gemini, а при недоступности всех ключей — через OpenAI."""
     try:
         return await _run_gemini_task(analyzer, image_data)
-    except Exception:
+    except Exception as gemini_error:
+        logger.error("Gemini error for анализа этикетки: %s", gemini_error, exc_info=True)
         logger.info("[Fallback] All Gemini keys failed. Switching to OpenAI.")
         try:
             return await _analyze_label_with_openai(image_data, user_id=user_id)
         except Exception as openai_error:
             logger.error("[Error] All providers unavailable")
             raise AllProvidersUnavailableError("All providers unavailable") from openai_error
+
+
+def _has_food_photo_result(payload: Optional[dict]) -> bool:
+    """Проверяет, что AI вернул пригодный результат анализа еды по фото."""
+    return bool(payload and isinstance(payload, dict) and isinstance(payload.get("total"), dict))
+
+
+async def _run_food_photo_analysis_with_openai_fallback(
+    analyzer,
+    image_data: bytes,
+    *,
+    user_id: str | int | None = None,
+) -> ProviderAnalysisResult:
+    """Запускает анализ еды по фото через Gemini с fallback на OpenAI."""
+    try:
+        result = await _run_image_analysis_with_openai_fallback(
+            analyzer,
+            image_data,
+            user_id=user_id,
+            openai_analyzer=openai_label_service.analyze_food_photo_openai,
+            openai_feature="food_photo_analysis",
+            operation_type="анализа еды по фото",
+            success_validator=_has_food_photo_result,
+        )
+        if result.provider == "gemini":
+            logger.info("Анализ еды по фото завершён успешно через Gemini")
+        elif result.provider == "openai":
+            logger.info("Анализ еды по фото завершён успешно через OpenAI")
+        logger.info("final_food_photo_analysis_provider=%s user_id=%s", result.provider, user_id)
+        return result
+    except AllProvidersUnavailableError as error:
+        logger.error("Анализ еды по фото завершён ошибкой: все провайдеры недоступны")
+        raise AllProvidersUnavailableError("All providers unavailable") from error
 
 
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
@@ -2201,6 +2305,7 @@ async def _handle_food_photo_analysis(
     else:
         entry_date = date.today()
 
+    logger.info("Старт пользовательского запроса Анализ еды по фото user_id=%s provider=%s", user_id, provider)
     logger.info("food_photo_analysis_provider=%s user_id=%s", provider, user_id)
     await message.answer("📷 Анализирую фото с помощью ИИ, секунду...")
 
@@ -2212,11 +2317,29 @@ async def _handle_food_photo_analysis(
     try:
         if provider == "openai":
             kbju_data = await runner(analyzer, image_data, user_id=user_id, feature="food_photo_analysis")
+            final_provider = "openai"
+        elif provider == "gemini":
+            analysis_result = await _run_food_photo_analysis_with_openai_fallback(
+                analyzer,
+                image_data,
+                user_id=user_id,
+            )
+            kbju_data = analysis_result.payload
+            final_provider = analysis_result.provider
         else:
             kbju_data = await runner(analyzer, image_data)
+            final_provider = provider
+    except AllProvidersUnavailableError:
+        await message.answer(
+            "⚠️ Не получилось определить КБЖУ по фото.\n"
+            "Попробуй сделать фото получше или используй другой способ."
+        )
+        return
     except Exception as e:
         await error_sender(message, e)
         return
+
+    logger.info("food_photo_analysis_final_provider=%s user_id=%s", final_provider, user_id)
 
     if not kbju_data or "total" not in kbju_data:
         await message.answer(
