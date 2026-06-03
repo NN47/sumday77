@@ -499,7 +499,7 @@ def _fmt_cost(value) -> str:
 def _fmt_event_time(value) -> str:
     if isinstance(value, datetime):
         value_msk = to_moscow(value)
-        return value_msk.strftime("%H:%M") if value_msk else "—"
+        return value_msk.strftime("%d.%m %H:%M") if value_msk else "—"
     return "—"
 
 
