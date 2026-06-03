@@ -684,6 +684,41 @@ async def _run_openai_label_task(func, *args, timeout_seconds: float = 45.0, **k
         raise OpenAILabelServiceTimeoutError("OpenAI API request timed out") from exc
 
 
+class AllProvidersUnavailableError(RuntimeError):
+    """Все AI-провайдеры анализа этикетки недоступны."""
+
+
+async def _analyze_label_with_openai(image_data: bytes, *, user_id: str | int | None = None) -> Optional[dict]:
+    """Выполняет анализ этикетки через OpenAI и логирует результат fallback-вызова."""
+    try:
+        result = await _run_openai_label_task(
+            openai_label_service.extract_kbju_from_label,
+            image_data,
+            user_id=user_id,
+            feature="label_analysis_fallback",
+        )
+    except Exception as exc:
+        logger.error("[OpenAI] Failed: %s", exc, exc_info=True)
+        raise
+
+    logger.info("[OpenAI] Analysis completed successfully")
+    logger.info("[Fallback] OpenAI fallback used for label analysis")
+    return result
+
+
+async def _run_label_analysis_with_openai_fallback(analyzer, image_data: bytes, *, user_id: str | int | None = None):
+    """Запускает анализ этикетки через Gemini, а при недоступности всех ключей — через OpenAI."""
+    try:
+        return await _run_gemini_task(analyzer, image_data)
+    except Exception:
+        logger.info("[Fallback] All Gemini keys failed. Switching to OpenAI.")
+        try:
+            return await _analyze_label_with_openai(image_data, user_id=user_id)
+        except Exception as openai_error:
+            logger.error("[Error] All providers unavailable")
+            raise AllProvidersUnavailableError("All providers unavailable") from openai_error
+
+
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
     """Сбрасывает состояние пользователя."""
     # TODO: Заменить на FSM clear
@@ -2330,6 +2365,8 @@ async def _handle_label_photo_analysis(
     try:
         if provider == "openai":
             label_data = await runner(analyzer, image_data, user_id=user_id, feature="label_analysis")
+        elif provider == "gemini_fallback":
+            label_data = await runner(analyzer, image_data, user_id=user_id)
         else:
             label_data = await runner(analyzer, image_data)
     except Exception as e:
@@ -2399,10 +2436,10 @@ async def handle_label_photo(message: Message, state: FSMContext):
     await _handle_label_photo_analysis(
         message,
         state,
-        provider="gemini",
+        provider="gemini_fallback",
         analyzer=gemini_service.extract_kbju_from_label,
         error_sender=_send_ai_error_message,
-        runner=_run_gemini_task,
+        runner=_run_label_analysis_with_openai_fallback,
     )
 
 

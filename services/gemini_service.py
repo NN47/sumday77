@@ -213,6 +213,8 @@ class GeminiService:
                 break
             keys_tried += 1
             used_account_ids.add(current_account.id)
+            key_number = getattr(current_account, "priority_order", keys_tried)
+            logger.info("[Gemini] Using key #%s", key_number)
             self.client = self._build_client_for_account(current_account.account_name)
 
             temp_attempt = 0
@@ -246,10 +248,12 @@ class GeminiService:
                     )
 
                     if error_type == "auth":
+                        logger.warning("[Gemini] Key #%s failed: %s", key_number, err)
                         GeminiRepository.mark_key_auth_failed(current_account.id, reason=str(err))
                         break
 
                     if error_type == "quota":
+                        logger.warning("[Gemini] Key #%s failed: %s", key_number, err)
                         GeminiRepository.mark_key_rate_limited(
                             current_account.id,
                             cooldown_seconds=self.rate_limit_cooldown_seconds,
@@ -288,6 +292,7 @@ class GeminiService:
                                 f"after {temp_attempt} retries: {err}"
                             ),
                         )
+                    logger.warning("[Gemini] Key #%s failed: %s", key_number, err)
                     GeminiRepository.log_request_failed(
                         account_id=current_account.id,
                         model_name=self.model,
