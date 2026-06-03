@@ -17,6 +17,8 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 translate_gemini_admin_stats = module.translate_gemini_admin_stats
 format_recent_events = module.format_recent_events
+format_openai_ai = module.format_openai_ai
+format_deepseek_ai = module.format_deepseek_ai
 
 
 def _account(**kwargs):
@@ -152,3 +154,55 @@ def test_format_recent_events_displays_aware_utc_as_moscow_time() -> None:
 
     assert "11:33 — 12345 — 📱 Открыл главное меню" in result
     assert "08:33" not in result
+
+
+def test_format_openai_ai_latest_events_include_moscow_date() -> None:
+    metrics = {
+        "requests_today": 1,
+        "success_today": 1,
+        "errors_today": 0,
+        "input_tokens_today": 100,
+        "output_tokens_today": 20,
+        "total_tokens_today": 120,
+        "estimated_cost_today": 0.001,
+        "latest_events": [
+            SimpleNamespace(
+                created_at=datetime(2026, 4, 9, 8, 33, tzinfo=timezone.utc),
+                feature="label_analysis",
+                status="success",
+                total_tokens=120,
+                latency_ms=2838,
+                estimated_cost_usd=0.001,
+            )
+        ],
+    }
+
+    result = format_openai_ai(metrics, key_configured=True)
+
+    assert "09.04 11:33 — label_analysis — success" in result
+    assert "• 11:33 — label_analysis" not in result
+
+
+def test_format_deepseek_ai_latest_events_include_moscow_date() -> None:
+    metrics = {
+        "requests_today": 1,
+        "success_today": 0,
+        "errors_today": 1,
+        "input_tokens_today": 0,
+        "output_tokens_today": 0,
+        "total_tokens_today": 0,
+        "estimated_cost_today": 0,
+        "latest_events": [
+            SimpleNamespace(
+                created_at=datetime(2026, 4, 9, 21, 5),
+                feature="text_meal_analysis",
+                status="error",
+                error_message="timeout",
+            )
+        ],
+    }
+
+    result = format_deepseek_ai(metrics, key_configured=True)
+
+    assert "10.04 00:05 — text_meal_analysis — error — timeout" in result
+    assert "• 00:05 — text_meal_analysis" not in result
