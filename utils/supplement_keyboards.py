@@ -1,6 +1,60 @@
 """Клавиатуры для добавок."""
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from utils.keyboards import main_menu_button
+
+
+SUPPLEMENT_CREATE_TIME_PREFIX = "sup_create_time"
+
+
+def supplement_test_time_inline_menu(times: list[str]) -> InlineKeyboardMarkup:
+    """Inline-меню выбора времени при создании добавки."""
+    selected = set(times or [])
+    rows: list[list[InlineKeyboardButton]] = []
+    hours = [f"{hour:02d}:00" for hour in range(6, 24)]
+
+    for index in range(0, len(hours), 3):
+        row = []
+        for time_text in hours[index:index + 3]:
+            prefix = "✅ " if time_text in selected else ""
+            row.append(
+                InlineKeyboardButton(
+                    text=f"{prefix}{time_text}",
+                    callback_data=f"{SUPPLEMENT_CREATE_TIME_PREFIX}:add:{time_text}",
+                )
+            )
+        rows.append(row)
+
+    if times:
+        rows.append([
+            InlineKeyboardButton(
+                text="💾 Сохранить время",
+                callback_data=f"{SUPPLEMENT_CREATE_TIME_PREFIX}:save",
+            )
+        ])
+    else:
+        rows.append([
+            InlineKeyboardButton(
+                text="⏭️ Пропустить",
+                callback_data=f"{SUPPLEMENT_CREATE_TIME_PREFIX}:skip",
+            )
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            text="⬅️ Назад",
+            callback_data=f"{SUPPLEMENT_CREATE_TIME_PREFIX}:back",
+        ),
+        InlineKeyboardButton(
+            text="❌ Отменить",
+            callback_data=f"{SUPPLEMENT_CREATE_TIME_PREFIX}:cancel",
+        ),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def supplements_main_menu(has_items: bool = False) -> ReplyKeyboardMarkup:
