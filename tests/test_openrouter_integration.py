@@ -1,4 +1,13 @@
-from utils.keyboards import ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES, kbju_add_menu, activity_analysis_menu
+import os
+
+os.environ.setdefault("API_TOKEN", "test-token")
+
+from utils.keyboards import (
+    ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES,
+    ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES,
+    kbju_add_menu,
+    activity_analysis_menu,
+)
 from handlers.admin import _admin_menu_kb
 from utils.admin_formatters import format_openrouter, format_gigachat
 from services.openrouter_service import OpenRouterService
@@ -28,7 +37,8 @@ def test_activity_analysis_menu_has_today_copy_buttons():
     assert "📅 Сегодня копия" in texts
     assert "📅 Сегодня копия 2" in texts
     assert "📅 Сегодня копия" in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES
-    assert "📅 Сегодня копия 2" in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES
+    assert "📅 Сегодня копия 2" not in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES
+    assert "📅 Сегодня копия 2" in ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES
     assert "📅 Сегодня гигачат" not in texts
 
 

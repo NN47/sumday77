@@ -16,6 +16,7 @@ from utils.keyboards import (
     ACTIVITY_ANALYSIS_MONTH_BUTTON_ALIASES,
     ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES,
     ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES,
+    ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES,
     ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES,
     ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT,
     ACTIVITY_ANALYSIS_WEEK_BUTTON_ALIASES,
@@ -288,12 +289,28 @@ def _is_valid_daily_analysis_text(text: str, backend: str = "openrouter") -> boo
     return True
 
 
+
+def _build_calorie_deficit_prompt_rules(prompt_variant: str) -> str:
+    """Возвращает дополнительные правила для отдельного анализа с учётом дефицита калорий."""
+    if prompt_variant != "calorie_deficit_gigachat":
+        return ""
+    return """Отдельный режим анализа для кнопки «📅 Сегодня копия 2»: питание оценивай строго через контекст цели и калорийного баланса.
+- Обязательно учитывай дневную норму калорий, фактически съеденные калории и разницу между ними; прямо напиши размер дефицита или профицита в ккал.
+- Выводы по питанию делай не только по абсолютным калориям, белкам, жирам и углеводам, но и по цели пользователя: похудение, поддержание или набор.
+- Если цель — похудение и есть разумный дефицит калорий, не ругай за недобор как за ошибку: интерпретируй это как выполнение цели, похвали и отметь, что цель по снижению веса поддержана.
+- Если дефицит слишком большой, мягко предупреди о рисках чрезмерного дефицита и предложи приблизить калораж к более устойчивому уровню.
+- Если дефицит в пределах нормы, прямо напиши, что дефицит нормальный/умеренный, и объясни почему он помогает цели похудения.
+- Если есть профицит, спокойно объясни, насколько он расходится с целью и какой следующий маленький шаг поможет.
+- Белки, жиры и углеводы оценивай в связке с калорийной целью: белок — как опору сытости/сохранения мышц, жиры и углеводы — как контекст, а не как повод ругать пользователя без связи с целью.
+"""
+
 async def generate_activity_analysis(
     user_id: str,
     start_date: date,
     end_date: date,
     period_name: str,
     backend: str = "gemini",
+    prompt_variant: str = "standard",
 ) -> str:
     """Генерирует анализ активности за указанный период через выбранный AI-бэкенд."""
     from database.repositories import (
@@ -427,12 +444,26 @@ async def generate_activity_analysis(
     
     # 🔹 Цель / норма КБЖУ и проценты выполнения
     settings = MealRepository.get_kbju_settings(user_id)
+    goal_label = get_kbju_goal_label(settings.goal) if settings else "не настроена"
+    goal_calories = settings.calories * days_count if settings else 0
+    goal_protein = settings.protein * days_count if settings else 0
+    goal_fat = settings.fat * days_count if settings else 0
+    goal_carbs = settings.carbs * days_count if settings else 0
+    calorie_delta = total_calories - goal_calories if goal_calories > 0 else None
+    net_calorie_delta = total_net_calories - goal_calories if goal_calories > 0 else None
+    calorie_balance_summary = (
+        f"Цель пользователя: {goal_label}. "
+        f"Дневная/периодная норма калорий: {goal_calories:.0f} ккал. "
+        f"Фактически съедено: {total_calories:.0f} ккал. "
+        f"Разница съеденного с нормой: {calorie_delta:+.0f} ккал. "
+        f"С учётом расхода на тренировках: {total_net_calories:.0f} ккал, "
+        f"разница с нормой: {net_calorie_delta:+.0f} ккал."
+        if calorie_delta is not None and net_calorie_delta is not None
+        else "Цель по калориям не настроена: оцени питание без вывода о дефиците/профиците."
+    )
+
     if settings:
         goal_label = get_kbju_goal_label(settings.goal)
-        goal_calories = settings.calories * days_count
-        goal_protein = settings.protein * days_count
-        goal_fat = settings.fat * days_count
-        goal_carbs = settings.carbs * days_count
         
         calories_percent = (total_calories / goal_calories * 100) if goal_calories > 0 else 0
         protein_percent = (total_protein / goal_protein * 100) if goal_protein > 0 else 0
@@ -928,6 +959,7 @@ async def generate_activity_analysis(
 Всегда начинай анализ с приветствия:
 "Привет! Я на связи и уже подготовил твой отчёт {period_name.lower()}👇"
 
+
 Данные пользователя за период:
 {summary}
 
@@ -1009,6 +1041,10 @@ async def generate_activity_analysis(
 Начни отчёт так:
 "Привет! Я на связи и уже подготовил твой отчёт {period_name.lower()}👇"
 
+
+Контекст калорий и цели пользователя:
+{calorie_balance_summary}
+
 Данные пользователя за период:
 {summary}
 
@@ -1017,6 +1053,8 @@ async def generate_activity_analysis(
 
 Структурированный input по тренировкам:
 {json.dumps(workout_ai_input, ensure_ascii=False, indent=2)}
+
+{_build_calorie_deficit_prompt_rules(prompt_variant)}
 
 Ожидаемая структура (показывай только непустые блоки):
 <b>🏋️ Тренировки</b>
@@ -1341,6 +1379,60 @@ async def analyze_activity_day_gigachat(message: Message):
             await message.answer(chunk, parse_mode="HTML", reply_markup=reply_markup)
         except TelegramBadRequest as e:
             logger.warning("Failed to send GigaChat analysis chunk as HTML, fallback to plain text: %s", e)
+            await message.answer(chunk, reply_markup=reply_markup)
+
+
+@router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES)
+async def analyze_activity_day_copy_2(message: Message):
+    """Отдельный анализ дня с жёстким учётом дефицита калорий."""
+    user_id = str(message.from_user.id)
+    today = date.today()
+    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, today)
+    logger.info("Starting daily activity analysis copy 2 via GigaChat deficit prompt, user_id=%s", user_id)
+    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
+    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
+    AnalyticsRepository.track_event(user_id, "daily_analysis_copy_2_started", section="activity")
+    await message.answer("⏳ Подожди немного, бот анализирует твой день с учётом дефицита калорий...")
+    try:
+        analysis = await generate_activity_analysis(
+            user_id,
+            today,
+            today,
+            "за день",
+            backend="gigachat",
+            prompt_variant="calorie_deficit_gigachat",
+        )
+        ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="generated")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_copy_2_sent", section="activity")
+        logger.info("Daily activity analysis copy 2 sent successfully, user_id=%s", user_id)
+    except Exception as e:
+        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_copy_2_failed", section="activity")
+        if _is_gigachat_temporarily_unavailable_error(e):
+            push_menu_stack(message.bot, activity_analysis_menu)
+            await message.answer(
+                "GigaChat сейчас временно недоступен.\n\nПопробуй чуть позже — и всё снова заработает.",
+                reply_markup=activity_analysis_menu,
+            )
+            return
+        log_app_error(
+            source="gigachat",
+            error=e,
+            user_id=user_id,
+            context="daily_analysis_copy_2",
+            extra={"handler": "analyze_activity_day_copy_2"},
+        )
+        await message.answer("⚠️ Не удалось сгенерировать анализ дня с учётом дефицита. Попробуй позже.")
+        return
+    push_menu_stack(message.bot, activity_analysis_menu)
+    chunks = split_telegram_message(analysis, limit=3900)
+    for i, chunk in enumerate(chunks):
+        reply_markup = activity_analysis_menu if i == len(chunks) - 1 else None
+        try:
+            await message.answer(chunk, parse_mode="HTML", reply_markup=reply_markup)
+        except TelegramBadRequest as e:
+            logger.warning("Failed to send copy 2 analysis chunk as HTML, fallback to plain text: %s", e)
             await message.answer(chunk, reply_markup=reply_markup)
 
 

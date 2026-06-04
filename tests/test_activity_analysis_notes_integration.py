@@ -1,3 +1,7 @@
+import os
+
+os.environ.setdefault("API_TOKEN", "test-token")
+
 import asyncio
 import unittest
 from datetime import date, datetime
@@ -132,3 +136,66 @@ class ActivityAnalysisGigaChatPromptTests(unittest.TestCase):
         self.assertIn("📝 Заметки дня", prompt)
         self.assertIn("💊 Добавки", prompt)
         self.assertIn("Был сильный вечерний аппетит и усталость", prompt)
+
+
+class ActivityAnalysisCopy2PromptTests(unittest.TestCase):
+    def test_copy_2_prompt_requires_goal_context_and_calorie_deficit_interpretation(self):
+        target_date = date(2026, 4, 9)
+        captured = {}
+
+        def fake_gigachat(prompt):
+            captured["prompt"] = prompt
+            return (
+                "<b>🏋️ Тренировки</b>\n"
+                "• Тип дня: активность без тренировки.\n\n"
+                "<b>🍽️ Питание</b>\n"
+                "• Дефицит умеренный.\n\n"
+                "<b>⚖️ Вес</b>\n"
+                "• Тренд пока неустойчив.\n\n"
+                "<b>📈 Гипотеза</b>\n"
+                "Если удерживать умеренный дефицит, то вес будет снижаться устойчивее, "
+                "потому что калорийный баланс соответствует цели.\n\n"
+                "<b>Краткий вывод</b>\n"
+                "День поддержал цель.\n\n"
+                "<b>План на завтра</b>\n"
+                "1. Повторить умеренный дефицит."
+            )
+
+        with (
+            patch("database.repositories.WorkoutRepository.get_workouts_for_period", return_value=[]),
+            patch("database.repositories.WorkoutRepository.get_workouts_for_day", return_value=[]),
+            patch("database.repositories.MealRepository.get_kbju_settings", return_value=SimpleNamespace(
+                goal="lose", gender="female", calories=1900, protein=130, fat=60, carbs=200
+            )),
+            patch(
+                "database.repositories.MealRepository.get_meals_for_date",
+                return_value=[SimpleNamespace(calories=1650, protein=125, fat=55, carbs=160)],
+            ),
+            patch("database.repositories.WeightRepository.get_weights_for_date_range", return_value=[]),
+            patch("database.repositories.WaterRepository.get_daily_total", return_value=1400),
+            patch("database.repositories.SupplementRepository.get_supplements", return_value=[]),
+            patch("database.repositories.SupplementRepository.get_entries_for_day", return_value=[]),
+            patch("database.repositories.ProcedureRepository.get_procedures_for_day", return_value=[]),
+            patch("database.repositories.WellbeingRepository.get_entries_for_period", return_value=[]),
+            patch("database.repositories.NoteRepository.get_note_for_date", return_value=None),
+            patch("handlers.activity.gigachat_service", new=SimpleNamespace(analyze_activity_prompt=fake_gigachat)),
+        ):
+            asyncio.run(
+                generate_activity_analysis(
+                    "123",
+                    target_date,
+                    target_date,
+                    "за день",
+                    backend="gigachat",
+                    prompt_variant="calorie_deficit_gigachat",
+                )
+            )
+
+        prompt = captured["prompt"]
+        self.assertIn("Отдельный режим анализа для кнопки «📅 Сегодня копия 2»", prompt)
+        self.assertIn("Дневная/периодная норма калорий: 1900 ккал", prompt)
+        self.assertIn("Фактически съедено: 1650 ккал", prompt)
+        self.assertIn("Разница съеденного с нормой: -250 ккал", prompt)
+        self.assertIn("не ругай за недобор как за ошибку", prompt)
+        self.assertIn("цели пользователя: похудение, поддержание или набор", prompt)
+        self.assertIn("дефицит слишком большой", prompt)
