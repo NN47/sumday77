@@ -19,11 +19,14 @@ def test_kbju_menu_hides_duplicate_daily_report_button():
 
 
 
-def test_kbju_add_menu_exposes_gemini_and_openai_label_analysis_buttons():
+def test_kbju_add_menu_exposes_only_public_meal_add_methods():
     texts = _reply_keyboard_texts(kbju_add_menu)
 
-    assert "📋 Анализ этикетки" in texts
-    assert "🧪 Анализ этикетки OpenAI" in texts
+    assert texts == [
+        "📝 Ввести приём пищи текстом (AI-анализ)",
+        "📷 Анализ еды по фото",
+        "📋 Анализ этикетки",
+    ]
 
 
 
