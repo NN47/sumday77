@@ -26,7 +26,7 @@ KBJU_ADD_MEAL_BUTTON_TEXT = "➕ Добавить прием пищи"
 KBJU_ADD_MEAL_BUTTON_ALIASES = {KBJU_ADD_MEAL_BUTTON_TEXT, "➕ Добавить"}
 
 ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT = "📅 Сегодня"
-ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT = "📅 Сегодня через GigaChat"
+ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT = "📅 Сегодня гигачат"
 ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_TEXT = "🪄 ИИ-разбор дня"
 ACTIVITY_ANALYSIS_WEEK_BUTTON_TEXT = "📊 Неделя"
 ACTIVITY_ANALYSIS_MONTH_BUTTON_TEXT = "📈 Месяц"
@@ -34,12 +34,13 @@ ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT = "🗓 Календарь"
 
 ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES = {
     ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT,
+    ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT,
     "🔍 Проанализировать день",
     "📅 Анализ за день",
     "Проанализировать день",
 }
 ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES = {
-    ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT,
+    "📅 Сегодня через GigaChat",
     "📅 Анализ за день через GigaChat",
     "анализ за день через gigachat",
     "сегодня через gigachat",
@@ -757,7 +758,6 @@ activity_analysis_menu = ReplyKeyboardMarkup(
             KeyboardButton(text=ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT),
             KeyboardButton(text=ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT),
         ],
-        [KeyboardButton(text=ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_TEXT)],
         [KeyboardButton(text=ACTIVITY_ANALYSIS_WEEK_BUTTON_TEXT), KeyboardButton(text=ACTIVITY_ANALYSIS_MONTH_BUTTON_TEXT)],
         [KeyboardButton(text=ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT)],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
