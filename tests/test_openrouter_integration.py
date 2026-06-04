@@ -23,10 +23,13 @@ def test_activity_analysis_menu_hides_removed_day_buttons():
     assert "📅 Сегодня через GigaChat" not in texts
 
 
-def test_activity_analysis_menu_has_today_gigachat_copy_button():
+def test_activity_analysis_menu_has_today_copy_buttons():
     texts = _reply_keyboard_texts(activity_analysis_menu)
-    assert "📅 Сегодня гигачат" in texts
-    assert "📅 Сегодня гигачат" in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES
+    assert "📅 Сегодня копия" in texts
+    assert "📅 Сегодня копия 2" in texts
+    assert "📅 Сегодня копия" in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES
+    assert "📅 Сегодня копия 2" in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES
+    assert "📅 Сегодня гигачат" not in texts
 
 
 def test_openrouter_formatter_shows_free_model():
