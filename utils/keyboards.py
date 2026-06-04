@@ -253,7 +253,7 @@ count_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text=str(n)) for n in range(16, 21)],
         [KeyboardButton(text=str(n)) for n in [25, 30, 35, 40, 50]],
         [KeyboardButton(text="✏️ Ввести вручную")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+        [KeyboardButton(text="❌ Отмена"), main_menu_button],
     ],
     resize_keyboard=True,
 )
@@ -784,6 +784,7 @@ activity_analysis_menu = ReplyKeyboardMarkup(
 add_another_set_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="💪 Добавить еще подход")],
+        [KeyboardButton(text="➕ Добавить другое упражнение")],
         [KeyboardButton(text="✅ Завершить упражнение")],
     ],
     resize_keyboard=True,

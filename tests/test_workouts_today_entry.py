@@ -54,9 +54,95 @@ def test_training_button_opens_today_workouts_without_calendar_back():
 
 def test_add_another_exercise_still_opens_exercise_picker():
     message = SimpleNamespace(bot=object())
-    state = SimpleNamespace(update_data=AsyncMock(), set_state=AsyncMock())
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"entry_date": "2026-06-01"}),
+        update_data=AsyncMock(),
+        set_state=AsyncMock(),
+    )
 
     with patch("handlers.workouts.start_exercise_selection", new=AsyncMock()) as start_selection:
         asyncio.run(workouts.add_another_exercise(message, state))
 
-    start_selection.assert_awaited_once_with(message, state)
+    start_selection.assert_awaited_once_with(message, state, date(2026, 6, 1))
+
+
+def test_add_another_set_menu_contains_add_different_exercise_button():
+    from utils.keyboards import add_another_set_menu
+
+    rows = [[button.text for button in row] for row in add_another_set_menu.keyboard]
+
+    assert rows == [
+        ["💪 Добавить еще подход"],
+        ["➕ Добавить другое упражнение"],
+        ["✅ Завершить упражнение"],
+    ]
+
+
+def test_count_menu_uses_cancel_instead_of_back():
+    from utils.keyboards import count_menu
+
+    last_row = [button.text for button in count_menu.keyboard[-1]]
+
+    assert last_row == ["❌ Отмена", "🔄 Главное меню"]
+
+
+def test_add_different_exercise_from_reps_set_preserves_training_date():
+    message = SimpleNamespace(
+        text="➕ Добавить другое упражнение",
+        from_user=SimpleNamespace(id=12345),
+        bot=object(),
+    )
+    state = SimpleNamespace(
+        get_data=AsyncMock(
+            return_value={
+                "entry_date": "2026-06-02",
+                "exercise": "Подтягивания",
+                "variant": "Прямой хват",
+            }
+        )
+    )
+
+    with patch("handlers.workouts.start_exercise_selection", new=AsyncMock()) as start_selection:
+        asyncio.run(workouts.handle_count_input(message, state))
+
+    start_selection.assert_awaited_once_with(message, state, date(2026, 6, 2))
+
+
+def test_add_different_exercise_from_weighted_set_preserves_training_date():
+    message = SimpleNamespace(
+        text="➕ Добавить другое упражнение",
+        from_user=SimpleNamespace(id=12345),
+        bot=object(),
+    )
+    state = SimpleNamespace(
+        get_data=AsyncMock(
+            return_value={
+                "entry_date": "2026-06-03",
+                "exercise": "Жим штанги лёжа",
+                "variant": "reps",
+            }
+        )
+    )
+
+    with patch("handlers.workouts.start_exercise_selection", new=AsyncMock()) as start_selection:
+        asyncio.run(workouts.handle_count_input(message, state))
+
+    start_selection.assert_awaited_once_with(message, state, date(2026, 6, 3))
+
+
+def test_cancel_reps_input_clears_state_and_returns_training_menu_without_saving():
+    message = SimpleNamespace(
+        text="❌ Отмена",
+        from_user=SimpleNamespace(id=12345),
+        bot=SimpleNamespace(menu_stack=[]),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(clear=AsyncMock())
+
+    with patch("handlers.workouts.WorkoutRepository.save_workout") as save_workout:
+        asyncio.run(workouts.handle_count_input(message, state))
+
+    state.clear.assert_awaited_once()
+    save_workout.assert_not_called()
+    message.answer.assert_awaited_once()
+    assert message.answer.await_args.kwargs["reply_markup"] is workouts.training_menu

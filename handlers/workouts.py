@@ -68,6 +68,21 @@ def _format_minutes(minutes: float) -> str:
     return f"{minutes:.1f}".replace(".", ",")
 
 
+def _entry_date_from_state_data(data: dict) -> date:
+    """Возвращает дату тренировки из FSM или сегодняшнюю дату при некорректном значении."""
+    entry_date_value = data.get("entry_date")
+    if isinstance(entry_date_value, str):
+        try:
+            return date.fromisoformat(entry_date_value)
+        except ValueError:
+            parsed = parse_date(entry_date_value)
+            if isinstance(parsed, datetime):
+                return parsed.date()
+    if isinstance(entry_date_value, date):
+        return entry_date_value
+    return date.today()
+
+
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
     """Сбрасывает состояние пользователя."""
     # TODO: Заменить на FSM clear
@@ -163,8 +178,9 @@ async def add_training_entry(message: Message, state: FSMContext):
 
 @router.message(lambda m: m.text == "➕ Добавить другое упражнение")
 async def add_another_exercise(message: Message, state: FSMContext):
-    """Позволяет быстро добавить следующее упражнение."""
-    await start_exercise_selection(message, state)
+    """Позволяет быстро добавить следующее упражнение в той же тренировочной дате."""
+    data = await state.get_data()
+    await start_exercise_selection(message, state, _entry_date_from_state_data(data))
 
 
 @router.message(StateFilter(None), lambda m: m.text == "✅ Завершить упражнение")
@@ -752,11 +768,11 @@ async def handle_count_input(message: Message, state: FSMContext):
         await message.answer("Введи количество повторений числом:")
         return
     
-    if message.text == "⬅️ Назад":
-        # Возвращаемся к выбору упражнения
-        await state.set_state(WorkoutStates.choosing_exercise)
-        push_menu_stack(message.bot, exercise_picker_menu)
-        await message.answer("Выбери упражнение:", reply_markup=exercise_picker_menu)
+    if message.text in {"❌ Отмена", "⬅️ Назад"}:
+        # Отменяем незавершённый ввод подхода без сохранения данных.
+        await state.clear()
+        push_menu_stack(message.bot, training_menu)
+        await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
         return
     
     if message.text in MAIN_MENU_BUTTON_ALIASES:
@@ -797,6 +813,11 @@ async def handle_count_input(message: Message, state: FSMContext):
         )
         return
     
+    if message.text == "➕ Добавить другое упражнение":
+        data = await state.get_data()
+        await start_exercise_selection(message, state, _entry_date_from_state_data(data))
+        return
+
     if message.text == "✅ Завершить упражнение":
         # Завершаем и возвращаемся в меню
         await state.clear()
@@ -822,7 +843,6 @@ async def handle_count_input(message: Message, state: FSMContext):
     data = await state.get_data()
     exercise = data.get("exercise")
     variant = data.get("variant")
-    entry_date_str = data.get("entry_date", date.today().isoformat())
     
     # Проверяем, что данные есть
     if not exercise:
@@ -833,14 +853,7 @@ async def handle_count_input(message: Message, state: FSMContext):
         await message.answer("Выбери действие:", reply_markup=training_menu)
         return
     
-    if isinstance(entry_date_str, str):
-        try:
-            entry_date = date.fromisoformat(entry_date_str)
-        except ValueError:
-            parsed = parse_date(entry_date_str)
-            entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
-    else:
-        entry_date = date.today()
+    entry_date = _entry_date_from_state_data(data)
     
     # Рассчитываем калории
     calories = calculate_workout_calories(user_id, exercise, variant, count)
@@ -875,7 +888,7 @@ async def handle_count_input(message: Message, state: FSMContext):
         f"🔥 ~{calories:.0f} ккал\n"
         f"📅 {date_label}\n\n"
         f"Всего {exercise} за {date_label}: {total_formatted}\n\n"
-        f"Хотите ввести еще подход?",
+        f"Хотите внести еще подход?",
         reply_markup=add_another_set_menu,
     )
 
