@@ -391,7 +391,8 @@ class NotificationScheduler:
                             "🔔 Время принять добавку!\n\n"
                             f"💊 {supplement.name}\n"
                             f"⏰ {current_time_str}\n\n"
-                            "Нажмите кнопку после приёма:"
+                            "Нажми «✅ Подтвердить прием», когда примешь добавку, "
+                            "или «⏰ Напомнить позже»."
                         )
                         await self.send_notification(
                             supplement.user_id,

@@ -27,6 +27,8 @@ from utils.supplement_keyboards import (
     days_menu,
     duration_menu,
     time_first_menu,
+    SUPPLEMENT_CREATE_TIME_PREFIX,
+    supplement_test_time_inline_menu,
 )
 from utils.calendar_utils import (
     build_supplement_calendar_keyboard,
@@ -55,6 +57,67 @@ def parse_supplement_amount(text: str) -> Optional[float]:
         return float(normalized)
     except ValueError:
         return None
+
+
+def parse_supplement_time_input(text: str) -> Optional[str]:
+    """Нормализует ручной ввод времени в формат ЧЧ:ММ."""
+    normalized = text.strip()
+
+    if re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", normalized):
+        return normalized
+
+    if not normalized.isdigit():
+        return None
+
+    if len(normalized) <= 2:
+        hour = int(normalized)
+        minute = 0
+    elif len(normalized) == 3:
+        hour = int(normalized[0])
+        minute = int(normalized[1:])
+    elif len(normalized) == 4:
+        hour = int(normalized[:2])
+        minute = int(normalized[2:])
+    else:
+        return None
+
+    if 0 <= hour <= 23 and 0 <= minute <= 59:
+        return f"{hour:02d}:{minute:02d}"
+    return None
+
+
+def build_supplement_time_step_text(name: str, times: list[str] | None = None) -> str:
+    """Формирует текст шага выбора времени при создании добавки."""
+    current_times = times or []
+    lines = [
+        f"✅ Название: {name}",
+        "",
+        "⏰ Шаг 2: Укажи время приёма добавки",
+        "",
+        "Выбери готовое время кнопкой с 06:00 до 23:00 или введи время вручную цифрами:",
+        "• 9 или 09 → 09:00",
+        "• 930 или 09:30 → 09:30",
+    ]
+    if current_times:
+        lines.extend(["", f"Текущие времена: {', '.join(current_times)}"])
+    lines.extend([
+        "",
+        "Можно добавить несколько времён по одному.",
+        "Когда закончишь — нажми «💾 Сохранить время». Если время не нужно — «⏭️ Пропустить».",
+    ])
+    return "\n".join(lines)
+
+
+async def go_to_supplement_days_step(message: Message, state: FSMContext, prefix: str) -> None:
+    """Переводит создание добавки к выбору дней."""
+    await state.set_state(SupplementStates.selecting_days)
+    push_menu_stack(message.bot, days_menu([], show_cancel=True))
+    await message.answer(
+        f"{prefix}\n\n"
+        "📅 Шаг 3: Выбери дни приёма добавки\n\n"
+        "Можешь выбрать несколько дней или нажми «⏭️ Пропустить».",
+        reply_markup=days_menu([], show_cancel=True),
+    )
 
 
 @router.message(lambda m: m.text == "💊 Добавки")
@@ -158,14 +221,9 @@ async def handle_supplement_name(message: Message, state: FSMContext):
     # Переходим к следующему шагу - время
     await state.set_state(SupplementStates.entering_time)
     
-    from utils.supplement_keyboards import supplement_test_time_menu
-    push_menu_stack(message.bot, supplement_test_time_menu([], show_back=True))
     await message.answer(
-        f"✅ Название: {name}\n\n"
-        "⏰ Шаг 2: Укажи время приёма добавки (например: 09:00, 12:00, 18:00)\n\n"
-        "Можешь добавить несколько времён, вводя их по одному.\n"
-        "Или нажми «⏭️ Пропустить», чтобы пропустить этот шаг.",
-        reply_markup=supplement_test_time_menu([], show_back=True),
+        build_supplement_time_step_text(name),
+        reply_markup=supplement_test_time_inline_menu([]),
     )
 
 
@@ -893,6 +951,105 @@ async def edit_supplement_time(message: Message, state: FSMContext):
         )
 
 
+@router.callback_query(lambda c: c.data and c.data.startswith(f"{SUPPLEMENT_CREATE_TIME_PREFIX}:"))
+async def handle_create_supplement_time_callback(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает inline-выбор времени при создании добавки."""
+    data = await state.get_data()
+    if data.get("supplement_id") is not None:
+        await callback.answer("Эта кнопка уже неактуальна", show_alert=True)
+        return
+
+    current_state = await state.get_state()
+    if current_state != SupplementStates.entering_time.state:
+        await callback.answer("Этот шаг уже завершён", show_alert=True)
+        return
+
+    parts = callback.data.split(":", 2)
+    action = parts[1] if len(parts) > 1 else ""
+    name = data.get("name", "")
+    current_times = data.get("times", []).copy()
+
+    if action == "add":
+        if len(parts) < 3:
+            await callback.answer("Не удалось выбрать время", show_alert=True)
+            return
+        time_text = parse_supplement_time_input(parts[2])
+        if time_text is None:
+            await callback.answer("Неверное время", show_alert=True)
+            return
+        if time_text not in current_times:
+            current_times.append(time_text)
+            current_times.sort()
+            await state.update_data(times=current_times)
+            await callback.answer(f"Добавлено {time_text}")
+        else:
+            await callback.answer(f"{time_text} уже добавлено")
+
+        await callback.message.edit_text(
+            build_supplement_time_step_text(name, current_times),
+            reply_markup=supplement_test_time_inline_menu(current_times),
+        )
+        return
+
+    if action == "save":
+        if not current_times:
+            await callback.answer("Сначала выбери время или пропусти шаг", show_alert=True)
+            return
+        await callback.answer()
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await go_to_supplement_days_step(
+            callback.message,
+            state,
+            f"✅ Время сохранено: {', '.join(current_times)}",
+        )
+        return
+
+    if action == "skip":
+        if current_times:
+            await callback.answer("Время уже выбрано. Нажми «Сохранить время».", show_alert=True)
+            return
+        await state.update_data(times=[])
+        await callback.answer()
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await go_to_supplement_days_step(callback.message, state, "⏭️ Время пропущено")
+        return
+
+    if action == "back":
+        await callback.answer()
+        await state.set_state(SupplementStates.entering_name)
+        from utils.supplement_keyboards import supplement_test_skip_menu
+        push_menu_stack(callback.message.bot, supplement_test_skip_menu())
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await callback.message.answer(
+            f"⏪ Возвращаемся к шагу 1\n\n"
+            f"Текущее название: {name}\n\n"
+            "Введите новое название добавки или оставьте текущее:",
+            reply_markup=supplement_test_skip_menu(),
+        )
+        return
+
+    if action == "cancel":
+        await callback.answer()
+        await state.clear()
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await supplements(callback.message)
+        return
+
+    await callback.answer("Неизвестное действие", show_alert=True)
+
+
 @router.message(SupplementStates.entering_time)
 async def handle_time_value(message: Message, state: FSMContext):
     """Обрабатывает ввод времени."""
@@ -933,79 +1090,45 @@ async def handle_time_value(message: Message, state: FSMContext):
             current_times = data.get("times", [])
             if not current_times or len(current_times) == 0:
                 await state.update_data(times=[])
-                # Переходим к следующему шагу - дни
-                await state.set_state(SupplementStates.selecting_days)
-                from utils.supplement_keyboards import supplement_test_skip_menu, days_menu
-                push_menu_stack(message.bot, supplement_test_skip_menu(show_back=True))
-                await message.answer(
-                    "⏭️ Время пропущено\n\n"
-                    "📅 Шаг 3: Выбери дни приёма добавки\n\n"
-                    "Можешь выбрать несколько дней или нажми «⏭️ Пропустить».",
-                    reply_markup=days_menu([], show_cancel=True),
-                )
+                await go_to_supplement_days_step(message, state, "⏭️ Время пропущено")
                 return
         
         # Проверяем сохранение (когда есть времена)
-        if text == "💾 Сохранить":
+        if text in {"💾 Сохранить", "💾 Сохранить время"}:
             current_times = data.get("times", [])
             if current_times and len(current_times) > 0:
-                # Явно сохраняем времена в state перед переходом
                 await state.update_data(times=current_times)
-                # Переходим к следующему шагу - дни
-                await state.set_state(SupplementStates.selecting_days)
-                from utils.supplement_keyboards import supplement_test_skip_menu, days_menu
-                push_menu_stack(message.bot, supplement_test_skip_menu(show_back=True))
                 times_text = ", ".join(current_times)
-                await message.answer(
-                    f"✅ Время сохранено: {times_text}\n\n"
-                    "📅 Шаг 3: Выбери дни приёма добавки\n\n"
-                    "Можешь выбрать несколько дней или нажми «⏭️ Пропустить».",
-                    reply_markup=days_menu([], show_cancel=True),
-                )
+                await go_to_supplement_days_step(message, state, f"✅ Время сохранено: {times_text}")
                 return
         
-        # Проверяем формат времени
-        if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", text):
+        parsed_time = parse_supplement_time_input(text)
+        if parsed_time is None:
             current_times = data.get("times", [])
-            from utils.supplement_keyboards import supplement_test_time_menu
-            push_menu_stack(message.bot, supplement_test_time_menu(current_times, show_back=True))
-            if current_times and len(current_times) > 0:
-                await message.answer(
-                    "Пожалуйста, укажи время в формате ЧЧ:ММ (например: 09:00) или нажми «💾 Сохранить», чтобы продолжить.",
-                    reply_markup=supplement_test_time_menu(current_times, show_back=True),
-                )
-            else:
-                await message.answer(
-                    "Пожалуйста, укажи время в формате ЧЧ:ММ (например: 09:00) или нажми «⏭️ Пропустить»",
-                    reply_markup=supplement_test_time_menu(current_times, show_back=True),
-                )
+            name = data.get("name", "")
+            await message.answer(
+                "Пожалуйста, выбери время кнопкой или введи цифры: например 9, 09, 930 или 09:30.",
+                reply_markup=supplement_test_time_inline_menu(current_times),
+            )
+            await message.answer(
+                build_supplement_time_step_text(name, current_times),
+                reply_markup=supplement_test_time_inline_menu(current_times),
+            )
             return
         
         # Добавляем время
         times = data.get("times", []).copy()
-        if text not in times:
-            times.append(text)
+        if parsed_time not in times:
+            times.append(parsed_time)
         times.sort()
         await state.update_data(times=times)
         
-        # Показываем текущие времена и предлагаем добавить еще или продолжить
-        from utils.supplement_keyboards import supplement_test_time_menu
-        times_list = "\n".join(times) if times else "нет"
-        push_menu_stack(message.bot, supplement_test_time_menu(times, show_back=True))
-        if len(times) > 0:
-            await message.answer(
-                f"✅ Добавлено время: {text}\n\n"
-                f"Текущие времена приёма:\n{times_list}\n\n"
-                "Введи ещё одно время (ЧЧ:ММ) или нажми «💾 Сохранить», чтобы продолжить.",
-                reply_markup=supplement_test_time_menu(times, show_back=True),
-            )
-        else:
-            await message.answer(
-                f"✅ Добавлено время: {text}\n\n"
-                f"Текущие времена приёма:\n{times_list}\n\n"
-                "Введи ещё одно время (ЧЧ:ММ) или нажми «⏭️ Пропустить», чтобы продолжить.",
-                reply_markup=supplement_test_time_menu(times, show_back=True),
-            )
+        name = data.get("name", "")
+        await message.answer(
+            f"✅ Добавлено время: {parsed_time}\n\n"
+            + build_supplement_time_step_text(name, times),
+            reply_markup=supplement_test_time_inline_menu(times),
+        )
         return
     
     # Если это редактирование существующей добавки - старая логика
@@ -1161,26 +1284,11 @@ async def toggle_day(message: Message, state: FSMContext):
                 
                 # Возвращаемся к шагу времени
                 await state.set_state(SupplementStates.entering_time)
-                from utils.supplement_keyboards import supplement_test_time_menu
-                push_menu_stack(message.bot, supplement_test_time_menu(times, show_back=True))
-                
-                times_text = "\n".join(times) if times else "нет"
-                if times and len(times) > 0:
-                    await message.answer(
-                        f"⏪ Возвращаемся к шагу 2\n\n"
-                        f"💊 {name}\n\n"
-                        f"⏰ Текущие времена приёма:\n{times_text}\n\n"
-                        f"Введи ещё одно время (ЧЧ:ММ) или нажми «💾 Сохранить», чтобы продолжить.",
-                        reply_markup=supplement_test_time_menu(times, show_back=True),
-                    )
-                else:
-                    await message.answer(
-                        f"⏪ Возвращаемся к шагу 2\n\n"
-                        f"💊 {name}\n\n"
-                        f"⏰ Текущие времена приёма:\n{times_text}\n\n"
-                        f"Введи ещё одно время (ЧЧ:ММ) или нажми «⏭️ Пропустить», чтобы продолжить.",
-                        reply_markup=supplement_test_time_menu(times, show_back=True),
-                    )
+                await message.answer(
+                    "⏪ Возвращаемся к шагу 2\n\n"
+                    + build_supplement_time_step_text(name, times),
+                    reply_markup=supplement_test_time_inline_menu(times),
+                )
                 return
             
             # Проверяем "Выбрать все"
@@ -1898,7 +2006,8 @@ async def send_supplement_reminder_later(
                 "🔔 Напоминаю принять добавку!\n\n"
                 f"💊 {target['name']}\n"
                 f"⏰ {time_text}\n\n"
-                "Нажмите кнопку после приёма:"
+                "Нажми «✅ Подтвердить прием», когда примешь добавку, "
+                "или «⏰ Напомнить позже»."
             ),
             reply_markup=build_supplement_notification_keyboard(supplement_id, time_text),
         )
