@@ -26,10 +26,11 @@ router = Router()
 
 
 def build_water_added_text(amount: float, daily_total: float, recommended: float, bar: str) -> str:
-    """Форматирует HTML-подтверждение добавления воды."""
+    """Форматирует HTML-подтверждение корректировки воды."""
     progress = round((daily_total / recommended) * 100) if recommended > 0 else 0
+    action = "Добавил" if amount > 0 else "Убрал"
     return (
-        f"<b>✅ Добавил {amount:.0f} мл воды</b>\n\n"
+        f"<b>✅ {action} {abs(amount):.0f} мл воды</b>\n\n"
         f"<b>💧 Всего за сегодня</b>: {daily_total:.0f} мл\n"
         f"<b>🎯 Норма</b>: {recommended:.0f} мл\n"
         f"<b>📈 Прогресс</b>: {progress}%\n"
@@ -99,7 +100,7 @@ async def quick_add_water_250(message: Message, state: FSMContext):
     await state.clear()
     
     entry_date = date.today()
-    amount = 300.0
+    amount = 250.0
     WaterRepository.save_water_entry(user_id, amount, entry_date)
     
     daily_total = WaterRepository.get_daily_total(user_id, entry_date)
@@ -107,21 +108,21 @@ async def quick_add_water_250(message: Message, state: FSMContext):
     bar = build_water_progress_bar(daily_total, recommended)
     text = build_water_added_text(amount, daily_total, recommended, bar)
     
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=water_quick_add_inline)
 
 
 @router.callback_query(lambda c: c.data in {"quick_water_250", "quick_water_300"})
 async def quick_add_water_250_cb(callback: CallbackQuery, state: FSMContext):
-    """Быстро добавляет 250 мл воды по inline-кнопке под текстом."""
+    """Быстро добавляет воду по legacy inline-кнопке под текстом."""
     await callback.answer()
     message = callback.message
     user_id = str(callback.from_user.id)
-    logger.info(f"User {user_id} used quick water +300 inline button")
+    amount = 250.0 if callback.data == "quick_water_250" else 300.0
+    logger.info(f"User {user_id} used quick water +{amount:.0f} legacy inline button")
     
     await state.clear()
     
     entry_date = date.today()
-    amount = 300.0
     WaterRepository.save_water_entry(user_id, amount, entry_date)
     
     daily_total = WaterRepository.get_daily_total(user_id, entry_date)
@@ -129,7 +130,7 @@ async def quick_add_water_250_cb(callback: CallbackQuery, state: FSMContext):
     bar = build_water_progress_bar(daily_total, recommended)
     text = build_water_added_text(amount, daily_total, recommended, bar)
     
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=water_quick_add_inline)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("quick_water_add_"))
@@ -158,7 +159,7 @@ async def quick_add_water_amount_cb(callback: CallbackQuery, state: FSMContext):
     bar = build_water_progress_bar(daily_total, recommended)
     text = build_water_added_text(amount, daily_total, recommended, bar)
     
-    await message.answer(text, parse_mode="HTML", reply_markup=water_menu)
+    await message.answer(text, parse_mode="HTML", reply_markup=water_quick_add_inline)
 
 
 @router.callback_query(lambda c: c.data == "quick_water_clear_today")
