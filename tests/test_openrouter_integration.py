@@ -1,4 +1,4 @@
-from utils.keyboards import kbju_add_menu, activity_analysis_menu
+from utils.keyboards import ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES, kbju_add_menu, activity_analysis_menu
 from handlers.admin import _admin_menu_kb
 from utils.admin_formatters import format_openrouter, format_gigachat
 from services.openrouter_service import OpenRouterService
@@ -12,19 +12,21 @@ def _inline_keyboard_texts(markup) -> list[str]:
     return [button.text for row in markup.inline_keyboard for button in row]
 
 
-def test_kbju_add_menu_has_openrouter_button():
+def test_kbju_add_menu_hides_openrouter_button():
     texts = _reply_keyboard_texts(kbju_add_menu)
-    assert "🧪 Ввести текст через OpenRouter" in texts
+    assert "🧪 Ввести текст через OpenRouter" not in texts
 
 
-def test_activity_analysis_menu_has_openrouter_day_button():
+def test_activity_analysis_menu_hides_removed_day_buttons():
     texts = _reply_keyboard_texts(activity_analysis_menu)
-    assert "🪄 ИИ-разбор дня" in texts
+    assert "🪄 ИИ-разбор дня" not in texts
+    assert "📅 Сегодня через GigaChat" not in texts
 
 
-def test_activity_analysis_menu_has_gigachat_day_button():
+def test_activity_analysis_menu_has_today_gigachat_copy_button():
     texts = _reply_keyboard_texts(activity_analysis_menu)
-    assert "📅 Сегодня через GigaChat" in texts
+    assert "📅 Сегодня гигачат" in texts
+    assert "📅 Сегодня гигачат" in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES
 
 
 def test_openrouter_formatter_shows_free_model():

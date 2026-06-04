@@ -1091,8 +1091,7 @@ async def analyze_activity(message: Message):
         "📊 ИИ-анализ\n\n"
         "Выбери формат:\n"
         "• 📅 Сегодня — быстрый отчёт за день\n"
-        f"• {ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT} — тот же отчёт через GigaChat\n"
-        "• 🪄 ИИ-разбор дня — расширенный персональный фидбек\n"
+        f"• {ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT} — быстрый отчёт за день\n"
         "• 📊 Неделя / 📈 Месяц — динамика прогресса\n"
         "• 🗓 Календарь — история прошлых анализов",
         reply_markup=activity_analysis_menu,
