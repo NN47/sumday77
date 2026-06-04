@@ -178,12 +178,15 @@ def _format_weight_draft_text(
     title: str = "",
 ) -> str:
     """Формирует сообщение о черновом весе после быстрой правки."""
-    lines = [
-        f"{title}⚖️ <b>Вес сейчас:</b> {weight_value:.1f} кг",
+    current_weight_lines = [
+        f"⚖️ <b>Вес сейчас:</b> {weight_value:.1f} кг",
         f"📅 <b>Дата:</b> {entry_date.strftime('%d.%m.%Y')}",
     ]
 
+    lines = [title.rstrip()] if title else []
+
     if previous_weight_value is None or previous_weight_date is None:
+        lines.extend(current_weight_lines)
         lines.extend([
             "",
             "Это первая запись веса.",
@@ -192,10 +195,11 @@ def _format_weight_draft_text(
     else:
         delta = weight_value - previous_weight_value
         lines.extend([
-            "",
             "<b>Предыдущая запись:</b>",
             f"⚖️ {previous_weight_value:.1f} кг",
             f"📅 {previous_weight_date.strftime('%d.%m.%Y')}",
+            "",
+            *current_weight_lines,
             "",
             f"<b>Изменение с предыдущей записи:</b> {_format_weight_delta(delta)}",
         ])

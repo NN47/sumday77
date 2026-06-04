@@ -224,6 +224,7 @@ def test_weight_input_keeps_quick_buttons_and_requires_save_before_repository_wr
     assert "<b>Предыдущая запись:</b>" in text
     assert "⚖️ 76.9 кг" in text
     assert "📅 28.05.2026" in text
+    assert text.index("<b>Предыдущая запись:</b>") < text.index("⚖️ <b>Вес сейчас:</b> 76.4 кг")
     assert "<b>Изменение с предыдущей записи:</b> -0.5 кг 📉" in text
     assert "Текущий вес" not in text
     assert "Новый вес" not in text
@@ -252,6 +253,7 @@ def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
     assert "⚖️ <b>Вес сейчас:</b> 76.0 кг" in text
     assert "⚖️ 76.9 кг" in text
     assert "📅 28.05.2026" in text
+    assert text.index("<b>Предыдущая запись:</b>") < text.index("⚖️ <b>Вес сейчас:</b> 76.0 кг")
     assert "<b>Изменение с предыдущей записи:</b> -0.9 кг 📉" in text
     assert "Текущий вес" not in text
     assert "Новый вес" not in text
