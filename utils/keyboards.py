@@ -737,33 +737,18 @@ water_amount_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
-water_quick_add_inline = InlineKeyboardMarkup(
+water_adjustment_inline = InlineKeyboardMarkup(
     inline_keyboard=[
         [
-            InlineKeyboardButton(text="250", callback_data="quick_water_add_250"),
+            InlineKeyboardButton(text="+250", callback_data="quick_water_add_250"),
             InlineKeyboardButton(text="+300", callback_data="quick_water_add_300"),
-            InlineKeyboardButton(text="330", callback_data="quick_water_add_330"),
-            InlineKeyboardButton(text="500", callback_data="quick_water_add_500"),
-        ],
-        [
-            InlineKeyboardButton(text="550", callback_data="quick_water_add_550"),
-            InlineKeyboardButton(text="600", callback_data="quick_water_add_600"),
-            InlineKeyboardButton(text="650", callback_data="quick_water_add_650"),
-            InlineKeyboardButton(text="700", callback_data="quick_water_add_700"),
-        ],
-        [
-            InlineKeyboardButton(text="750", callback_data="quick_water_add_750"),
-            InlineKeyboardButton(text="800", callback_data="quick_water_add_800"),
-            InlineKeyboardButton(text="850", callback_data="quick_water_add_850"),
-            InlineKeyboardButton(text="900", callback_data="quick_water_add_900"),
-        ],
-        [
-            InlineKeyboardButton(text="1000", callback_data="quick_water_add_1000"),
+            InlineKeyboardButton(text="+500", callback_data="quick_water_add_500"),
             InlineKeyboardButton(text="-300", callback_data="quick_water_add_-300"),
-            InlineKeyboardButton(text="🧹 Очистить", callback_data="quick_water_clear_today"),
         ],
     ]
 )
+
+water_quick_add_inline = water_adjustment_inline
 
 # Меню анализа
 activity_analysis_menu = ReplyKeyboardMarkup(
