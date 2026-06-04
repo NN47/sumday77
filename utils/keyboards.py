@@ -622,14 +622,8 @@ kbju_goal_speed_gain_inline = InlineKeyboardMarkup(
 kbju_add_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📝 Ввести приём пищи текстом (AI-анализ)")],
-        [KeyboardButton(text="🧪 Ввести текст через OpenRouter")],
-        [KeyboardButton(text="🤖 Ввести приём пищи через DeepSeek")],
-        [KeyboardButton(text="🧠 Ввести текст через GigaChat")],
         [KeyboardButton(text="📷 Анализ еды по фото")],
-        [KeyboardButton(text="🧪 Анализ еды OpenAI")],
         [KeyboardButton(text="📋 Анализ этикетки")],
-        [KeyboardButton(text="🧪 Анализ этикетки OpenAI")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,
 )

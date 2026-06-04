@@ -892,12 +892,8 @@ async def _show_input_methods(message: Message, state: FSMContext, *, user_id: s
     text = (
         "<b>Теперь выбери, из недавних продуктов ☝️ или добавь прием пищи одним из предложенных способов:</b>\n"
         "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
-        "• 🧪 Ввести текст через OpenRouter\n"
-        "• 🧠 Ввести текст через GigaChat\n"
         "• 📷 Анализ еды по фото\n"
-        "• 🧪 Анализ еды OpenAI\n"
-        "• 📋 Анализ этикетки\n"
-        "• 🧪 Анализ этикетки OpenAI"
+        "• 📋 Анализ этикетки"
     )
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
