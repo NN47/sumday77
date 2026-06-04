@@ -28,6 +28,7 @@ from utils.supplement_keyboards import (
     duration_menu,
     time_first_menu,
     SUPPLEMENT_CREATE_TIME_PREFIX,
+    supplement_creation_cancel_menu,
     supplement_test_time_inline_menu,
 )
 from utils.calendar_utils import (
@@ -200,7 +201,13 @@ async def start_create_supplement(message: Message, state: FSMContext):
         "notifications_enabled": True,
     })
     await state.set_state(SupplementStates.entering_name)
-    await message.answer("Введите название добавки.")
+    push_menu_stack(message.bot, supplement_creation_cancel_menu())
+    await message.answer(
+        "✨ Начинаем создание добавки!\n\n"
+        "Шаг 1 из 5 — напиши название добавки. Например: «Магний», «Витамин D» или «Омега‑3».\n\n"
+        "Если нажал кнопку случайно, просто выбери «❌ Отменить» внизу.",
+        reply_markup=supplement_creation_cancel_menu(),
+    )
 
 
 @router.message(SupplementStates.entering_name)
@@ -214,7 +221,10 @@ async def handle_supplement_name(message: Message, state: FSMContext):
     
     name = message.text.strip()
     if not name:
-        await message.answer("Название не может быть пустым. Введите название добавки.")
+        await message.answer(
+            "Название не может быть пустым. Напиши, как будет называться добавка.",
+            reply_markup=supplement_creation_cancel_menu(),
+        )
         return
     
     await state.update_data(name=name)
@@ -1023,8 +1033,7 @@ async def handle_create_supplement_time_callback(callback: CallbackQuery, state:
     if action == "back":
         await callback.answer()
         await state.set_state(SupplementStates.entering_name)
-        from utils.supplement_keyboards import supplement_test_skip_menu
-        push_menu_stack(callback.message.bot, supplement_test_skip_menu())
+        push_menu_stack(callback.message.bot, supplement_creation_cancel_menu())
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
@@ -1032,8 +1041,8 @@ async def handle_create_supplement_time_callback(callback: CallbackQuery, state:
         await callback.message.answer(
             f"⏪ Возвращаемся к шагу 1\n\n"
             f"Текущее название: {name}\n\n"
-            "Введите новое название добавки или оставьте текущее:",
-            reply_markup=supplement_test_skip_menu(),
+            "Введите новое название добавки или оставьте текущее.",
+            reply_markup=supplement_creation_cancel_menu(),
         )
         return
 
@@ -1072,13 +1081,12 @@ async def handle_time_value(message: Message, state: FSMContext):
             if name:
                 # Возвращаемся к шагу названия
                 await state.set_state(SupplementStates.entering_name)
-                from utils.supplement_keyboards import supplement_test_skip_menu
-                push_menu_stack(message.bot, supplement_test_skip_menu())
+                push_menu_stack(message.bot, supplement_creation_cancel_menu())
                 await message.answer(
                     f"⏪ Возвращаемся к шагу 1\n\n"
                     f"Текущее название: {name}\n\n"
-                    f"Введите новое название добавки или оставьте текущее:",
-                    reply_markup=supplement_test_skip_menu(),
+                    f"Введите новое название добавки или оставьте текущее.",
+                    reply_markup=supplement_creation_cancel_menu(),
                 )
             else:
                 await state.clear()

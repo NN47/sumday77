@@ -57,6 +57,14 @@ def supplement_test_time_inline_menu(times: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def supplement_creation_cancel_menu() -> ReplyKeyboardMarkup:
+    """Меню процесса создания добавки на шаге ввода названия."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="❌ Отменить")]],
+        resize_keyboard=True,
+    )
+
+
 def supplements_main_menu(has_items: bool = False) -> ReplyKeyboardMarkup:
     """Главное меню добавок."""
     buttons = [[KeyboardButton(text="➕ Создать добавку")]]

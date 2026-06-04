@@ -6,7 +6,10 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("API_TOKEN", "test-token")
 
 from handlers import supplements
-from utils.supplement_keyboards import supplement_test_time_inline_menu
+from utils.supplement_keyboards import (
+    supplement_creation_cancel_menu,
+    supplement_test_time_inline_menu,
+)
 
 
 class _DummyState:
@@ -19,7 +22,9 @@ class _DummyState:
     async def _set_state(self, value):
         self._state = value.state if hasattr(value, "state") else value
 
-    async def update_data(self, **kwargs):
+    async def update_data(self, *args, **kwargs):
+        for data in args:
+            self._data.update(data)
         self._data.update(kwargs)
 
     async def get_data(self):
@@ -50,6 +55,31 @@ def _build_callback(callback_data: str):
         ),
         answer=AsyncMock(),
     )
+
+
+def test_creation_cancel_menu_only_contains_cancel_button():
+    keyboard = supplement_creation_cancel_menu()
+    button_texts = [button.text for row in keyboard.keyboard for button in row]
+
+    assert button_texts == ["❌ Отменить"]
+
+
+def test_start_create_supplement_shows_friendly_prompt_and_cancel_menu():
+    message = _build_message("➕ Создать добавку")
+    state = _DummyState()
+
+    with patch("handlers.supplements.push_menu_stack") as push_menu_stack:
+        asyncio.run(supplements.start_create_supplement(message, state))
+
+    state.set_state.assert_awaited_once_with(supplements.SupplementStates.entering_name)
+    message.answer.assert_awaited_once()
+    text, kwargs = message.answer.await_args
+    assert "✨ Начинаем создание добавки!" in text[0]
+    assert "Шаг 1 из 5" in text[0]
+    keyboard = kwargs["reply_markup"]
+    button_texts = [button.text for row in keyboard.keyboard for button in row]
+    assert button_texts == ["❌ Отменить"]
+    push_menu_stack.assert_called_once()
 
 
 def test_create_time_inline_menu_contains_hours_from_6_to_23_and_actions():
