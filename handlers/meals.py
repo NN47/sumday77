@@ -890,17 +890,13 @@ async def _show_input_methods(message: Message, state: FSMContext, *, user_id: s
     meal_type = normalize_meal_type((await state.get_data()).get("meal_type"), fallback=MealType.SNACK.value)
     await _show_recent_meals_page(message, state, meal_type=meal_type, page=1, user_id=user_id)
     text = (
-        "<b>Теперь выбери, из недавних продуктов ☝️ или добавь прием пищи одним из предложенных способов:</b>\n"
+        "Теперь выбери способ добавления приёма пищи:\n\n"
         "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
-        "• 🧪 Ввести текст через OpenRouter\n"
-        "• 🧠 Ввести текст через GigaChat\n"
         "• 📷 Анализ еды по фото\n"
-        "• 🧪 Анализ еды OpenAI\n"
-        "• 📋 Анализ этикетки\n"
-        "• 🧪 Анализ этикетки OpenAI"
+        "• 📋 Анализ этикетки"
     )
     push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
+    await message.answer(text, reply_markup=kbju_add_menu)
 
 
 async def _show_recent_meals_page(
