@@ -160,3 +160,34 @@ def test_inline_time_save_moves_to_days_step():
     state.set_state.assert_awaited_with(supplements.SupplementStates.selecting_days)
     callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
     callback.message.answer.assert_awaited_once()
+
+
+def test_inline_time_callback_resumes_from_unselected_days_step():
+    callback = _build_callback("sup_create_time:add:07:00")
+    state = _DummyState(
+        {"supplement_id": None, "name": "Магний", "times": [], "days": []},
+        supplements.SupplementStates.selecting_days.state,
+    )
+
+    asyncio.run(supplements.handle_create_supplement_time_callback(callback, state))
+
+    assert state._state == supplements.SupplementStates.entering_time.state
+    assert state._data["times"] == ["07:00"]
+    callback.answer.assert_awaited_once_with("Добавлено 07:00")
+    callback.message.edit_text.assert_awaited_once()
+
+
+def test_inline_time_callback_still_rejects_after_days_selected():
+    callback = _build_callback("sup_create_time:add:07:00")
+    state = _DummyState(
+        {"supplement_id": None, "name": "Магний", "times": ["06:00"], "days": ["Пн"]},
+        supplements.SupplementStates.selecting_days.state,
+    )
+
+    asyncio.run(supplements.handle_create_supplement_time_callback(callback, state))
+
+    assert state._state == supplements.SupplementStates.selecting_days.state
+    assert state._data["times"] == ["06:00"]
+    callback.answer.assert_awaited_once_with("Этот шаг уже завершён", show_alert=True)
+    callback.message.edit_text.assert_not_awaited()
+

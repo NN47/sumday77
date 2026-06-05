@@ -970,12 +970,28 @@ async def handle_create_supplement_time_callback(callback: CallbackQuery, state:
         return
 
     current_state = await state.get_state()
-    if current_state != SupplementStates.entering_time.state:
-        await callback.answer("Этот шаг уже завершён", show_alert=True)
-        return
 
     parts = callback.data.split(":", 2)
     action = parts[1] if len(parts) > 1 else ""
+
+    if current_state != SupplementStates.entering_time.state:
+        # В Telegram у пользователя могут остаться старые inline-кнопки шага времени
+        # (например, если он случайно перешёл к выбору дней, не выбрав время).
+        # Если создание добавки ещё не ушло дальше шага дней и дни не выбраны,
+        # разрешаем нажать готовое время и возвращаем пользователя к шагу времени
+        # вместо бесполезного alert «Этот шаг уже завершён».
+        can_resume_time_step = (
+            action == "add"
+            and current_state == SupplementStates.selecting_days.state
+            and not data.get("days")
+            and data.get("supplement_id") is None
+        )
+        if can_resume_time_step:
+            await state.set_state(SupplementStates.entering_time)
+        else:
+            await callback.answer("Этот шаг уже завершён", show_alert=True)
+            return
+
     name = data.get("name", "")
     current_times = data.get("times", []).copy()
 
