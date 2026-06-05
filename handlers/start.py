@@ -118,7 +118,7 @@ async def start(message: Message, state: FSMContext):
     except Exception:
         logger.exception("Failed to send start summary for user %s", user_id)
     # Отдельным сообщением показываем главное меню (reply-клавиатура) без уведомления
-    await message.answer("⬇️ Главное меню", reply_markup=main_menu, disable_notification=True)
+    await message.answer("⬇️ Кнопки управления", reply_markup=main_menu, disable_notification=True)
 
 
 def register_start_handlers(dp):
