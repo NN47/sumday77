@@ -45,6 +45,36 @@ def test_show_input_methods_sends_add_menu():
     state.set_state.assert_awaited_once_with(meals.MealEntryStates.choosing_meal_type)
     push_stack.assert_called_once_with(message.bot, meals.kbju_add_menu)
     assert message.answer.await_count == 1
+    assert message.answer.await_args.args[0].startswith("Теперь выбери способ добавления приёма пищи")
+
+
+def test_show_input_methods_points_to_recent_products_when_available():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    state = _DummyState()
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Салат",
+        description=None,
+        products_json='[{"name":"Салат","grams":120,"kcal":67,"protein":3.1,"fat":5.3,"carbs":1.7}]',
+        calories=67,
+        protein=3.1,
+        fat=5.3,
+        carbs=1.7,
+    )
+
+    with patch("handlers.meals.push_menu_stack"), patch(
+        "handlers.meals.MealRepository.get_recent_unique_meals", return_value=[meal]
+    ):
+        asyncio.run(meals._show_input_methods(message, state))
+
+    assert message.answer.await_count == 2
+    methods_text = message.answer.await_args.args[0]
+    assert methods_text.startswith("👍 Можешь выбрать один из недавно добавленных продуктов выше")
+    assert "или воспользоваться одним из этих вариантов" in methods_text
+    assert "• 📝 Ввести приём пищи текстом (AI-анализ)" in methods_text
+    assert "• 📷 Анализ еды по фото" in methods_text
+    assert "• 📋 Анализ этикетки" in methods_text
 
 
 def test_add_meal_from_diary_block_sets_context_and_opens_methods():

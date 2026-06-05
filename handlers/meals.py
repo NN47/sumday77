@@ -888,13 +888,22 @@ async def _show_input_methods(message: Message, state: FSMContext, *, user_id: s
     """Показывает меню способов добавления еды для уже выбранного типа приёма."""
     await state.set_state(MealEntryStates.choosing_meal_type)
     meal_type = normalize_meal_type((await state.get_data()).get("meal_type"), fallback=MealType.SNACK.value)
-    await _show_recent_meals_page(message, state, meal_type=meal_type, page=1, user_id=user_id)
-    text = (
-        "Теперь выбери способ добавления приёма пищи:\n\n"
-        "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
-        "• 📷 Анализ еды по фото\n"
-        "• 📋 Анализ этикетки"
-    )
+    recent_meals_shown = await _show_recent_meals_page(message, state, meal_type=meal_type, page=1, user_id=user_id)
+    if recent_meals_shown:
+        text = (
+            "👍 Можешь выбрать один из недавно добавленных продуктов выше "
+            "или воспользоваться одним из этих вариантов:\n\n"
+            "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
+            "• 📷 Анализ еды по фото\n"
+            "• 📋 Анализ этикетки"
+        )
+    else:
+        text = (
+            "Теперь выбери способ добавления приёма пищи:\n\n"
+            "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
+            "• 📷 Анализ еды по фото\n"
+            "• 📋 Анализ этикетки"
+        )
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(text, reply_markup=kbju_add_menu)
 
@@ -906,12 +915,12 @@ async def _show_recent_meals_page(
     page: int,
     *,
     user_id: str | None = None,
-) -> None:
+) -> bool:
     resolved_user_id = user_id or str(message.from_user.id)
     source_meals = MealRepository.get_recent_unique_meals(resolved_user_id, limit=64)
     all_recent_meals = _expand_recent_meals(source_meals, limit=64)
     if not all_recent_meals:
-        return
+        return False
     total_pages = max(1, math.ceil(len(all_recent_meals) / RECENT_MEALS_PAGE_SIZE))
     page = min(max(1, page), total_pages)
     start = (page - 1) * RECENT_MEALS_PAGE_SIZE
@@ -924,6 +933,7 @@ async def _show_recent_meals_page(
         reply_markup=_build_recent_meals_keyboard(page_items, meal_type, page, has_prev, has_next),
         parse_mode="HTML",
     )
+    return True
 
 
 def _get_all_recent_items_for_search(user_id: str) -> list[RecentMealItem]:
