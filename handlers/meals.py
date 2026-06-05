@@ -1677,13 +1677,26 @@ async def select_meal_type(message: Message, state: FSMContext):
 async def handle_meal_type_menu_navigation(message: Message, state: FSMContext):
     """Обрабатывает навигационные кнопки на шаге выбора приёма пищи."""
     text = (message.text or "").strip()
-    await state.clear()
     if text in MAIN_MENU_BUTTON_ALIASES:
+        await state.clear()
         from handlers.common import go_main_menu
 
         await go_main_menu(message, state)
         return
 
+    data = await state.get_data()
+    selected_meal_type = normalize_meal_type(data.get("meal_type"), fallback="")
+    if selected_meal_type in MEAL_TYPE_ORDER:
+        await state.update_data(meal_type=None, pending_add_method=None)
+        await state.set_state(MealEntryStates.choosing_meal_type)
+        push_menu_stack(message.bot, kbju_meal_type_menu)
+        await message.answer(
+            "Выбери приём пищи, к которому нужно добавить продукты:",
+            reply_markup=kbju_meal_type_menu,
+        )
+        return
+
+    await state.clear()
     from handlers.common import go_back
 
     await go_back(message, state)

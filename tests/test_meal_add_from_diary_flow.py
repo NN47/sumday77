@@ -91,16 +91,39 @@ def test_add_meal_from_diary_block_sets_context_and_opens_methods():
     show_methods.assert_awaited_once_with(callback.message, state, user_id="12345")
 
 
-def test_meal_type_navigation_back_supports_hook_arrow():
+def test_meal_type_navigation_back_supports_hook_arrow_without_selected_meal_type():
     message = _build_message()
     message.text = "↩️ Назад"
-    state = SimpleNamespace(clear=AsyncMock())
+    state = _DummyState()
 
     with patch("handlers.common.go_back", new=AsyncMock()) as go_back:
         asyncio.run(meals.handle_meal_type_menu_navigation(message, state))
 
     state.clear.assert_awaited_once()
     go_back.assert_awaited_once_with(message, state)
+
+
+def test_meal_type_navigation_back_from_add_methods_keeps_meal_type_choice_active():
+    message = _build_message()
+    message.text = "⬅️ Назад"
+    state = _DummyState()
+    state._data["meal_type"] = meals.MealType.SNACK.value
+
+    with patch("handlers.meals.push_menu_stack") as push_stack, patch(
+        "handlers.common.go_back", new=AsyncMock()
+    ) as go_back:
+        asyncio.run(meals.handle_meal_type_menu_navigation(message, state))
+
+    state.clear.assert_not_awaited()
+    state.set_state.assert_awaited_once_with(meals.MealEntryStates.choosing_meal_type)
+    assert state._data["meal_type"] is None
+    assert state._data["pending_add_method"] is None
+    push_stack.assert_called_once_with(message.bot, meals.kbju_meal_type_menu)
+    message.answer.assert_awaited_once_with(
+        "Выбери приём пищи, к которому нужно добавить продукты:",
+        reply_markup=meals.kbju_meal_type_menu,
+    )
+    go_back.assert_not_awaited()
 
 
 def test_meal_type_navigation_main_menu_alias():
