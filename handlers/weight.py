@@ -1559,7 +1559,7 @@ async def back_to_main_menu_from_weight(callback: CallbackQuery):
     """Возвращает пользователя в главное меню из карточки веса."""
     await callback.answer()
     push_menu_stack(callback.message.bot, main_menu)
-    await callback.message.answer("⬇️ Главное меню", reply_markup=main_menu, disable_notification=True)
+    await callback.message.answer("⬇️ Кнопки управления", reply_markup=main_menu, disable_notification=True)
 
 
 @router.callback_query(lambda c: c.data.startswith("meas_cal_add:"))

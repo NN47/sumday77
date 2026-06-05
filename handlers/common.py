@@ -135,7 +135,7 @@ async def go_main_menu(message: Message, state: FSMContext):
     except Exception:
         logger.exception("Failed to send main menu summary for user %s", user_id)
     # Затем — отдельное сообщение с основной клавиатурой без уведомления
-    await message.answer("⬇️ Главное меню", reply_markup=main_menu, disable_notification=True)
+    await message.answer("⬇️ Кнопки управления", reply_markup=main_menu, disable_notification=True)
 
 
 @router.message(StateFilter(None), lambda m: m.text == "⬅️ Назад")

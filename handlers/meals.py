@@ -1233,7 +1233,7 @@ async def recent_search_main_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
     push_menu_stack(callback.message.bot, main_menu)
-    await callback.message.answer("⬇️ Главное меню", reply_markup=main_menu)
+    await callback.message.answer("⬇️ Кнопки управления", reply_markup=main_menu)
 
 
 @router.callback_query(lambda c: c.data.startswith("recent_meal_pick:"))
