@@ -160,3 +160,36 @@ def test_inline_time_save_moves_to_days_step():
     state.set_state.assert_awaited_with(supplements.SupplementStates.selecting_days)
     callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
     callback.message.answer.assert_awaited_once()
+
+
+def test_supplements_menu_formats_description_and_items():
+    message = _build_message("💊 Добавки")
+
+    with patch(
+        "handlers.supplements.SupplementRepository.get_supplements",
+        return_value=[
+            {
+                "name": "Сем",
+                "times": ["09:00"],
+                "days": ["Вт"],
+                "duration": "постоянно",
+            },
+            {
+                "name": "Магний цитрат",
+                "times": ["21:30"],
+                "days": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
+                "duration": "постоянно",
+            },
+        ],
+    ), patch("handlers.supplements.push_menu_stack"):
+        asyncio.run(supplements.supplements(message))
+
+    message.answer.assert_awaited_once()
+    text = message.answer.await_args.args[0]
+
+    assert text.startswith("<b>💊 Раздел «Добавки»</b>")
+    assert "<b>свои добавки</b>" in text
+    assert "📋 <b>Твои добавки:</b>" in text
+    assert "💊 <b>Сем</b>" in text
+    assert "💊 <b>Магний цитрат</b>" in text
+    assert "⏳ Длительность: постоянно\n\n💊 <b>Магний цитрат</b>" in text

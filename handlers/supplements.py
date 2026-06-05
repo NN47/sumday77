@@ -1,5 +1,6 @@
 """Обработчики для добавок."""
 import asyncio
+import html
 import logging
 import re
 import json
@@ -135,10 +136,10 @@ async def supplements(message: Message):
         return
     
     dairi_description = (
-        "💊 Раздел «Добавки»\n\n"
-        "Здесь ты можешь записывать свои добавки: лекарства, витамины, БАДы и любые другие препараты. "
+        "<b>💊 Раздел «Добавки»</b>\n\n"
+        "Здесь ты можешь записывать <b>свои добавки</b>: лекарства, витамины, БАДы и любые другие препараты. "
         "Я помогу тебе отслеживать их приём, настроить расписание и получать статистику.\n\n"
-        "⚠️ Важно: протеин нужно вписывать в раздел КБЖУ, потому что там подсчитывается количество белков "
+        "⚠️ Важно: добавки протеина нужно вписывать в раздел КБЖУ, потому что там подсчитывается количество белков "
         "для твоей дневной нормы. Этот раздел предназначен для лекарств и добавок, которые не влияют на калорийность и БЖУ.\n\n"
     )
     
@@ -151,16 +152,18 @@ async def supplements(message: Message):
         return
     
     # Если добавки есть, показываем описание и список
-    lines = [dairi_description + "📋 Твои добавки:"]
+    lines = [dairi_description + "📋 <b>Твои добавки:</b>"]
     for item in supplements_list:
-        days = ", ".join(item["days"]) if item["days"] else "не выбрано"
-        times = ", ".join(item["times"]) if item["times"] else "не выбрано"
+        name = html.escape(str(item["name"]))
+        days = html.escape(", ".join(item["days"]) if item["days"] else "не выбрано")
+        times = html.escape(", ".join(item["times"]) if item["times"] else "не выбрано")
+        duration = html.escape(str(item["duration"]))
         lines.append(
-            f"💊 {item['name']} \n⏰ Время приема: {times}\n📅 Дни приема: {days}\n⏳ Длительность: {item['duration']}"
+            f"💊 <b>{name}</b>\n⏰ Время приема: {times}\n📅 Дни приема: {days}\n⏳ Длительность: {duration}"
         )
     
     push_menu_stack(message.bot, supplements_main_menu(has_items=True))
-    await message.answer("\n".join(lines), reply_markup=supplements_main_menu(has_items=True))
+    await message.answer("\n\n".join(lines), reply_markup=supplements_main_menu(has_items=True))
 
 
 @router.message(lambda m: m.text == "📋 Мои добавки")
