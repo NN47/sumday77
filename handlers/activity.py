@@ -175,6 +175,8 @@ def _build_daily_analysis_fallback(
     today_workouts_by_type: dict,
     today_workout_kcal: float,
     trend_weights: list,
+    adjusted_goal_cal: float | None = None,
+    activity_counted_kcal: float = 0,
 ) -> str:
     """Собирает fallback-отчёт в обязательном формате при провале валидации."""
     workout_items = [item for item in today_workouts_by_type.values() if item["value"] > 0]
@@ -198,15 +200,23 @@ def _build_daily_analysis_fallback(
             "Рекомендация: запланируй минимум 20 минут ходьбы или лёгкую домашнюю тренировку."
         )
 
-    cal_percent = _safe_percent(total_calories, goal_cal) if goal_cal > 0 else None
+    effective_goal_cal = adjusted_goal_cal if adjusted_goal_cal and adjusted_goal_cal > 0 else goal_cal
+    cal_percent = _safe_percent(total_calories, effective_goal_cal) if effective_goal_cal > 0 else None
     protein_percent = _safe_percent(total_protein, goal_pro) if goal_pro > 0 else None
     if goal_cal > 0:
+        activity_context = (
+            f" Базовая норма {goal_cal:.0f} ккал + учтённая активность ~{activity_counted_kcal:.0f} ккал "
+            f"= скорректированная норма {effective_goal_cal:.0f} ккал."
+            if effective_goal_cal != goal_cal
+            else f" Базовая норма: {goal_cal:.0f} ккал."
+        )
         nutrition_text = (
-            f"Факт: {total_calories:.0f}/{goal_cal:.0f} ккал ({cal_percent}%), "
+            f"Факт: {total_calories:.0f}/{effective_goal_cal:.0f} ккал ({cal_percent}%)."
+            f"{activity_context} "
             f"Б {total_protein:.1f}/{goal_pro:.1f} г ({protein_percent if protein_percent is not None else 'н/д'}%), "
             f"Ж {total_fat:.1f}/{goal_fat:.1f} г, У {total_carbs:.1f}/{goal_carb:.1f} г.\n"
-            f"Отклонение от цели по калориям: {cal_percent - 100:+d}%.\n"
-            "Рекомендации: удерживай калораж в коридоре ±10% и добавь белок в первый приём пищи."
+            f"Отклонение от скорректированной нормы по калориям: {cal_percent - 100:+d}%.\n"
+            "Рекомендации: удерживай калораж в коридоре ±10% от скорректированной нормы и добавь белок в первый приём пищи."
         )
     else:
         nutrition_text = (
@@ -320,6 +330,7 @@ async def generate_activity_analysis(
     )
     from utils.workout_utils import calculate_workout_calories
     from utils.formatters import format_count_with_unit, get_kbju_goal_label
+    from utils.progress_formatters import LIFESTYLE_ACTIVITY_COEFFICIENTS
     
     days_count = (end_date - start_date).days + 1
     
@@ -440,7 +451,6 @@ async def generate_activity_analysis(
     total_protein = sum(m.protein or 0 for m in meals)
     total_fat = sum(m.fat or 0 for m in meals)
     total_carbs = sum(m.carbs or 0 for m in meals)
-    total_net_calories = total_calories - total_workout_calories
     
     # 🔹 Цель / норма КБЖУ и проценты выполнения
     settings = MealRepository.get_kbju_settings(user_id)
@@ -449,33 +459,45 @@ async def generate_activity_analysis(
     goal_protein = settings.protein * days_count if settings else 0
     goal_fat = settings.fat * days_count if settings else 0
     goal_carbs = settings.carbs * days_count if settings else 0
-    calorie_delta = total_calories - goal_calories if goal_calories > 0 else None
-    net_calorie_delta = total_net_calories - goal_calories if goal_calories > 0 else None
+    lifestyle_coef = LIFESTYLE_ACTIVITY_COEFFICIENTS.get(
+        (settings.activity or "").strip().lower() if settings else "",
+        LIFESTYLE_ACTIVITY_COEFFICIENTS["medium"],
+    )
+    activity_counted_calories = round(total_workout_calories * lifestyle_coef)
+    adjusted_goal_calories = goal_calories + activity_counted_calories if goal_calories > 0 else 0
+    adjusted_macro_ratio = adjusted_goal_calories / goal_calories if goal_calories > 0 else 1
+    adjusted_goal_protein = goal_protein * adjusted_macro_ratio if goal_protein > 0 else goal_protein
+    adjusted_goal_fat = goal_fat * adjusted_macro_ratio if goal_fat > 0 else goal_fat
+    adjusted_goal_carbs = goal_carbs * adjusted_macro_ratio if goal_carbs > 0 else goal_carbs
+    calorie_delta = total_calories - adjusted_goal_calories if adjusted_goal_calories > 0 else None
     calorie_balance_summary = (
         f"Цель пользователя: {goal_label}. "
-        f"Дневная/периодная норма калорий: {goal_calories:.0f} ккал. "
+        f"Базовая дневная/периодная норма: {goal_calories:.0f} ккал. "
+        f"Сожжено активностью за период: ~{total_workout_calories:.0f} ккал. "
+        f"Учтено в норме: ~{activity_counted_calories:.0f} ккал. "
+        f"Скорректированная норма калорий: {adjusted_goal_calories:.0f} ккал. "
         f"Фактически съедено: {total_calories:.0f} ккал. "
-        f"Разница съеденного с нормой: {calorie_delta:+.0f} ккал. "
-        f"С учётом расхода на тренировках: {total_net_calories:.0f} ккал, "
-        f"разница с нормой: {net_calorie_delta:+.0f} ккал."
-        if calorie_delta is not None and net_calorie_delta is not None
+        f"Разница съеденного со скорректированной нормой: {calorie_delta:+.0f} ккал."
+        if calorie_delta is not None
         else "Цель по калориям не настроена: оцени питание без вывода о дефиците/профиците."
     )
 
     if settings:
         goal_label = get_kbju_goal_label(settings.goal)
         
-        calories_percent = (total_calories / goal_calories * 100) if goal_calories > 0 else 0
-        protein_percent = (total_protein / goal_protein * 100) if goal_protein > 0 else 0
-        fat_percent = (total_fat / goal_fat * 100) if goal_fat > 0 else 0
-        carbs_percent = (total_carbs / goal_carbs * 100) if goal_carbs > 0 else 0
+        calories_percent = (total_calories / adjusted_goal_calories * 100) if adjusted_goal_calories > 0 else 0
+        protein_percent = (total_protein / adjusted_goal_protein * 100) if adjusted_goal_protein > 0 else 0
+        fat_percent = (total_fat / adjusted_goal_fat * 100) if adjusted_goal_fat > 0 else 0
+        carbs_percent = (total_carbs / adjusted_goal_carbs * 100) if adjusted_goal_carbs > 0 else 0
         
         meals_summary = (
-            f"{EMOJI_MAP['calories']} Калории: {total_calories:.0f} / {goal_calories:.0f} ккал ({calories_percent:.0f}%), "
-            f"{EMOJI_MAP['protein']} Белки: {total_protein:.1f} / {goal_protein:.1f} г ({protein_percent:.0f}%), "
-            f"{EMOJI_MAP['fat']} Жиры: {total_fat:.1f} / {goal_fat:.1f} г ({fat_percent:.0f}%), "
-            f"{EMOJI_MAP['carbs']} Углеводы: {total_carbs:.1f} / {goal_carbs:.1f} г ({carbs_percent:.0f}%). "
-            f"С учётом расхода на тренировках: ~{total_net_calories:.0f} ккал."
+            f"{EMOJI_MAP['calories']} Калории: {total_calories:.0f} / {adjusted_goal_calories:.0f} ккал ({calories_percent:.0f}%), "
+            f"{EMOJI_MAP['protein']} Белки: {total_protein:.1f} / {adjusted_goal_protein:.1f} г ({protein_percent:.0f}%), "
+            f"{EMOJI_MAP['fat']} Жиры: {total_fat:.1f} / {adjusted_goal_fat:.1f} г ({fat_percent:.0f}%), "
+            f"{EMOJI_MAP['carbs']} Углеводы: {total_carbs:.1f} / {adjusted_goal_carbs:.1f} г ({carbs_percent:.0f}%). "
+            f"Базовая норма: {goal_calories:.0f} ккал; сожжено активностью: ~{total_workout_calories:.0f} ккал; "
+            f"учтено в норме: ~{activity_counted_calories:.0f} ккал; "
+            f"скорректированная норма: {adjusted_goal_calories:.0f} ккал."
         )
         
         kbju_goal_summary = (
@@ -763,13 +785,17 @@ async def generate_activity_analysis(
         goal_pro = settings.protein if settings else 0
         goal_fat_day = settings.fat if settings else 0
         goal_carb = settings.carbs if settings else 0
+        activity_counted_day = round(today_workout_kcal * lifestyle_coef)
+        adjusted_goal_cal_day = goal_cal + activity_counted_day if goal_cal > 0 else 0
+        adjusted_ratio_day = adjusted_goal_cal_day / goal_cal if goal_cal > 0 else 1
+        adjusted_goal_pro_day = goal_pro * adjusted_ratio_day if goal_pro > 0 else goal_pro
+        adjusted_goal_fat_day = goal_fat_day * adjusted_ratio_day if goal_fat_day > 0 else goal_fat_day
+        adjusted_goal_carb_day = goal_carb * adjusted_ratio_day if goal_carb > 0 else goal_carb
 
-        calories_percent_day = _safe_percent(total_calories, goal_cal)
-        net_calories_day = total_calories - today_workout_kcal
-        net_calories_percent_day = _safe_percent(net_calories_day, goal_cal)
-        protein_percent_day = _safe_percent(total_protein, goal_pro)
-        fat_percent_day = _safe_percent(total_fat, goal_fat_day)
-        carbs_percent_day = _safe_percent(total_carbs, goal_carb)
+        calories_percent_day = _safe_percent(total_calories, adjusted_goal_cal_day)
+        protein_percent_day = _safe_percent(total_protein, adjusted_goal_pro_day)
+        fat_percent_day = _safe_percent(total_fat, adjusted_goal_fat_day)
+        carbs_percent_day = _safe_percent(total_carbs, adjusted_goal_carb_day)
 
         def fmt_macro_line(name: str, actual: float, goal: float, percent: int | None, unit: str = "г") -> str:
             if goal > 0 and percent is not None:
@@ -782,16 +808,14 @@ async def generate_activity_analysis(
         nutrition_lines = [
             "🍱 Питание за день",
             f"Цель: {_goal_label_ru(settings.goal if settings else None)}",
-            fmt_macro_line("Калории", total_calories, goal_cal, calories_percent_day, unit="ккал"),
-            f"• С учётом расхода на тренировке: ~{net_calories_day:.0f} ккал"
-            + (
-                f" ({net_calories_percent_day}%)"
-                if goal_cal > 0 and net_calories_percent_day is not None
-                else ""
-            ),
-            fmt_macro_line("Белки", total_protein, goal_pro, protein_percent_day),
-            fmt_macro_line("Жиры", total_fat, goal_fat_day, fat_percent_day),
-            fmt_macro_line("Углеводы", total_carbs, goal_carb, carbs_percent_day),
+            f"• Базовая норма: {goal_cal:.0f} ккал" if goal_cal > 0 else "• Базовая норма: не настроена",
+            f"• Сожжено за день: ~{today_workout_kcal:.0f} ккал",
+            f"• Учтено в норме: ~{activity_counted_day:.0f} ккал" if goal_cal > 0 else "• Учтено в норме: цель не настроена",
+            f"• Скорректированная норма: {adjusted_goal_cal_day:.0f} ккал" if adjusted_goal_cal_day > 0 else "• Скорректированная норма: не настроена",
+            fmt_macro_line("Калории", total_calories, adjusted_goal_cal_day, calories_percent_day, unit="ккал"),
+            fmt_macro_line("Белки", total_protein, adjusted_goal_pro_day, protein_percent_day),
+            fmt_macro_line("Жиры", total_fat, adjusted_goal_fat_day, fat_percent_day),
+            fmt_macro_line("Углеводы", total_carbs, adjusted_goal_carb_day, carbs_percent_day),
             f"• Вода: {round(total_water)} мл",
         ]
 
@@ -829,17 +853,17 @@ async def generate_activity_analysis(
 
         # 📊 Итог дня
         summary_lines = ["📊 Итог дня"]
-        if net_calories_percent_day is None:
+        if calories_percent_day is None:
             summary_lines.append("Данных по цели питания пока недостаточно для точной оценки дня.")
         else:
-            if net_calories_percent_day < 60:
-                summary_lines.append("С учётом активности итоговый калораж получился очень низким.")
-            elif net_calories_percent_day < 85:
-                summary_lines.append("С учётом активности калораж ниже целевого уровня.")
-            elif net_calories_percent_day <= 115:
-                summary_lines.append("С учётом расхода энергии день по калориям близко к плану.")
+            if calories_percent_day < 60:
+                summary_lines.append("Относительно скорректированной нормы калораж получился очень низким.")
+            elif calories_percent_day < 85:
+                summary_lines.append("Относительно скорректированной нормы калораж ниже целевого уровня.")
+            elif calories_percent_day <= 115:
+                summary_lines.append("С учётом активности день по калориям близко к скорректированной норме.")
             else:
-                summary_lines.append("Даже с учётом активности калораж выше целевого уровня.")
+                summary_lines.append("Даже относительно скорректированной нормы калораж выше целевого уровня.")
 
             macro_parts = []
             if protein_percent_day is not None:
@@ -859,7 +883,7 @@ async def generate_activity_analysis(
         # 🎯 Фокус на завтра
         focus_items: list[str] = []
         if calories_percent_day is not None and calories_percent_day < 80:
-            focus_items.append("добрать больше калорий")
+            focus_items.append("приблизить калории к скорректированной норме")
         if carbs_percent_day is not None and carbs_percent_day < 80:
             focus_items.append("добавить источник углеводов")
         if protein_percent_day is not None and protein_percent_day < 80:
@@ -944,6 +968,7 @@ async def generate_activity_analysis(
 - История веса может включать несколько измерений — используй её для оценки тенденции, не говори, что измерение одно, если в данных есть история.
 - Используй HTML-теги <b>текст</b> для выделения важных цифр и фактов жирным шрифтом.
 - Обрати внимание на проценты выполнения целей КБЖУ — выдели их жирным и дай оценку.
+- В блоке питания оцени калории от скорректированной нормы: базовая норма + учтённая часть сожжённых за день калорий. Не сравнивай съеденные калории только с базовой нормой, если активность была.
 - Если есть сравнение с предыдущим периодом, обязательно упомяни это в анализе.
 - Если есть статистика по дням недели, используй её для выявления паттернов активности.
 - Если период анализа = 1 день, не используй формулировки про проценты тренировочных дней и «за период». Пиши выводы только про текущий день.
@@ -959,6 +984,9 @@ async def generate_activity_analysis(
 Всегда начинай анализ с приветствия:
 "Привет! Я на связи и уже подготовил твой отчёт {period_name.lower()}👇"
 
+
+Контекст калорий и цели пользователя:
+{calorie_balance_summary}
 
 Данные пользователя за период:
 {summary}
@@ -1007,8 +1035,9 @@ async def generate_activity_analysis(
 Учитывай блок самочувствия и отражай его выводы в рекомендациях и гипотезе.
 Учитывай блок заметок дня (оценка, факторы, комментарий) и отражай это в рекомендациях.
 Для блока "Питание" используй логику:
-- если калории выше цели: главный совет — вернуться в целевой калораж;
-- если калории ниже цели: главный совет — стабилизировать калораж ближе к цели;
+- обязательно упомяни, сколько калорий сожжено за день, сколько учтено в норме и какая получилась скорректированная норма;
+- если калории выше скорректированной нормы: главный совет — вернуться в целевой калораж;
+- если калории ниже скорректированной нормы: главный совет — стабилизировать калораж ближе к ней;
 - если белок в норме: похвали это отдельно;
 - жиры и углеводы можно упомянуть как факт или причину отклонения по калориям, но не как отдельный основной фокус без специальной причины.
 
@@ -1029,8 +1058,8 @@ async def generate_activity_analysis(
 
 Ключевые правила:
 - Главный фокус питания: сначала калории, потом белок. Жиры/углеводы вторичны.
-- При анализе калорий за день обязательно учитывай сожжённые калории на тренировке.
-  Используй интерпретацию через «фактическую дневную ситуацию», а не через жёсткое сравнение сырых калорий с целью.
+- При анализе калорий за день обязательно учитывай сожжённые калории на тренировке: сначала назови расход за день, затем учтённую часть активности и скорректированную норму.
+  Сравнивай съеденные калории именно со скорректированной нормой, а не только с базовой целью.
 - Вес: анализируй динамику (текущий vs предыдущий замер + короткая интерпретация: снижение/рост/без существенных изменений).
 - Если данных по весу мало, напиши нейтрально, что тренд пока неустойчив.
 - Если есть заметки дня — извлекай смысл (самочувствие, голод/аппетит, усталость, срывы, отёки, стресс, сон и др.) и добавляй короткий вывод.
@@ -1055,6 +1084,8 @@ async def generate_activity_analysis(
 {json.dumps(workout_ai_input, ensure_ascii=False, indent=2)}
 
 {_build_calorie_deficit_prompt_rules(prompt_variant)}
+
+Для блока "Питание" обязательно используй скорректированную норму из контекста калорий: базовая норма + учтённая активность.
 
 Ожидаемая структура (показывай только непустые блоки):
 <b>🏋️ Тренировки</b>
@@ -1114,6 +1145,8 @@ async def generate_activity_analysis(
                 today_workouts_by_type=today_workouts_by_type,
                 today_workout_kcal=today_workout_kcal,
                 trend_weights=trend_weights,
+                adjusted_goal_cal=adjusted_goal_cal_day if days_count == 1 else adjusted_goal_calories,
+                activity_counted_kcal=activity_counted_day if days_count == 1 else activity_counted_calories,
             )
     return result
 
