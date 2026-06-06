@@ -70,8 +70,8 @@ def test_show_input_methods_points_to_recent_products_when_available():
 
     assert message.answer.await_count == 2
     methods_text = message.answer.await_args.args[0]
-    assert methods_text.startswith("👍 Можешь выбрать один из недавно добавленных продуктов выше")
-    assert "или воспользоваться одним из этих вариантов" in methods_text
+    assert methods_text.startswith("<b>Можешь выбрать один из недавно добавленных продуктов выше ☝️")
+    assert "или воспользоваться одним из этих вариантов:</b>" in methods_text
     assert "• 📝 Ввести приём пищи текстом (AI-анализ)" in methods_text
     assert "• 📷 Анализ еды по фото" in methods_text
     assert "• 📋 Анализ этикетки" in methods_text
