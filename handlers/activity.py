@@ -459,8 +459,9 @@ async def generate_activity_analysis(
     goal_protein = settings.protein * days_count if settings else 0
     goal_fat = settings.fat * days_count if settings else 0
     goal_carbs = settings.carbs * days_count if settings else 0
+    lifestyle_activity = getattr(settings, "activity", "") if settings else ""
     lifestyle_coef = LIFESTYLE_ACTIVITY_COEFFICIENTS.get(
-        (settings.activity or "").strip().lower() if settings else "",
+        (lifestyle_activity or "").strip().lower(),
         LIFESTYLE_ACTIVITY_COEFFICIENTS["medium"],
     )
     activity_counted_calories = round(total_workout_calories * lifestyle_coef)
@@ -1060,6 +1061,7 @@ async def generate_activity_analysis(
 - Главный фокус питания: сначала калории, потом белок. Жиры/углеводы вторичны.
 - При анализе калорий за день обязательно учитывай сожжённые калории на тренировке: сначала назови расход за день, затем учтённую часть активности и скорректированную норму.
   Сравнивай съеденные калории именно со скорректированной нормой, а не только с базовой целью.
+  С учётом расхода на тренировке объясняй, почему итоговый калорийный баланс попал или не попал в цель.
 - Вес: анализируй динамику (текущий vs предыдущий замер + короткая интерпретация: снижение/рост/без существенных изменений).
 - Если данных по весу мало, напиши нейтрально, что тренд пока неустойчив.
 - Если есть заметки дня — извлекай смысл (самочувствие, голод/аппетит, усталость, срывы, отёки, стресс, сон и др.) и добавляй короткий вывод.
