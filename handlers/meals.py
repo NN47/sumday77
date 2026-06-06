@@ -3766,10 +3766,19 @@ async def meal_weight_back_to_edit_type(callback: CallbackQuery, state: FSMConte
 
 @router.callback_query(lambda c: c.data == "meal_wdone")
 async def meal_weight_done(callback: CallbackQuery, state: FSMContext):
-    """Завершает редактирование веса и возвращает в меню после приёма пищи."""
+    """Завершает редактирование веса и возвращает пользователя в дневник питания."""
     await callback.answer("Изменения сохранены")
+    data = await state.get_data()
+    target_date_raw = data.get("target_date")
+    try:
+        target_date = date.fromisoformat(target_date_raw) if isinstance(target_date_raw, str) else date.today()
+    except ValueError:
+        target_date = date.today()
+
+    user_id = str(callback.from_user.id)
     await state.clear()
-    await callback.message.answer("✅ Изменения выполнены", reply_markup=kbju_after_meal_menu)
+    await callback.message.answer("✅ Изменения выполнены")
+    await _return_to_food_diary(callback.message, user_id, target_date)
 
 @router.callback_query(lambda c: c.data == "meal_wcancel")
 async def meal_weight_cancel(callback: CallbackQuery, state: FSMContext):
