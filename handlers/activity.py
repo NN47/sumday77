@@ -1384,56 +1384,10 @@ async def analyze_activity_day_gigachat(message: Message):
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES)
 async def analyze_activity_day_copy_2(message: Message):
-    """Отдельный анализ дня с жёстким учётом дефицита калорий."""
+    """Дублирует стандартный анализ за день для кнопки «📅 Сегодня копия 2»."""
     user_id = str(message.from_user.id)
-    today = date.today()
-    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, today)
-    logger.info("Starting daily activity analysis copy 2 via GigaChat deficit prompt, user_id=%s", user_id)
-    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
-    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
-    AnalyticsRepository.track_event(user_id, "daily_analysis_copy_2_started", section="activity")
-    await message.answer("⏳ Подожди немного, бот анализирует твой день с учётом дефицита калорий...")
-    try:
-        analysis = await generate_activity_analysis(
-            user_id,
-            today,
-            today,
-            "за день",
-            backend="gigachat",
-            prompt_variant="calorie_deficit_gigachat",
-        )
-        ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="generated")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_copy_2_sent", section="activity")
-        logger.info("Daily activity analysis copy 2 sent successfully, user_id=%s", user_id)
-    except Exception as e:
-        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_copy_2_failed", section="activity")
-        if _is_gigachat_temporarily_unavailable_error(e):
-            push_menu_stack(message.bot, activity_analysis_menu)
-            await message.answer(
-                "GigaChat сейчас временно недоступен.\n\nПопробуй чуть позже — и всё снова заработает.",
-                reply_markup=activity_analysis_menu,
-            )
-            return
-        log_app_error(
-            source="gigachat",
-            error=e,
-            user_id=user_id,
-            context="daily_analysis_copy_2",
-            extra={"handler": "analyze_activity_day_copy_2"},
-        )
-        await message.answer("⚠️ Не удалось сгенерировать анализ дня с учётом дефицита. Попробуй позже.")
-        return
-    push_menu_stack(message.bot, activity_analysis_menu)
-    chunks = split_telegram_message(analysis, limit=3900)
-    for i, chunk in enumerate(chunks):
-        reply_markup = activity_analysis_menu if i == len(chunks) - 1 else None
-        try:
-            await message.answer(chunk, parse_mode="HTML", reply_markup=reply_markup)
-        except TelegramBadRequest as e:
-            logger.warning("Failed to send copy 2 analysis chunk as HTML, fallback to plain text: %s", e)
-            await message.answer(chunk, reply_markup=reply_markup)
+    logger.info("Starting daily activity analysis copy 2 as a standard daily analysis duplicate, user_id=%s", user_id)
+    await run_daily_activity_analysis(message, user_id)
 
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES)
