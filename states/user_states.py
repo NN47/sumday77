@@ -75,6 +75,7 @@ class SupplementStates(StatesGroup):
     entering_history_amount = State()
     editing_supplement = State()
     viewing_history = State()
+    confirming_delete = State()
 
 
 class WaterStates(StatesGroup):

@@ -191,3 +191,44 @@ def test_inline_time_callback_still_rejects_after_days_selected():
     callback.answer.assert_awaited_once_with("Этот шаг уже завершён", show_alert=True)
     callback.message.edit_text.assert_not_awaited()
 
+
+def test_supplement_delete_button_asks_for_confirmation_before_delete():
+    message = _build_message("🗑 Удалить добавку")
+    state = _DummyState({"viewing_supplement_id": 7, "viewing_index": 0})
+
+    with patch(
+        "handlers.supplements.SupplementRepository.get_supplements",
+        return_value=[{"id": 7, "name": "Магний", "times": [], "days": []}],
+    ), patch(
+        "handlers.supplements.SupplementRepository.delete_supplement"
+    ) as delete_supplement, patch("handlers.supplements.push_menu_stack"):
+        asyncio.run(supplements.delete_supplement(message, state))
+
+    delete_supplement.assert_not_called()
+    state.set_state.assert_awaited_once_with(supplements.SupplementStates.confirming_delete)
+    assert state._data["delete_supplement_id"] == 7
+    assert state._data["delete_supplement_name"] == "Магний"
+    message.answer.assert_awaited_once()
+    text, kwargs = message.answer.await_args
+    assert "Вы точно хотите удалить добавку «Магний»" in text[0]
+    buttons = [button.text for row in kwargs["reply_markup"].keyboard for button in row]
+    assert "✅ Да, удалить добавку" in buttons
+    assert "❌ Отменить удаление" in buttons
+
+
+def test_supplement_delete_confirmation_deletes_selected_supplement():
+    message = _build_message("✅ Да, удалить добавку")
+    state = _DummyState({"delete_supplement_id": 7, "delete_supplement_name": "Магний"})
+
+    with patch(
+        "handlers.supplements.SupplementRepository.delete_supplement",
+        return_value=True,
+    ) as delete_supplement, patch(
+        "handlers.supplements.supplements_list_view", new=AsyncMock()
+    ) as supplements_list_view:
+        asyncio.run(supplements.confirm_delete_supplement(message, state))
+
+    delete_supplement.assert_called_once_with("12345", 7)
+    message.answer.assert_awaited_once_with("🗑 Добавка Магний удалена.")
+    state.clear.assert_awaited_once()
+    supplements_list_view.assert_awaited_once_with(message, state)

@@ -23,6 +23,7 @@ from utils.supplement_keyboards import (
     supplements_choice_menu,
     supplements_view_menu,
     supplement_details_menu,
+    supplement_delete_confirm_menu,
     supplement_edit_menu,
     time_edit_menu,
     days_menu,
@@ -818,50 +819,88 @@ async def choose_supplement_to_edit(message: Message, state: FSMContext):
 
 @router.message(lambda m: m.text == "🗑 Удалить добавку")
 async def delete_supplement(message: Message, state: FSMContext):
-    """Удаляет добавку."""
+    """Запрашивает подтверждение удаления добавки."""
     user_id = str(message.from_user.id)
     supplements_list = SupplementRepository.get_supplements(user_id)
-    
+
     data = await state.get_data()
     viewing_index = data.get("viewing_index")
     supplement_id = data.get("viewing_supplement_id")
-    
+
     # Сначала пытаемся использовать ID, если он есть
     target = None
     if supplement_id:
-        # Проверяем, что добавка с таким ID существует
         target = next((s for s in supplements_list if s.get("id") == supplement_id), None)
-        if target:
-            success = SupplementRepository.delete_supplement(user_id, supplement_id)
-            if success:
-                await message.answer(f"🗑 Добавка {target.get('name', 'без названия')} удалена.")
-                await state.clear()
-                await supplements_list_view(message, state)
-            else:
-                await message.answer("❌ Не удалось удалить добавку. Попробуйте позже.")
-            return
-    
+
     # Если не нашли по ID, пытаемся использовать индекс (для обратной совместимости)
-    if not target and viewing_index is not None and viewing_index < len(supplements_list):
+    if not target and viewing_index is not None and 0 <= viewing_index < len(supplements_list):
         target = supplements_list[viewing_index]
         supplement_id = target.get("id")
-        
-        if supplement_id:
-            success = SupplementRepository.delete_supplement(user_id, supplement_id)
-            if success:
-                await message.answer(f"🗑 Добавка {target.get('name', 'без названия')} удалена.")
-                await state.clear()
-                await supplements_list_view(message, state)
-            else:
-                await message.answer("❌ Не удалось удалить добавку. Попробуйте позже.")
-            return
-        else:
-            await message.answer("❌ Не найдена добавка для удаления.")
-            return
-    
-    # Если не нашли добавку ни по ID, ни по индексу
-    if not target:
-        await message.answer("❌ Не нашёл такую добавку. Выбери добавку из списка 'Мои добавки'.")
+
+    if not target or not supplement_id:
+        await message.answer("❌ Не найдена добавка для удаления.")
+        return
+
+    await state.update_data(
+        delete_supplement_id=supplement_id,
+        delete_supplement_name=target.get("name", "без названия"),
+    )
+    await state.set_state(SupplementStates.confirming_delete)
+    push_menu_stack(message.bot, supplement_delete_confirm_menu())
+    await message.answer(
+        f"⚠️ Вы точно хотите удалить добавку «{target.get('name', 'без названия')}»?\n\n"
+        "Это действие нельзя отменить.",
+        reply_markup=supplement_delete_confirm_menu(),
+    )
+
+
+@router.message(SupplementStates.confirming_delete, lambda m: m.text == "✅ Да, удалить добавку")
+async def confirm_delete_supplement(message: Message, state: FSMContext):
+    """Удаляет добавку после подтверждения пользователя."""
+    user_id = str(message.from_user.id)
+    data = await state.get_data()
+    supplement_id = data.get("delete_supplement_id")
+    supplement_name = data.get("delete_supplement_name", "без названия")
+
+    if not supplement_id:
+        await message.answer("❌ Не найдена добавка для удаления.")
+        await state.clear()
+        await supplements_list_view(message, state)
+        return
+
+    success = SupplementRepository.delete_supplement(user_id, supplement_id)
+    if success:
+        await message.answer(f"🗑 Добавка {supplement_name} удалена.")
+        await state.clear()
+        await supplements_list_view(message, state)
+    else:
+        await message.answer("❌ Не удалось удалить добавку. Попробуйте позже.")
+
+
+@router.message(SupplementStates.confirming_delete, lambda m: m.text in {"❌ Отменить удаление", "⬅️ Назад"})
+async def cancel_delete_supplement(message: Message, state: FSMContext):
+    """Отменяет удаление добавки и возвращает пользователя к деталям."""
+    data = await state.get_data()
+    supplement_id = data.get("viewing_supplement_id")
+    viewing_index = data.get("viewing_index")
+    await state.set_state(SupplementStates.viewing_history)
+    await state.update_data(delete_supplement_id=None, delete_supplement_name=None)
+
+    supplements_list = SupplementRepository.get_supplements(str(message.from_user.id))
+    target = None
+    target_index = viewing_index
+    if supplement_id:
+        target = next((s for s in supplements_list if s.get("id") == supplement_id), None)
+        if target:
+            target_index = supplements_list.index(target)
+    if not target and viewing_index is not None and 0 <= viewing_index < len(supplements_list):
+        target = supplements_list[viewing_index]
+
+    if target:
+        await message.answer("Удаление отменено.")
+        await show_supplement_details(message, target, target_index or 0)
+    else:
+        await message.answer("Удаление отменено.")
         await supplements_list_view(message, state)
 
 
