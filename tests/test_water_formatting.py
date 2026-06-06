@@ -39,10 +39,10 @@ def test_build_water_added_text_formats_negative_adjustment():
 def test_water_quick_add_inline_has_requested_adjustment_buttons():
     row = water_quick_add_inline.inline_keyboard[0]
 
-    assert [button.text for button in row] == ["+250", "+300", "+500", "-300"]
+    assert [button.text for button in row] == ["-300", "+250", "+300", "+500"]
     assert [button.callback_data for button in row] == [
+        "quick_water_add_-300",
         "quick_water_add_250",
         "quick_water_add_300",
         "quick_water_add_500",
-        "quick_water_add_-300",
     ]

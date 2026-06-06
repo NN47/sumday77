@@ -745,10 +745,10 @@ water_amount_menu = ReplyKeyboardMarkup(
 water_adjustment_inline = InlineKeyboardMarkup(
     inline_keyboard=[
         [
+            InlineKeyboardButton(text="-300", callback_data="quick_water_add_-300"),
             InlineKeyboardButton(text="+250", callback_data="quick_water_add_250"),
             InlineKeyboardButton(text="+300", callback_data="quick_water_add_300"),
             InlineKeyboardButton(text="+500", callback_data="quick_water_add_500"),
-            InlineKeyboardButton(text="-300", callback_data="quick_water_add_-300"),
         ],
     ]
 )
