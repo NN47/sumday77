@@ -243,6 +243,26 @@ def test_recent_pick_sends_html_parse_mode_for_confirm_card():
     assert callback.message.answer.await_args.kwargs["parse_mode"] == "HTML"
 
 
+def test_ai_text_intro_bolds_first_two_sentences():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    state = _DummyState()
+    state._data["meal_type"] = meals.MealType.SNACK.value
+
+    with patch("handlers.meals.push_menu_stack"):
+        asyncio.run(meals.kbju_add_via_ai(message, state))
+
+    text = message.answer.await_args.args[0]
+
+    assert text.startswith("<b>📝 Ввести приём пищи текстом (AI-анализ)</b>\n\n")
+    assert (
+        "<b>Просто напиши обычным человеческим языком, что ты съел — "
+        "бот сам разберётся и посчитает КБЖУ</b>"
+    ) in text
+    assert "Можно писать как удобно:" in text
+    assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
+
+
 def test_label_intro_message_bolds_title_and_send_paragraph():
     message = _build_message()
     message.from_user = SimpleNamespace(id=12345)
@@ -689,4 +709,11 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     assert save_meal.call_args.kwargs["meal_type"] == meals.MealType.LUNCH.value
     assert state.clear.await_count == 1
     assert "AI text meal analysis provider=deepseek" in caplog.text
-    assert any("AI-анализ (DeepSeek)" in call.args[0] for call in message.answer.await_args_list)
+    answer_text = message.answer.await_args_list[-1].args[0]
+
+    assert "<b>📝 AI-анализ приёма пищи:</b>" in answer_text
+    assert "AI-анализ (DeepSeek): оценка приёма пищи" not in answer_text
+    assert "• <b>Курица</b> (200 г) — <b>330 ккал</b>" in answer_text
+    assert "🔥 <b>Калории:</b> 330 ккал" in answer_text
+    assert "<b>СУММА ЗА СЕГОДНЯ:</b>" in answer_text
+    assert message.answer.await_args_list[-1].kwargs["parse_mode"] == "HTML"

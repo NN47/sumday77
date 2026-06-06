@@ -1732,8 +1732,8 @@ async def kbju_add_via_ai(message: Message, state: FSMContext):
     await state.set_state(MealEntryStates.waiting_for_ai_food_input)
     
     text = (
-        "📝 Ввести приём пищи текстом (AI-анализ)\n\n"
-        "Просто напиши обычным человеческим языком, что ты съел — бот сам разберётся и посчитает КБЖУ\n\n"
+        "<b>📝 Ввести приём пищи текстом (AI-анализ)</b>\n\n"
+        "<b>Просто напиши обычным человеческим языком, что ты съел — бот сам разберётся и посчитает КБЖУ</b>\n\n"
         "Можно писать как удобно:\n\n"
         "✔ Список продуктов\n"
         "200 г курицы, 100 г йогурта, 30 г орехов\n\n"
@@ -1750,7 +1750,7 @@ async def kbju_add_via_ai(message: Message, state: FSMContext):
     )
     
     push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu)
+    await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
 
 
 @router.message(lambda m: m.text == "🧪 Ввести текст через OpenRouter")
@@ -1841,20 +1841,25 @@ async def _handle_provider_food_input(
     items = kbju_data.get("items", [])
     total = kbju_data.get("total", {})
 
-    lines = [f"{provider_title}: оценка приёма пищи\n"]
+    if provider_title == "📝 AI-анализ приёма пищи":
+        lines = [f"<b>{provider_title}:</b>\n"]
+    else:
+        lines = [f"<b>{html.escape(provider_title)}: оценка приёма пищи</b>\n"]
+
     for item in items:
+        item_name = html.escape(str(item.get("name") or "продукт"))
         lines.append(
-            f"• {item.get('name', 'продукт')} ({float(item.get('grams', 0)):.0f} г) — "
-            f"{float(item.get('kcal', 0)):.0f} ккал "
-            f"(Б {float(item.get('protein', 0)):.1f} / Ж {float(item.get('fat', 0)):.1f} / У {float(item.get('carbs', 0)):.1f})"
+            f"• <b>{item_name}</b> ({float(item.get('grams', 0)):.0f} г) — "
+            f"<b>{float(item.get('kcal', 0)):.0f} ккал</b> "
+            f"<i>(Б {float(item.get('protein', 0)):.1f} / Ж {float(item.get('fat', 0)):.1f} / У {float(item.get('carbs', 0)):.1f})</i>"
         )
 
-    lines.append("\nИТОГО:")
+    lines.append("\n<b>ИТОГО:</b>")
     lines.append(
-        f"🔥 Калории: {float(total.get('kcal', 0)):.0f} ккал\n"
-        f"💪 Белки: {float(total.get('protein', 0)):.1f} г\n"
-        f"🥑 Жиры: {float(total.get('fat', 0)):.1f} г\n"
-        f"🍩 Углеводы: {float(total.get('carbs', 0)):.1f} г"
+        f"🔥 <b>Калории:</b> {float(total.get('kcal', 0)):.0f} ккал\n"
+        f"💪 <b>Белки:</b> {float(total.get('protein', 0)):.1f} г\n"
+        f"🥑 <b>Жиры:</b> {float(total.get('fat', 0)):.1f} г\n"
+        f"🍩 <b>Углеводы:</b> {float(total.get('carbs', 0)):.1f} г"
     )
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
@@ -1883,15 +1888,10 @@ async def _handle_provider_food_input(
     daily_totals = MealRepository.get_daily_totals(user_id, entry_date)
     await state.clear()
     push_menu_stack(message.bot, kbju_after_meal_menu)
-    lines.append("\n✅ Приём пищи автоматически сохранён.")
-    lines.append(
-        "\nСУММА ЗА СЕГОДНЯ:\n"
-        f"🔥 Калории: {daily_totals.get('calories', 0):.0f} ккал\n"
-        f"💪 Белки: {daily_totals.get('protein', 0):.1f} г\n"
-        f"🥑 Жиры: {daily_totals.get('fat', 0):.1f} г\n"
-        f"🍩 Углеводы: {daily_totals.get('carbs', 0):.1f} г"
-    )
-    await message.answer("\n".join(lines), reply_markup=kbju_after_meal_menu)
+    lines.append("\n✅ <b>Приём пищи автоматически сохранён.</b>")
+    lines.append("\n<b>СУММА ЗА СЕГОДНЯ:</b>")
+    lines.append(_format_kbju_summary_block(daily_totals))
+    await message.answer("\n".join(lines), reply_markup=kbju_after_meal_menu, parse_mode="HTML")
 
 
 @router.message(MealEntryStates.waiting_for_openrouter_food_input)
@@ -2156,7 +2156,7 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
         message,
         state,
         provider_name="DeepSeek",
-        provider_title="📝 AI-анализ (DeepSeek)",
+        provider_title="📝 AI-анализ приёма пищи",
         analyzer=deepseek_service.analyze_food_text,
     )
 
