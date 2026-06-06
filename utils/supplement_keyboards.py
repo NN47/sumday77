@@ -101,6 +101,18 @@ def supplement_details_menu() -> ReplyKeyboardMarkup:
     )
 
 
+def supplement_delete_confirm_menu() -> ReplyKeyboardMarkup:
+    """Меню подтверждения удаления добавки."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="✅ Да, удалить добавку")],
+            [KeyboardButton(text="❌ Отменить удаление")],
+            [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+        ],
+        resize_keyboard=True,
+    )
+
+
 def supplement_edit_menu(show_save: bool = False) -> ReplyKeyboardMarkup:
     """Меню редактирования добавки."""
     buttons = [
