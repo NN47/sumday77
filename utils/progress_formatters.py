@@ -175,22 +175,32 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
 
     if include_exercise_details:
         details = []
+        repetition_totals = {}
         for w in workouts:
             exercise = normalize_exercise_name(w.exercise)
-            if exercise == "Шаги" or "шаг" in (w.variant or "").lower():
+            variant = w.variant or ""
+            variant_lower = variant.lower()
+            if exercise == "Шаги" or "шаг" in variant_lower:
                 continue
             entry_calories = w.calories or calculate_workout_calories(user_id, w.exercise, w.variant, w.count)
-            if (w.variant or "").lower() in {"минуты", "мин"}:
+            if variant_lower in {"минуты", "мин"}:
                 entered_value = f"{w.count:g} мин"
             else:
                 entered_value = str(int(w.count)) if float(w.count).is_integer() else f"{w.count:g}"
                 if w.variant and w.variant not in {"reps", "Повторения"}:
                     entered_value = f"{w.variant}: {entered_value}"
+                else:
+                    repetition_totals[exercise] = repetition_totals.get(exercise, 0) + (w.count or 0)
             details.append(f"• {exercise}: {entered_value} (~{entry_calories:.0f} ккал)")
 
         if details:
             lines.append("💪 <b>Упражнения:</b>")
             lines.extend(details)
+            if repetition_totals:
+                lines.append("Всего повторений:")
+                for exercise, total_count in repetition_totals.items():
+                    formatted_count = str(int(total_count)) if float(total_count).is_integer() else f"{total_count:g}"
+                    lines.append(f"• {exercise}: {formatted_count}")
             lines.append(f"Итого по упражнениям: {exercise_entries} запись (~{exercise_calories:.0f} ккал)")
         else:
             lines.append("💪 <b>Упражнения:</b> 0 записей (~0 ккал)")
