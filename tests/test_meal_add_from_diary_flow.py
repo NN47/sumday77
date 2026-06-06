@@ -657,6 +657,21 @@ def test_return_to_food_diary_sends_diary_menu_and_refreshes_today():
     )
 
 
+def test_meal_weight_done_returns_to_food_diary_for_edited_date():
+    target_date = date(2026, 1, 15)
+    callback = _build_callback("meal_wdone")
+    state = _DummyState()
+    state._data["target_date"] = target_date.isoformat()
+
+    with patch("handlers.meals._return_to_food_diary", new=AsyncMock()) as return_to_diary:
+        asyncio.run(meals.meal_weight_done(callback, state))
+
+    callback.answer.assert_awaited_once_with("Изменения сохранены")
+    state.clear.assert_awaited_once()
+    callback.message.answer.assert_awaited_once_with("✅ Изменения выполнены")
+    return_to_diary.assert_awaited_once_with(callback.message, "12345", target_date)
+
+
 def test_format_label_result_header_bolds_label_and_escapes_product_name():
     assert meals._format_label_result_header("label", "Салат <Курочка>") == (
         "📋 <b>Анализ этикетки:</b> Салат &lt;Курочка&gt;\n"
