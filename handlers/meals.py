@@ -891,8 +891,8 @@ async def _show_input_methods(message: Message, state: FSMContext, *, user_id: s
     recent_meals_shown = await _show_recent_meals_page(message, state, meal_type=meal_type, page=1, user_id=user_id)
     if recent_meals_shown:
         text = (
-            "👍 Можешь выбрать один из недавно добавленных продуктов выше "
-            "или воспользоваться одним из этих вариантов:\n\n"
+            "<b>Можешь выбрать один из недавно добавленных продуктов выше ☝️ "
+            "или воспользоваться одним из этих вариантов:</b>\n\n"
             "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
             "• 📷 Анализ еды по фото\n"
             "• 📋 Анализ этикетки"
