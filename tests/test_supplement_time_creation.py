@@ -9,6 +9,7 @@ from handlers import supplements
 from utils.supplement_keyboards import (
     supplement_creation_cancel_menu,
     supplement_test_time_inline_menu,
+    supplement_edit_time_inline_menu,
 )
 
 
@@ -99,6 +100,58 @@ def test_create_time_inline_menu_marks_selected_time_and_shows_save():
 
     assert any(button.text == "✅ 09:00" for button in buttons)
     assert any(button.text == "💾 Сохранить время" for button in buttons)
+
+
+def test_edit_time_inline_menu_contains_hours_and_save_action():
+    keyboard = supplement_edit_time_inline_menu(["09:00"])
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+
+    assert buttons[0].text == "06:00"
+    assert buttons[0].callback_data == "sup_edit_time:toggle:06:00"
+    assert any(button.text == "✅ 09:00" for button in buttons)
+    assert any(button.text == "23:00" for button in buttons)
+    assert any(button.text == "💾 Сохранить время" for button in buttons)
+    assert any(button.text == "⬅️ Назад" for button in buttons)
+
+
+def test_edit_supplement_time_shows_inline_time_buttons():
+    message = _build_message("✏️ Редактировать время")
+    state = _DummyState({"supplement_id": 7, "name": "Магний", "times": ["09:00"]})
+
+    asyncio.run(supplements.edit_supplement_time(message, state))
+
+    state.set_state.assert_awaited_once_with(supplements.SupplementStates.entering_time)
+    message.answer.assert_awaited_once()
+    text, kwargs = message.answer.await_args
+    assert "Редактирование времени" in text[0]
+    assert "Магний" in text[0]
+    keyboard = kwargs["reply_markup"]
+    assert any(
+        button.callback_data == "sup_edit_time:toggle:09:00" and button.text == "✅ 09:00"
+        for row in keyboard.inline_keyboard
+        for button in row
+    )
+
+
+def test_edit_time_inline_callback_toggles_selected_time():
+    callback = _build_callback("sup_edit_time:toggle:09:00")
+    state = _DummyState(
+        {"supplement_id": 7, "name": "Магний", "times": ["09:00"], "days": []},
+        supplements.SupplementStates.entering_time.state,
+    )
+
+    asyncio.run(supplements.handle_edit_supplement_time_callback(callback, state))
+
+    assert state._data["times"] == []
+    callback.answer.assert_awaited_once_with("Удалено 09:00")
+    callback.message.edit_text.assert_awaited_once()
+    _, kwargs = callback.message.edit_text.await_args
+    keyboard = kwargs["reply_markup"]
+    assert any(
+        button.callback_data == "sup_edit_time:toggle:09:00" and button.text == "09:00"
+        for row in keyboard.inline_keyboard
+        for button in row
+    )
 
 
 def test_parse_supplement_time_input_accepts_digits():

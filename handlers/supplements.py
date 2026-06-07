@@ -25,13 +25,13 @@ from utils.supplement_keyboards import (
     supplement_details_menu,
     supplement_delete_confirm_menu,
     supplement_edit_menu,
-    time_edit_menu,
     days_menu,
     duration_menu,
-    time_first_menu,
     SUPPLEMENT_CREATE_TIME_PREFIX,
+    SUPPLEMENT_EDIT_TIME_PREFIX,
     supplement_creation_cancel_menu,
     supplement_test_time_inline_menu,
+    supplement_edit_time_inline_menu,
 )
 from utils.calendar_utils import (
     build_supplement_calendar_keyboard,
@@ -136,6 +136,30 @@ def build_supplement_time_step_text(name: str, times: list[str] | None = None) -
         "",
         "Можно добавить несколько времён по одному.",
         "Когда закончишь — нажми «💾 Сохранить время». Если время не нужно — «⏭️ Пропустить».",
+    ])
+    return "\n".join(lines)
+
+
+def build_supplement_edit_time_text(name: str, times: list[str] | None = None) -> str:
+    """Формирует текст выбора времени при редактировании добавки."""
+    current_times = times or []
+    lines = [
+        "⏰ Редактирование времени приёма",
+        "",
+        f"💊 Добавка: {name or 'Добавка'}",
+        "",
+        "Выбери готовое время кнопкой с 06:00 до 23:00 или введи время вручную цифрами:",
+        "• 9 или 09 → 09:00",
+        "• 930 или 09:30 → 09:30",
+    ]
+    if current_times:
+        lines.extend(["", f"Текущие времена: {', '.join(current_times)}"])
+    else:
+        lines.extend(["", "Текущие времена: не выбрано"])
+    lines.extend([
+        "",
+        "Нажми на отмеченную кнопку ещё раз, чтобы удалить время.",
+        "Когда закончишь — нажми «💾 Сохранить время».",
     ])
     return "\n".join(lines)
 
@@ -1051,27 +1075,93 @@ async def edit_supplement_time(message: Message, state: FSMContext):
     """Начинает редактирование времени приёма."""
     data = await state.get_data()
     times = data.get("times", [])
-    
+    name = data.get("name", "")
+
     await state.set_state(SupplementStates.entering_time)
-    if times:
-        push_menu_stack(message.bot, time_edit_menu(times))
-        times_list = "\n".join(times)
-        await message.answer(
-            f"⏰ Редактирование времени приёма\n\n"
-            f"Текущее расписание:\n{times_list}\n\n"
-            f"💡 Введите время в формате ЧЧ:ММ (например: 09:00)\n\n"
-            f"ℹ️ Нажмите ❌ чтобы удалить время",
-            reply_markup=time_edit_menu(times),
+    await message.answer(
+        build_supplement_edit_time_text(name, times),
+        reply_markup=supplement_edit_time_inline_menu(times),
+    )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith(f"{SUPPLEMENT_EDIT_TIME_PREFIX}:"))
+async def handle_edit_supplement_time_callback(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает inline-выбор времени при редактировании добавки."""
+    data = await state.get_data()
+    if data.get("supplement_id") is None:
+        await callback.answer("Эта кнопка уже неактуальна", show_alert=True)
+        return
+
+    current_state = await state.get_state()
+    if current_state != SupplementStates.entering_time.state:
+        await callback.answer("Этот шаг уже завершён", show_alert=True)
+        return
+
+    parts = callback.data.split(":", 2)
+    action = parts[1] if len(parts) > 1 else ""
+    current_times = data.get("times", []).copy()
+    name = data.get("name", "")
+
+    if action == "toggle":
+        if len(parts) < 3:
+            await callback.answer("Не удалось выбрать время", show_alert=True)
+            return
+        time_text = parse_supplement_time_input(parts[2])
+        if time_text is None:
+            await callback.answer("Неверное время", show_alert=True)
+            return
+        if time_text in current_times:
+            current_times.remove(time_text)
+            await callback.answer(f"Удалено {time_text}")
+        else:
+            current_times.append(time_text)
+            await callback.answer(f"Добавлено {time_text}")
+        current_times.sort()
+        await state.update_data(times=current_times)
+        await callback.message.edit_text(
+            build_supplement_edit_time_text(name, current_times),
+            reply_markup=supplement_edit_time_inline_menu(current_times),
         )
-    else:
-        push_menu_stack(message.bot, time_first_menu())
-        await message.answer(
-            f"⏰ Добавление времени приёма\n\n"
-            f"💡 Введите время в формате ЧЧ:ММ\n"
-            f"Например: 09:00 или 14:30\n\n"
-            f"Нажмите «💾 Сохранить», когда закончите добавлять время",
-            reply_markup=time_first_menu(),
+        return
+
+    if action == "save":
+        await callback.answer()
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await state.set_state(SupplementStates.editing_supplement)
+        data = await state.get_data()
+        push_menu_stack(callback.message.bot, supplement_edit_menu(show_save=True))
+        await callback.message.answer(
+            "✅ Время сохранено.\n\n"
+            f"💊 {data.get('name', 'Добавка')}\n"
+            f"⏰ Время: {', '.join(data.get('times', [])) or 'не выбрано'}\n"
+            f"📅 Дни: {', '.join(data.get('days', [])) or 'не выбрано'}\n"
+            f"⏳ Длительность: {data.get('duration', 'постоянно')}",
+            reply_markup=supplement_edit_menu(show_save=True),
         )
+        return
+
+    if action == "back":
+        await callback.answer()
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await state.set_state(SupplementStates.editing_supplement)
+        data = await state.get_data()
+        push_menu_stack(callback.message.bot, supplement_edit_menu(show_save=True))
+        await callback.message.answer(
+            f"💊 {data.get('name', 'Добавка')}\n"
+            f"⏰ Время: {', '.join(data.get('times', [])) or 'не выбрано'}\n"
+            f"📅 Дни: {', '.join(data.get('days', [])) or 'не выбрано'}\n"
+            f"⏳ Длительность: {data.get('duration', 'постоянно')}",
+            reply_markup=supplement_edit_menu(show_save=True),
+        )
+        return
+
+    await callback.answer("Неизвестное действие", show_alert=True)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith(f"{SUPPLEMENT_CREATE_TIME_PREFIX}:"))
@@ -1271,7 +1361,7 @@ async def handle_time_value(message: Message, state: FSMContext):
     # Если это редактирование существующей добавки - старая логика
     # "💾 Сохранить" в режиме редактирования времени означает "готово" и возврат в меню редактирования,
     # а не сохранение в БД (это делается отдельной кнопкой в меню редактирования добавки).
-    if text == "💾 Сохранить":
+    if text in {"💾 Сохранить", "💾 Сохранить время"}:
         await state.set_state(SupplementStates.editing_supplement)
         data = await state.get_data()
         push_menu_stack(message.bot, supplement_edit_menu(show_save=True))
@@ -1300,67 +1390,41 @@ async def handle_time_value(message: Message, state: FSMContext):
         )
         return
     
-    # Обрабатываем удаление времени (кнопки начинающиеся с "❌")
+    # Обрабатываем удаление времени со старых reply-кнопок, которые могли остаться у пользователя.
     if text.startswith("❌"):
-        # Удаление времени
         time_value = text.replace("❌ ", "").strip()
         times = data.get("times", []).copy()
         if time_value in times:
             times.remove(time_value)
         await state.update_data(times=times)
-        if times:
-            push_menu_stack(message.bot, time_edit_menu(times))
-            times_list = "\n".join(times)
-            await message.answer(
-                f"✅ Время удалено\n\n"
-                f"Обновленное расписание:\n{times_list}\n\n"
-                f"💡 Введите время в формате ЧЧ:ММ (например: 09:00) или нажмите «💾 Сохранить»",
-                reply_markup=time_edit_menu(times),
-            )
-        else:
-            push_menu_stack(message.bot, time_first_menu())
-            await message.answer(
-                "✅ Расписание очищено\n\n"
-                "💡 Введите время в формате ЧЧ:ММ (например: 09:00)",
-                reply_markup=time_first_menu(),
-            )
+        await message.answer(
+            "✅ Время удалено\n\n"
+            + build_supplement_edit_time_text(data.get("name", ""), times),
+            reply_markup=supplement_edit_time_inline_menu(times),
+        )
         return
-    
-    # Проверяем формат времени
-    if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", text):
+
+    parsed_time = parse_supplement_time_input(text)
+    if parsed_time is None:
         data = await state.get_data()
         times = data.get("times", [])
-        if times:
-            push_menu_stack(message.bot, time_edit_menu(times))
-            await message.answer(
-                "❌ Неверный формат времени\n\n"
-                "💡 Пожалуйста, укажите время в формате ЧЧ:ММ\n"
-                "Например: 09:00 или 14:30",
-                reply_markup=time_edit_menu(times),
-            )
-        else:
-            push_menu_stack(message.bot, time_first_menu())
-            await message.answer(
-                "❌ Неверный формат времени\n\n"
-                "💡 Пожалуйста, укажите время в формате ЧЧ:ММ\n"
-                "Например: 09:00 или 14:30",
-                reply_markup=time_first_menu(),
-            )
+        await message.answer(
+            "❌ Неверный формат времени\n\n"
+            "Пожалуйста, выбери время кнопкой или введи цифры: например 9, 09, 930 или 09:30.",
+            reply_markup=supplement_edit_time_inline_menu(times),
+        )
         return
-    
+
     times = data.get("times", []).copy()
-    if text not in times:
-        times.append(text)
+    if parsed_time not in times:
+        times.append(parsed_time)
     times.sort()
-    
+
     await state.update_data(times=times)
-    push_menu_stack(message.bot, time_edit_menu(times))
-    times_list = "\n".join(times)
     await message.answer(
-        f"✅ Время добавлено: {text}\n\n"
-        f"📋 Расписание приёма:\n{times_list}\n\n"
-        f"💡 Введите ещё одно время (ЧЧ:ММ) или нажмите «💾 Сохранить»",
-        reply_markup=time_edit_menu(times),
+        f"✅ Время добавлено: {parsed_time}\n\n"
+        + build_supplement_edit_time_text(data.get("name", ""), times),
+        reply_markup=supplement_edit_time_inline_menu(times),
     )
 
 

@@ -9,6 +9,7 @@ from utils.keyboards import main_menu_button
 
 
 SUPPLEMENT_CREATE_TIME_PREFIX = "sup_create_time"
+SUPPLEMENT_EDIT_TIME_PREFIX = "sup_edit_time"
 
 
 def supplement_test_time_inline_menu(times: list[str]) -> InlineKeyboardMarkup:
@@ -53,6 +54,39 @@ def supplement_test_time_inline_menu(times: list[str]) -> InlineKeyboardMarkup:
             text="❌ Отменить",
             callback_data=f"{SUPPLEMENT_CREATE_TIME_PREFIX}:cancel",
         ),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def supplement_edit_time_inline_menu(times: list[str]) -> InlineKeyboardMarkup:
+    """Inline-меню выбора времени при редактировании добавки."""
+    selected = set(times or [])
+    rows: list[list[InlineKeyboardButton]] = []
+    hours = [f"{hour:02d}:00" for hour in range(6, 24)]
+
+    for index in range(0, len(hours), 3):
+        row = []
+        for time_text in hours[index:index + 3]:
+            prefix = "✅ " if time_text in selected else ""
+            row.append(
+                InlineKeyboardButton(
+                    text=f"{prefix}{time_text}",
+                    callback_data=f"{SUPPLEMENT_EDIT_TIME_PREFIX}:toggle:{time_text}",
+                )
+            )
+        rows.append(row)
+
+    rows.append([
+        InlineKeyboardButton(
+            text="💾 Сохранить время",
+            callback_data=f"{SUPPLEMENT_EDIT_TIME_PREFIX}:save",
+        )
+    ])
+    rows.append([
+        InlineKeyboardButton(
+            text="⬅️ Назад",
+            callback_data=f"{SUPPLEMENT_EDIT_TIME_PREFIX}:back",
+        )
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
