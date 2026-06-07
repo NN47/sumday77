@@ -191,3 +191,54 @@ def test_inline_time_callback_still_rejects_after_days_selected():
     callback.answer.assert_awaited_once_with("Этот шаг уже завершён", show_alert=True)
     callback.message.edit_text.assert_not_awaited()
 
+
+def test_edit_time_menu_contains_ready_hour_buttons_and_delete_buttons():
+    keyboard = supplements.time_edit_menu(["09:00", "21:00"])
+    buttons = [button for row in keyboard.keyboard for button in row]
+
+    assert any(button.text == "❌ 09:00" for button in buttons)
+    assert any(button.text == "❌ 21:00" for button in buttons)
+    assert any(button.text == "06:00" for button in buttons)
+    assert any(button.text == "23:00" for button in buttons)
+    assert not any(button.text == "09:00" for button in buttons)
+    assert any(button.text == "💾 Сохранить" for button in buttons)
+
+
+def test_edit_time_menu_shows_ready_hour_buttons_when_empty():
+    keyboard = supplements.time_edit_menu([])
+    buttons = [button for row in keyboard.keyboard for button in row]
+
+    assert buttons[0].text == "06:00"
+    assert any(button.text == "23:00" for button in buttons)
+    assert any(button.text == "💾 Сохранить" for button in buttons)
+
+
+def test_edit_existing_supplement_time_uses_ready_time_buttons():
+    message = _build_message("✏️ Редактировать время")
+    state = _DummyState({"supplement_id": 7, "name": "Магний", "times": ["09:00", "21:00"]})
+
+    with patch("handlers.supplements.push_menu_stack"):
+        asyncio.run(supplements.edit_supplement_time(message, state))
+
+    assert state._state == supplements.SupplementStates.entering_time.state
+    message.answer.assert_awaited_once()
+    text, kwargs = message.answer.await_args
+    assert "Выберите готовое время кнопкой" in text[0]
+    buttons = [button for row in kwargs["reply_markup"].keyboard for button in row]
+    assert any(button.text == "06:00" for button in buttons)
+    assert any(button.text == "❌ 09:00" for button in buttons)
+
+
+def test_manual_digit_time_is_added_during_editing():
+    message = _build_message("930")
+    state = _DummyState({"supplement_id": 7, "name": "Магний", "times": ["21:00"]})
+
+    with patch("handlers.supplements.push_menu_stack"):
+        asyncio.run(supplements.handle_time_value(message, state))
+
+    assert state._data["times"] == ["09:30", "21:00"]
+    message.answer.assert_awaited_once()
+    text, kwargs = message.answer.await_args
+    assert "✅ Время добавлено: 09:30" in text[0]
+    buttons = [button for row in kwargs["reply_markup"].keyboard for button in row]
+    assert any(button.text == "❌ 09:30" for button in buttons)

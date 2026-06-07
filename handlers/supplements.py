@@ -27,7 +27,6 @@ from utils.supplement_keyboards import (
     time_edit_menu,
     days_menu,
     duration_menu,
-    time_first_menu,
     SUPPLEMENT_CREATE_TIME_PREFIX,
     supplement_creation_cancel_menu,
     supplement_test_time_inline_menu,
@@ -958,18 +957,19 @@ async def edit_supplement_time(message: Message, state: FSMContext):
         await message.answer(
             f"⏰ Редактирование времени приёма\n\n"
             f"Текущее расписание:\n{times_list}\n\n"
-            f"💡 Введите время в формате ЧЧ:ММ (например: 09:00)\n\n"
+            f"Выберите готовое время кнопкой с 06:00 до 23:00 или введите время вручную.\n"
+            f"Например: 09:00, 14:30, 9 или 930.\n\n"
             f"ℹ️ Нажмите ❌ чтобы удалить время",
             reply_markup=time_edit_menu(times),
         )
     else:
-        push_menu_stack(message.bot, time_first_menu())
+        push_menu_stack(message.bot, time_edit_menu([]))
         await message.answer(
             f"⏰ Добавление времени приёма\n\n"
-            f"💡 Введите время в формате ЧЧ:ММ\n"
-            f"Например: 09:00 или 14:30\n\n"
+            f"Выберите готовое время кнопкой с 06:00 до 23:00 или введите время вручную.\n"
+            f"Например: 09:00, 14:30, 9 или 930.\n\n"
             f"Нажмите «💾 Сохранить», когда закончите добавлять время",
-            reply_markup=time_first_menu(),
+            reply_markup=time_edit_menu([]),
         )
 
 
@@ -1217,48 +1217,40 @@ async def handle_time_value(message: Message, state: FSMContext):
                 reply_markup=time_edit_menu(times),
             )
         else:
-            push_menu_stack(message.bot, time_first_menu())
+            push_menu_stack(message.bot, time_edit_menu([]))
             await message.answer(
                 "✅ Расписание очищено\n\n"
-                "💡 Введите время в формате ЧЧ:ММ (например: 09:00)",
-                reply_markup=time_first_menu(),
+                "Выберите готовое время кнопкой с 06:00 до 23:00 или введите время вручную.",
+                reply_markup=time_edit_menu([]),
             )
         return
     
     # Проверяем формат времени
-    if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", text):
+    parsed_time = parse_supplement_time_input(text)
+    if parsed_time is None:
         data = await state.get_data()
         times = data.get("times", [])
-        if times:
-            push_menu_stack(message.bot, time_edit_menu(times))
-            await message.answer(
-                "❌ Неверный формат времени\n\n"
-                "💡 Пожалуйста, укажите время в формате ЧЧ:ММ\n"
-                "Например: 09:00 или 14:30",
-                reply_markup=time_edit_menu(times),
-            )
-        else:
-            push_menu_stack(message.bot, time_first_menu())
-            await message.answer(
-                "❌ Неверный формат времени\n\n"
-                "💡 Пожалуйста, укажите время в формате ЧЧ:ММ\n"
-                "Например: 09:00 или 14:30",
-                reply_markup=time_first_menu(),
-            )
+        push_menu_stack(message.bot, time_edit_menu(times))
+        await message.answer(
+            "❌ Неверный формат времени\n\n"
+            "Пожалуйста, выберите готовое время кнопкой или введите время вручную.\n"
+            "Например: 09:00, 14:30, 9 или 930.",
+            reply_markup=time_edit_menu(times),
+        )
         return
     
     times = data.get("times", []).copy()
-    if text not in times:
-        times.append(text)
+    if parsed_time not in times:
+        times.append(parsed_time)
     times.sort()
     
     await state.update_data(times=times)
     push_menu_stack(message.bot, time_edit_menu(times))
     times_list = "\n".join(times)
     await message.answer(
-        f"✅ Время добавлено: {text}\n\n"
+        f"✅ Время добавлено: {parsed_time}\n\n"
         f"📋 Расписание приёма:\n{times_list}\n\n"
-        f"💡 Введите ещё одно время (ЧЧ:ММ) или нажмите «💾 Сохранить»",
+        f"Выберите ещё одно время кнопкой, введите вручную или нажмите «💾 Сохранить»",
         reply_markup=time_edit_menu(times),
     )
 

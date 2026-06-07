@@ -115,10 +115,24 @@ def supplement_edit_menu(show_save: bool = False) -> ReplyKeyboardMarkup:
 
 
 def time_edit_menu(times: list[str]) -> ReplyKeyboardMarkup:
-    """Меню редактирования времени."""
+    """Меню редактирования времени с готовыми вариантами времени."""
     buttons: list[list[KeyboardButton]] = []
+    selected_times = set(times or [])
+
     for t in times:
         buttons.append([KeyboardButton(text=f"❌ {t}")])
+
+    ready_times = [f"{hour:02d}:00" for hour in range(6, 24)]
+    available_ready_times = [
+        time_text for time_text in ready_times
+        if time_text not in selected_times
+    ]
+    for index in range(0, len(available_ready_times), 3):
+        buttons.append([
+            KeyboardButton(text=time_text)
+            for time_text in available_ready_times[index:index + 3]
+        ])
+
     buttons.append([KeyboardButton(text="💾 Сохранить")])
     buttons.append([KeyboardButton(text="⬅️ Назад")])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
