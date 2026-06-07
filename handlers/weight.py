@@ -41,13 +41,16 @@ def _format_weight_delta_button(delta_kg: float) -> str:
     """Форматирует быстрый шаг изменения веса в килограммах для кнопки."""
     sign = "+" if delta_kg > 0 else "-"
     abs_delta = abs(delta_kg)
-    formatted = f"{abs_delta:.1f}".rstrip("0").rstrip(".").replace(".", ",")
+    formatted = f"{abs_delta:.1f}"
+    if abs_delta != 1.0:
+        formatted = formatted.rstrip("0").rstrip(".").replace(".", ",")
     return f"{sign}{formatted}"
 
 
 _WEIGHT_QUICK_DELTAS_BY_LABEL = {
     _format_weight_delta_button(delta): delta for delta in WEIGHT_QUICK_DELTAS
 }
+_WEIGHT_QUICK_DELTAS_BY_LABEL.update({"-1": -1.0, "+1": 1.0})
 
 
 def _build_weight_quick_adjust_keyboard(_base_weight: float) -> InlineKeyboardMarkup:
