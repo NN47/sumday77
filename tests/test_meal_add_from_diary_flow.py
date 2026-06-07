@@ -95,6 +95,7 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_add_menu():
     message = _build_message()
     state = _DummyState()
     meal = SimpleNamespace(
+        id=7,
         raw_query="Чёрный кофе",
         description="Чёрный кофе",
         products_json='[{"name":"Чёрный кофе","grams":250,"kcal":5,"protein":0.3,"fat":0,"carbs":0.5}]',
@@ -107,7 +108,7 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_add_menu():
 
     with patch("handlers.meals.push_menu_stack") as push_stack, patch(
         "handlers.meals.MealRepository.get_meals_for_date", return_value=[meal]
-    ):
+    ), patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[meal]):
         asyncio.run(
             meals._keep_meal_entry_open_after_save(
                 message,
@@ -125,14 +126,18 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_add_menu():
     assert state._data["meal_type"] == meals.MealType.BREAKFAST.value
     assert state._data["pending_add_method"] is None
     push_stack.assert_called_once_with(message.bot, meals.kbju_add_menu)
-    answer_text = message.answer.await_args.args[0]
+    assert message.answer.await_count == 2
+    recent_text = message.answer.await_args_list[0].args[0]
+    assert "🕘 <b>Недавно добавленные • страница 1</b>" in recent_text
+    assert "<b>Чёрный кофе</b>" in recent_text
+    answer_text = message.answer.await_args_list[-1].args[0]
     assert "✅ Продукт сохранён." in answer_text
     assert "<b>Уже в этом приёме пищи:</b>" in answer_text
     assert "🍳 <b>Завтрак • 5 ккал</b>" in answer_text
     assert "• <b>Чёрный кофе</b> (250 г)" in answer_text
     assert "Добавь следующий продукт" in answer_text
-    assert message.answer.await_args.kwargs["reply_markup"] == meals.kbju_add_menu
-    assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
+    assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_add_menu
+    assert message.answer.await_args_list[-1].kwargs["parse_mode"] == "HTML"
 
 
 def test_meal_type_navigation_back_supports_hook_arrow_without_selected_meal_type():
@@ -768,6 +773,7 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
                 )
             ],
         ), \
+        patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]), \
         patch("handlers.meals.push_menu_stack"):
         caplog.set_level("INFO", logger="handlers.meals")
         asyncio.run(meals.handle_ai_food_input(message, state))
