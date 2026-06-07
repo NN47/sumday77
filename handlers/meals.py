@@ -954,6 +954,25 @@ async def _show_recent_meals_page(
     return True
 
 
+def _build_meal_entry_post_save_keyboard(meal_type: str, entry_date: date) -> InlineKeyboardMarkup:
+    """Inline-действия под сообщением после сохранения продукта в текущий приём пищи."""
+    normalized_meal_type = normalize_meal_type(meal_type, fallback=MealType.SNACK.value)
+    iso_date = entry_date.isoformat()
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✏️ Редактировать",
+                    callback_data=f"edit_meal:{normalized_meal_type}:{iso_date}",
+                ),
+                InlineKeyboardButton(
+                    text="🕘 Недавние",
+                    callback_data=f"meal_entry_recent:{normalized_meal_type}:1",
+                ),
+            ]
+        ]
+    )
+
 def _get_all_recent_items_for_search(user_id: str) -> list[RecentMealItem]:
     source_meals = MealRepository.get_user_meal_history(user_id)
     return _expand_recent_meals(source_meals, limit=10_000)
@@ -1171,6 +1190,30 @@ def _build_adjusted_recent_item(item: RecentMealItem, amount_g: int) -> RecentMe
         fat=float(item.fat) * ratio,
         carbs=float(item.carbs) * ratio,
     )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_entry_recent:"))
+async def meal_entry_recent(callback: CallbackQuery, state: FSMContext):
+    """Открывает список недавних продуктов из inline-кнопки под текущим приёмом пищи."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    meal_type = normalize_meal_type(parts[1] if len(parts) > 1 else None, fallback=MealType.SNACK.value)
+    try:
+        page = int(parts[2]) if len(parts) > 2 else 1
+    except (TypeError, ValueError):
+        page = 1
+
+    shown = await _show_recent_meals_page(
+        callback.message,
+        state,
+        meal_type=meal_type,
+        page=page,
+        user_id=str(callback.from_user.id),
+    )
+    if not shown:
+        await callback.message.answer(
+            "Пока нет недавних продуктов. Добавь продукт любым способом — он появится здесь."
+        )
 
 
 @router.callback_query(lambda c: c.data.startswith("recent_search_start:"))
@@ -1975,7 +2018,11 @@ async def _keep_meal_entry_open_after_save(
     lines.append(f"Когда приём пищи заполнен — нажми «{FINISH_MEAL_BUTTON_TEXT}».")
 
     push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer("\n".join(lines), reply_markup=kbju_add_menu, parse_mode="HTML")
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=_build_meal_entry_post_save_keyboard(normalized_meal_type, entry_date),
+        parse_mode="HTML",
+    )
 
 
 @router.message(MealEntryStates.waiting_for_openrouter_food_input)
