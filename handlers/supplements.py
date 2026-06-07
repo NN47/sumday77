@@ -657,6 +657,44 @@ async def show_supplement_details(message: Message, sup: dict, index: int):
     await message.answer("\n".join(lines), reply_markup=supplement_details_menu())
 
 
+async def finish_supplement_editing(message: Message, state: FSMContext, data: dict):
+    """Сохраняет изменения добавки и возвращает пользователя к её карточке."""
+    supplement_id = data.get("supplement_id")
+    name = data.get("name", "").strip()
+
+    if supplement_id is None or not name:
+        await message.answer("Не удалось сохранить изменения добавки. Попробуй открыть её снова.")
+        return
+
+    user_id = str(message.from_user.id)
+    supplement_payload = {
+        "name": name,
+        "times": data.get("times", []).copy(),
+        "days": data.get("days", []).copy(),
+        "duration": data.get("duration", "постоянно"),
+        "notifications_enabled": data.get("notifications_enabled", True),
+    }
+
+    saved_id = SupplementRepository.save_supplement(user_id, supplement_payload, supplement_id)
+    if not saved_id:
+        await message.answer("❌ Не удалось сохранить изменения. Попробуй позже.")
+        return
+
+    supplements_list = SupplementRepository.get_supplements(user_id)
+    target_index = next(
+        (idx for idx, item in enumerate(supplements_list) if item.get("id") == supplement_id),
+        data.get("editing_index"),
+    )
+    target = next(
+        (item for item in supplements_list if item.get("id") == supplement_id),
+        {"id": supplement_id, **supplement_payload},
+    )
+
+    await state.update_data(viewing_index=target_index, viewing_supplement_id=supplement_id)
+    await state.set_state(SupplementStates.viewing_history)
+    await show_supplement_details(message, target, target_index if target_index is not None else 0)
+
+
 @router.message(
     SupplementStates.viewing_history,
     ~F.text.in_(
@@ -816,7 +854,7 @@ async def choose_supplement_to_edit(message: Message, state: FSMContext):
                 await supplements(message)
                 return
             if message.text == "⬅️ Назад":
-                # Уже редактируем добавку, просто возвращаемся к меню редактирования
+                await finish_supplement_editing(message, state, data)
                 return
         return
     

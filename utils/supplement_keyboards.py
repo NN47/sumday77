@@ -153,10 +153,8 @@ def supplement_edit_menu(show_save: bool = False) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="✏️ Редактировать время"), KeyboardButton(text="📅 Редактировать дни")],
         [KeyboardButton(text="⏳ Длительность приема"), KeyboardButton(text="✏️ Изменить название")],
         [KeyboardButton(text="🔔 Уведомления")],
+        [KeyboardButton(text="⬅️ Назад")],
     ]
-    if show_save:
-        buttons.append([KeyboardButton(text="💾 Сохранить")])
-    buttons.append([KeyboardButton(text="❌ Отменить")])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 

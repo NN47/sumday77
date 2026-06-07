@@ -10,6 +10,7 @@ from utils.supplement_keyboards import (
     supplement_creation_cancel_menu,
     supplement_test_time_inline_menu,
     supplement_edit_time_inline_menu,
+    supplement_edit_menu,
 )
 
 
@@ -81,6 +82,15 @@ def test_start_create_supplement_shows_friendly_prompt_and_cancel_menu():
     button_texts = [button.text for row in keyboard.keyboard for button in row]
     assert button_texts == ["❌ Отменить"]
     push_menu_stack.assert_called_once()
+
+
+def test_supplement_edit_menu_replaces_save_and_cancel_with_back_button():
+    keyboard = supplement_edit_menu(show_save=True)
+    button_texts = [button.text for row in keyboard.keyboard for button in row]
+
+    assert "💾 Сохранить" not in button_texts
+    assert "❌ Отменить" not in button_texts
+    assert button_texts[-1] == "⬅️ Назад"
 
 
 def test_create_time_inline_menu_contains_hours_from_6_to_23_and_actions():
