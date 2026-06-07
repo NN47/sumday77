@@ -91,6 +91,50 @@ def test_add_meal_from_diary_block_sets_context_and_opens_methods():
     show_methods.assert_awaited_once_with(callback.message, state, user_id="12345")
 
 
+def test_keep_meal_entry_open_after_save_shows_current_meal_and_add_menu():
+    message = _build_message()
+    state = _DummyState()
+    meal = SimpleNamespace(
+        raw_query="Чёрный кофе",
+        description="Чёрный кофе",
+        products_json='[{"name":"Чёрный кофе","grams":250,"kcal":5,"protein":0.3,"fat":0,"carbs":0.5}]',
+        calories=5,
+        protein=0.3,
+        fat=0,
+        carbs=0.5,
+        meal_type=meals.MealType.BREAKFAST.value,
+    )
+
+    with patch("handlers.meals.push_menu_stack") as push_stack, patch(
+        "handlers.meals.MealRepository.get_meals_for_date", return_value=[meal]
+    ):
+        asyncio.run(
+            meals._keep_meal_entry_open_after_save(
+                message,
+                state,
+                user_id="12345",
+                entry_date=date(2026, 4, 8),
+                meal_type=meals.MealType.BREAKFAST.value,
+                intro_lines=["✅ Продукт сохранён."],
+                parse_mode="HTML",
+            )
+        )
+
+    state.set_state.assert_awaited_once_with(meals.MealEntryStates.choosing_meal_type)
+    assert state._data["entry_date"] == "2026-04-08"
+    assert state._data["meal_type"] == meals.MealType.BREAKFAST.value
+    assert state._data["pending_add_method"] is None
+    push_stack.assert_called_once_with(message.bot, meals.kbju_add_menu)
+    answer_text = message.answer.await_args.args[0]
+    assert "✅ Продукт сохранён." in answer_text
+    assert "<b>Уже в этом приёме пищи:</b>" in answer_text
+    assert "🍳 <b>Завтрак • 5 ккал</b>" in answer_text
+    assert "• <b>Чёрный кофе</b> (250 г)" in answer_text
+    assert "Добавь следующий продукт" in answer_text
+    assert message.answer.await_args.kwargs["reply_markup"] == meals.kbju_add_menu
+    assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
+
+
 def test_meal_type_navigation_back_supports_hook_arrow_without_selected_meal_type():
     message = _build_message()
     message.text = "↩️ Назад"
@@ -595,11 +639,11 @@ def test_recent_confirm_uses_single_selected_product():
 
     with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal), patch(
         "handlers.meals.MealRepository.save_meal", return_value=saved
-    ) as save_meal, patch("handlers.meals._return_to_food_diary", new=AsyncMock()) as return_to_diary:
+    ) as save_meal, patch("handlers.meals._keep_meal_entry_open_after_save", new=AsyncMock()) as keep_open:
         asyncio.run(meals.recent_meal_confirm(callback, state))
 
     save_meal.assert_called_once()
-    return_to_diary.assert_awaited_once()
+    keep_open.assert_awaited_once()
     kwargs = save_meal.call_args.kwargs
     assert kwargs["raw_query"] == "Окрошка без заправки"
     assert kwargs["calories"] == 120
@@ -710,8 +754,19 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
         patch("handlers.meals._run_gemini_task", side_effect=fail_gemini) as gemini_task, \
         patch("handlers.meals.MealRepository.save_meal", return_value=saved_meal) as save_meal, \
         patch(
-            "handlers.meals.MealRepository.get_daily_totals",
-            return_value={"calories": 330, "protein": 62, "fat": 7, "carbs": 0},
+            "handlers.meals.MealRepository.get_meals_for_date",
+            return_value=[
+                SimpleNamespace(
+                    raw_query="Курица",
+                    description="Курица",
+                    products_json='[{"name":"Курица","grams":200,"kcal":330,"protein":62,"fat":7,"carbs":0}]',
+                    calories=330,
+                    protein=62,
+                    fat=7,
+                    carbs=0,
+                    meal_type=meals.MealType.LUNCH.value,
+                )
+            ],
         ), \
         patch("handlers.meals.push_menu_stack"):
         caplog.set_level("INFO", logger="handlers.meals")
@@ -722,7 +777,8 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     save_meal.assert_called_once()
     assert save_meal.call_args.kwargs["calories"] == 330
     assert save_meal.call_args.kwargs["meal_type"] == meals.MealType.LUNCH.value
-    assert state.clear.await_count == 1
+    state.set_state.assert_awaited_with(meals.MealEntryStates.choosing_meal_type)
+    assert state._data["meal_type"] == meals.MealType.LUNCH.value
     assert "AI text meal analysis provider=deepseek" in caplog.text
     answer_text = message.answer.await_args_list[-1].args[0]
 
@@ -730,5 +786,7 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     assert "AI-анализ (DeepSeek): оценка приёма пищи" not in answer_text
     assert "• <b>Курица</b> (200 г) — <b>330 ккал</b>" in answer_text
     assert "🔥 <b>Калории:</b> 330 ккал" in answer_text
-    assert "<b>СУММА ЗА СЕГОДНЯ:</b>" in answer_text
+    assert "<b>Уже в этом приёме пищи:</b>" in answer_text
+    assert "🍲 <b>Обед • 330 ккал</b>" in answer_text
+    assert "Добавь следующий продукт" in answer_text
     assert message.answer.await_args_list[-1].kwargs["parse_mode"] == "HTML"
