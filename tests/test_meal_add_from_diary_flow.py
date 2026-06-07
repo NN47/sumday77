@@ -136,6 +136,7 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_add_menu():
     assert "🍳 <b>Завтрак • 5 ккал</b>" in answer_text
     assert "• <b>Чёрный кофе</b> (250 г)" in answer_text
     assert "Добавь следующий продукт" in answer_text
+    assert "Когда приём пищи заполнен — нажми «✅ Завершить приём пищи»." in answer_text
     assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_add_menu
     assert message.answer.await_args_list[-1].kwargs["parse_mode"] == "HTML"
 
@@ -173,6 +174,21 @@ def test_meal_type_navigation_back_from_add_methods_keeps_meal_type_choice_activ
         reply_markup=meals.kbju_meal_type_menu,
     )
     go_back.assert_not_awaited()
+
+
+def test_meal_finish_button_returns_to_food_diary_for_entry_date():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    message.text = meals.FINISH_MEAL_BUTTON_TEXT
+    state = _DummyState()
+    state._data["meal_type"] = meals.MealType.LUNCH.value
+    state._data["entry_date"] = "2026-04-08"
+
+    with patch("handlers.meals._return_to_food_diary", new=AsyncMock()) as return_to_diary:
+        asyncio.run(meals.handle_meal_type_menu_navigation(message, state))
+
+    state.clear.assert_awaited_once()
+    return_to_diary.assert_awaited_once_with(message, "12345", date(2026, 4, 8))
 
 
 def test_meal_type_navigation_main_menu_alias():
@@ -795,4 +811,5 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     assert "<b>Уже в этом приёме пищи:</b>" in answer_text
     assert "🍲 <b>Обед • 330 ккал</b>" in answer_text
     assert "Добавь следующий продукт" in answer_text
+    assert "Когда приём пищи заполнен — нажми «✅ Завершить приём пищи»." in answer_text
     assert message.answer.await_args_list[-1].kwargs["parse_mode"] == "HTML"

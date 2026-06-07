@@ -24,6 +24,8 @@ MEALS_BUTTON_ALIASES = {
 AI_ANALYSIS_BUTTON_TEXT = "🧠 ИИ анализ"
 KBJU_ADD_MEAL_BUTTON_TEXT = "➕ Добавить прием пищи"
 KBJU_ADD_MEAL_BUTTON_ALIASES = {KBJU_ADD_MEAL_BUTTON_TEXT, "➕ Добавить"}
+FINISH_MEAL_BUTTON_TEXT = "✅ Завершить приём пищи"
+
 
 ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT = "📅 Сегодня"
 ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT = "📅 Сегодня копия"
@@ -630,7 +632,7 @@ kbju_add_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="📝 Ввести приём пищи текстом (AI-анализ)")],
         [KeyboardButton(text="📷 Анализ еды по фото")],
         [KeyboardButton(text="📋 Анализ этикетки")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+        [KeyboardButton(text=FINISH_MEAL_BUTTON_TEXT), main_menu_button],
     ],
     resize_keyboard=True,
 )

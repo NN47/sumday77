@@ -1,8 +1,13 @@
 from datetime import date
 
-from utils.keyboards import KBJU_ADD_MEAL_BUTTON_ALIASES, KBJU_ADD_MEAL_BUTTON_TEXT, kbju_add_menu, kbju_menu
+from utils.keyboards import (
+    FINISH_MEAL_BUTTON_TEXT,
+    KBJU_ADD_MEAL_BUTTON_ALIASES,
+    KBJU_ADD_MEAL_BUTTON_TEXT,
+    kbju_add_menu,
+    kbju_menu,
+)
 from utils.meal_formatters import build_meals_actions_keyboard
-
 
 
 def _reply_keyboard_texts(markup) -> list[str]:
@@ -18,7 +23,6 @@ def test_kbju_menu_hides_duplicate_daily_report_button():
     assert "📆 Календарь КБЖУ" in texts
 
 
-
 def test_kbju_add_menu_exposes_only_primary_ai_input_buttons():
     texts = _reply_keyboard_texts(kbju_add_menu)
 
@@ -26,7 +30,7 @@ def test_kbju_add_menu_exposes_only_primary_ai_input_buttons():
         "📝 Ввести приём пищи текстом (AI-анализ)",
         "📷 Анализ еды по фото",
         "📋 Анализ этикетки",
-        "⬅️ Назад",
+        FINISH_MEAL_BUTTON_TEXT,
         "🔄 Главное меню",
     ]
     assert "🧪 Ввести текст через OpenRouter" not in texts
