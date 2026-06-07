@@ -137,8 +137,36 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_add_menu():
     assert "• <b>Чёрный кофе</b> (250 г)" in answer_text
     assert "Добавь следующий продукт" in answer_text
     assert "Когда приём пищи заполнен — нажми «✅ Завершить приём пищи»." in answer_text
-    assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_add_menu
+    keyboard = message.answer.await_args_list[-1].kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [["✏️ Редактировать", "🕘 Недавние"]]
+    assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
+        ["edit_meal:breakfast:2026-04-08", "meal_entry_recent:breakfast:1"]
+    ]
     assert message.answer.await_args_list[-1].kwargs["parse_mode"] == "HTML"
+
+
+def test_meal_entry_recent_inline_button_opens_recent_products_page():
+    callback = _build_callback("meal_entry_recent:dinner:1")
+    state = _DummyState()
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Салат",
+        description=None,
+        products_json='[{"name":"Салат","grams":120,"kcal":67,"protein":3.1,"fat":5.3,"carbs":1.7}]',
+        calories=67,
+        protein=3.1,
+        fat=5.3,
+        carbs=1.7,
+    )
+
+    with patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[meal]):
+        asyncio.run(meals.meal_entry_recent(callback, state))
+
+    callback.answer.assert_awaited_once()
+    assert state._data["meal_type"] == meals.MealType.DINNER.value
+    text = callback.message.answer.await_args.args[0]
+    assert "🕘 <b>Недавно добавленные • страница 1</b>" in text
+    assert callback.message.answer.await_args.kwargs["parse_mode"] == "HTML"
 
 
 def test_meal_type_navigation_back_supports_hook_arrow_without_selected_meal_type():
