@@ -1928,6 +1928,14 @@ async def _keep_meal_entry_open_after_save(
         if normalize_meal_type(getattr(meal, "meal_type", None)) == normalized_meal_type
     ]
 
+    await _show_recent_meals_page(
+        message,
+        state,
+        meal_type=normalized_meal_type,
+        page=1,
+        user_id=user_id,
+    )
+
     lines = list(intro_lines or [])
     if lines:
         lines.append("")
