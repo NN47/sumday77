@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 from aiogram import Bot, Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
     LEGACY_MAIN_MENU_BUTTON_TEXT,
@@ -51,6 +51,35 @@ logger = logging.getLogger(__name__)
 MSK_TZ = ZoneInfo("Europe/Moscow")
 
 router = Router()
+
+SUPPLEMENT_AMOUNT_PREFIX = "sup_amount"
+SUPPLEMENT_AMOUNT_OPTIONS = (
+    0.25, 0.5, 0.75, 1, 1.25,
+    1.5, 1.75, 2, 2.25, 2.5,
+    2.75, 3, 3.5, 4, 5,
+)
+
+
+def format_supplement_amount_option(amount: float) -> str:
+    """Форматирует количество добавки для кнопки."""
+    if float(amount).is_integer():
+        return str(int(amount))
+    return f"{amount:g}".replace(".", ",")
+
+
+def build_supplement_amount_inline_keyboard() -> InlineKeyboardMarkup:
+    """Создаёт inline-кнопки быстрого выбора количества добавки в 3 ряда."""
+    rows = []
+    row_size = 5
+    for index in range(0, len(SUPPLEMENT_AMOUNT_OPTIONS), row_size):
+        rows.append([
+            InlineKeyboardButton(
+                text=format_supplement_amount_option(amount),
+                callback_data=f"{SUPPLEMENT_AMOUNT_PREFIX}:{amount:g}",
+            )
+            for amount in SUPPLEMENT_AMOUNT_OPTIONS[index:index + row_size]
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def parse_supplement_amount(text: str) -> Optional[float]:
@@ -463,44 +492,37 @@ async def handle_history_time(message: Message, state: FSMContext):
         await message.answer("Неверный формат времени. Используй ЧЧ:ММ (например, 09:30)")
 
 
-@router.message(SupplementStates.entering_history_amount)
-async def handle_history_amount(message: Message, state: FSMContext):
-    """Обрабатывает ввод количества добавки и сохраняет запись."""
-    # Проверяем кнопки отмены/назад
-    if message.text == "❌ Отменить" or message.text == "⬅️ Назад":
-        await state.clear()
-        await supplements(message)
-        return
-    
-    user_id = str(message.from_user.id)
-    amount = parse_supplement_amount(message.text)
-    
-    if amount is None:
-        await message.answer("Пожалуйста, укажи количество числом, например: 1 или 2.5")
-        return
-    
+async def save_supplement_amount(
+    message: Message,
+    state: FSMContext,
+    amount: float,
+    *,
+    user_id: str | None = None,
+):
+    """Сохраняет количество приёма добавки из ручного ввода или inline-кнопки."""
+    user_id = user_id or str(message.from_user.id)
     data = await state.get_data()
     supplement_id = data.get("supplement_id")
     supplement_name = data.get("supplement_name")
     timestamp_str = data.get("timestamp")
     entry_date_str = data.get("entry_date")
     from_calendar = data.get("from_calendar", False)
-    
+
     if not supplement_id or not timestamp_str:
         await message.answer("Ошибка: не найдены данные о добавке или времени.")
         await state.clear()
         return
-    
+
     try:
         timestamp = datetime.fromisoformat(timestamp_str)
     except (ValueError, TypeError):
         await message.answer("Ошибка: неверный формат времени.")
         await state.clear()
         return
-    
+
     # Сохраняем запись
     entry_id = SupplementRepository.save_entry(user_id, supplement_id, timestamp, amount)
-    
+
     if entry_id:
         # Если это редактирование из календаря, показываем обновлённый день
         if from_calendar and entry_date_str:
@@ -511,7 +533,7 @@ async def handle_history_amount(message: Message, state: FSMContext):
                 return
             except (ValueError, TypeError):
                 pass
-        
+
         await state.clear()
         push_menu_stack(message.bot, supplements_main_menu(has_items=True))
         await message.answer(
@@ -521,6 +543,46 @@ async def handle_history_amount(message: Message, state: FSMContext):
     else:
         await message.answer("❌ Не удалось сохранить запись. Попробуйте позже.")
         await state.clear()
+
+
+@router.message(SupplementStates.entering_history_amount)
+async def handle_history_amount(message: Message, state: FSMContext):
+    """Обрабатывает ввод количества добавки и сохраняет запись."""
+    # Проверяем кнопки отмены/назад
+    if message.text == "❌ Отменить" or message.text == "⬅️ Назад":
+        await state.clear()
+        await supplements(message)
+        return
+
+    amount = parse_supplement_amount(message.text)
+
+    if amount is None:
+        await message.answer("Пожалуйста, укажи количество числом, например: 1 или 2.5")
+        return
+
+    await save_supplement_amount(message, state, amount)
+
+
+@router.callback_query(lambda c: c.data.startswith(f"{SUPPLEMENT_AMOUNT_PREFIX}:"))
+async def handle_history_amount_button(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет количество добавки, выбранное inline-кнопкой."""
+    try:
+        _, amount_raw = callback.data.split(":", 1)
+    except (ValueError, AttributeError):
+        await callback.answer("Не удалось обработать количество", show_alert=True)
+        return
+
+    amount = parse_supplement_amount(amount_raw)
+    if amount is None:
+        await callback.answer("Не удалось обработать количество", show_alert=True)
+        return
+
+    await callback.answer()
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await save_supplement_amount(callback.message, state, amount, user_id=str(callback.from_user.id))
 
 
 def format_supplement_history_lines(sup: dict) -> list[str]:
@@ -2179,7 +2241,9 @@ async def confirm_supplement_intake_from_notification(callback: CallbackQuery, s
 
     await callback.message.answer(
         f"✅ Зафиксировал время приёма «{target['name']}» в {time_text}.\n"
-        "Укажи количество для приёма (например: 1 или 2.5):"
+        "Укажи количество для приёма (например: 1 или 2.5) "
+        "или выбери кнопкой:",
+        reply_markup=build_supplement_amount_inline_keyboard(),
     )
 
 
