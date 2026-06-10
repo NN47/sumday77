@@ -300,6 +300,51 @@ def _is_valid_daily_analysis_text(text: str, backend: str = "openrouter") -> boo
 
 
 
+def _sanitize_daily_analysis_text(text: str) -> str:
+    """Правит формулировки отчёта, которые модель иногда возвращает вопреки промпту."""
+    if not text:
+        return text
+
+    sanitized = re.sub(
+        r"(?m)^(\s*•\s*)Энергия(:\s*~?\s*\d+\s*ккал\s*\(оценка\))",
+        r"\1Сожжённые калории\2",
+        text,
+    )
+
+    plan_match = re.search(r"(?m)^(.{0,20}<b>План на завтра</b>.*)$", sanitized)
+    if not plan_match:
+        return sanitized
+
+    plan_start = plan_match.start()
+    before_plan = sanitized[:plan_start]
+    plan_lines = sanitized[plan_start:].splitlines()
+    cleaned_plan_lines: list[str] = []
+
+    for line in plan_lines:
+        is_numbered_plan_item = bool(re.match(r"^\s*\d+[.)]\s+", line))
+        lower_line = line.lower()
+        is_calorie_norm_advice = (
+            is_numbered_plan_item
+            and any(token in lower_line for token in ("калор", "ккал", "калораж"))
+            and any(token in lower_line for token in ("норм", "стабилиз", "скоррект"))
+        )
+        has_explicit_kcal = bool(
+            re.search(r"\d{3,4}\s*[–-]\s*\d{3,4}\s*ккал", lower_line)
+            or re.search(r"[~≈]?\d{3,4}\s*ккал", lower_line)
+        )
+
+        if is_calorie_norm_advice and has_explicit_kcal:
+            prefix = re.match(r"^(\s*\d+[.)]\s+)", line).group(1)
+            line = prefix + "Постарайся стабилизировать потребление калорий ближе к норме без привязки к сегодняшним цифрам."
+        elif is_numbered_plan_item:
+            line = re.sub(r"скорректированной\s+норме", "норме", line, flags=re.IGNORECASE)
+            line = re.sub(r"скорректированной\s+цели", "цели", line, flags=re.IGNORECASE)
+
+        cleaned_plan_lines.append(line)
+
+    return before_plan + "\n".join(cleaned_plan_lines)
+
+
 def _build_calorie_deficit_prompt_rules(prompt_variant: str) -> str:
     """Возвращает дополнительные правила для отдельного анализа с учётом дефицита калорий."""
     if prompt_variant != "calorie_deficit_gigachat":
@@ -1012,7 +1057,7 @@ async def generate_activity_analysis(
 • Тип дня: <силовая/кардио/смешанный/активность без тренировки>
 • Нагрузка: <низкая/средняя/высокая> (<почему 3-6 слов>)
 • Ключевое: <1 строка про главное достижение>
-• Энергия: ~<ккал> ккал (оценка)
+• Сожжённые калории: ~<ккал> ккал (оценка)
 • Совет на завтра: <1 конкретное действие>
 
 Правила для блока тренировок:
@@ -1030,7 +1075,7 @@ async def generate_activity_analysis(
   - Совет на завтра:
     - при низкой нагрузке: «добавь 1 подход / +2000 шагов»
     - при высокой: «восстановление: прогулка/растяжка/сон»
-- Обязательно учитывай оценку сожжённых калорий на тренировках в поле "Энергия" и выводах по нагрузке.
+- Обязательно учитывай оценку сожжённых калорий на тренировках в поле "Сожжённые калории" и выводах по нагрузке.
 
 Пиши структурированно, но компактно. Используй <b>жирный шрифт</b> для выделения важных цифр, фактов и процентов выполнения целей.
 Учитывай блок самочувствия и отражай его выводы в рекомендациях и гипотезе.
@@ -1038,7 +1083,8 @@ async def generate_activity_analysis(
 Для блока "Питание" используй логику:
 - обязательно упомяни, сколько калорий сожжено за день, сколько учтено в норме и какая получилась скорректированная норма;
 - если калории выше скорректированной нормы: главный совет — вернуться в целевой калораж;
-- если калории ниже скорректированной нормы: главный совет — стабилизировать калораж ближе к ней;
+- если калории ниже скорректированной нормы: главный совет — стабилизировать калораж ближе к норме;
+- в блоке "План на завтра" не пиши точные диапазоны или значения ккал для этой рекомендации: завтрашняя скорректированная норма зависит от завтрашних сожжённых калорий, поэтому формулируй без цифр — «стабилизировать калории ближе к норме»;
 - если белок в норме: похвали это отдельно;
 - жиры и углеводы можно упомянуть как факт или причину отклонения по калориям, но не как отдельный основной фокус без специальной причины.
 
@@ -1098,6 +1144,7 @@ async def generate_activity_analysis(
 <b>📈 Гипотеза</b>
 <b>Краткий вывод</b>
 <b>План на завтра</b> (3-5 нумерованных действий)
+В плане на завтра не указывай точные значения или диапазоны ккал для совета по стабилизации калорий к норме: завтрашняя норма зависит от завтрашней активности.
 
 Ограничения:
 1) Без служебных фраз модели.
@@ -1150,7 +1197,7 @@ async def generate_activity_analysis(
                 adjusted_goal_cal=adjusted_goal_cal_day if days_count == 1 else adjusted_goal_calories,
                 activity_counted_kcal=activity_counted_day if days_count == 1 else activity_counted_calories,
             )
-    return result
+    return _sanitize_daily_analysis_text(result)
 
 
 @router.message(lambda m: m.text in {"🧠 ИИ анализ", "📊 ИИ анализ", "📊 ИИ анализ деятельности", "ИИ анализ деятельности"})
