@@ -3,7 +3,7 @@ from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from handlers.activity import generate_activity_analysis, _is_valid_daily_analysis_text
+from handlers.activity import generate_activity_analysis, _is_valid_daily_analysis_text, _sanitize_daily_analysis_text
 
 
 def test_daily_analysis_validator_accepts_required_format():
@@ -24,6 +24,27 @@ def test_daily_analysis_validator_accepts_required_format():
         "3. Добрать минимум 35 г белка до 15:00."
     )
     assert _is_valid_daily_analysis_text(text)
+
+
+def test_daily_analysis_sanitizer_renames_energy_and_removes_plan_kcal_range():
+    text = (
+        "<b>🏋️ Тренировки</b>\n"
+        "• Тип дня: смешанный\n"
+        "• Нагрузка: высокая (кардио и шаги)\n"
+        "• Ключевое: хорошая комбинация силовой и ходьбы.\n"
+        "• Энергия: ~631 ккал (оценка)\n"
+        "• Совет на завтра: восстановление.\n\n"
+        "<b>План на завтра</b>\n"
+        "1. Постарайся стабилизировать потребление калорий чуть ближе к скорректированной норме, примерно в диапазоне 2300-2400 ккал.\n"
+        "2. Продолжай поддерживать белок."
+    )
+
+    result = _sanitize_daily_analysis_text(text)
+
+    assert "• Сожжённые калории: ~631 ккал (оценка)" in result
+    assert "• Энергия:" not in result
+    assert "2300-2400 ккал" not in result
+    assert "ближе к норме без привязки к сегодняшним цифрам" in result
 
 
 def test_daily_analysis_fallback_used_after_invalid_regeneration():
