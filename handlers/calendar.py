@@ -4,7 +4,7 @@ from datetime import date
 from typing import Optional
 from aiogram import Router
 from aiogram.types import Message, CallbackQuery
-from utils.calendar_utils import build_workout_calendar_keyboard
+from utils.calendar_utils import build_workout_calendar_keyboard, show_calendar_back_button
 from handlers.workouts import show_day_workouts
 from handlers.workouts import show_day_workouts
 
@@ -18,6 +18,7 @@ async def calendar_view(message: Message):
     """Показывает общий календарь тренировок."""
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} opened general calendar")
+    await show_calendar_back_button(message)
     await show_calendar(message, user_id)
 
 

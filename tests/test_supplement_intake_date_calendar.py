@@ -67,8 +67,11 @@ def test_history_time_date_button_opens_intake_calendar():
     ):
         asyncio.run(supplements.handle_history_time(message, state))
 
-    message.answer.assert_awaited_once()
-    _, kwargs = message.answer.await_args
+    assert message.answer.await_count == 2
+    back_args, back_kwargs = message.answer.await_args_list[0]
+    assert "Назад" in back_args[0]
+    assert back_kwargs["reply_markup"].keyboard[0][0].text == "⬅️ Назад"
+    _, kwargs = message.answer.await_args_list[1]
     keyboard = kwargs["reply_markup"]
     first_day_callback = keyboard.inline_keyboard[2][4].callback_data
     assert first_day_callback == "supintakecal_day:2026-05-01"

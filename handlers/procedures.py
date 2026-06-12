@@ -10,6 +10,7 @@ from database.repositories import ProcedureRepository
 from states.user_states import ProcedureStates
 from utils.calendar_utils import (
     build_procedure_calendar_keyboard,
+    show_calendar_back_button,
     build_procedure_day_actions_keyboard,
 )
 
@@ -154,6 +155,7 @@ async def procedures_calendar(message: Message):
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} opened procedures calendar")
     today = date.today()
+    await show_calendar_back_button(message)
     await show_procedures_calendar(message, user_id, today.year, today.month)
 
 
