@@ -31,6 +31,12 @@ from database.repositories import AnalyticsRepository, EveningAnalysisNotificati
 from states.user_states import ActivityAnalysisStates
 from services.gemini_service import gemini_service, GeminiServiceTemporaryUnavailableError
 from services.openrouter_service import OpenRouterServiceTemporaryError, openrouter_service
+from services.deepseek_service import (
+    deepseek_service,
+    DeepSeekServiceError,
+    DeepSeekServiceTemporaryError,
+    DeepSeekServiceConfigError,
+)
 from services.ai.gigachat import (
     gigachat_service,
     GigaChatServiceError,
@@ -120,6 +126,15 @@ def _is_gigachat_temporarily_unavailable_error(error: Exception) -> bool:
     """Проверяет, связана ли ошибка с временной недоступностью GigaChat."""
     return (
         isinstance(error, (GigaChatServiceTemporaryError, asyncio.TimeoutError))
+        or "503" in str(error)
+        or "timeout" in str(error).lower()
+    )
+
+
+def _is_deepseek_temporarily_unavailable_error(error: Exception) -> bool:
+    """Проверяет, связана ли ошибка с временной недоступностью DeepSeek."""
+    return (
+        isinstance(error, (DeepSeekServiceTemporaryError, asyncio.TimeoutError))
         or "503" in str(error)
         or "timeout" in str(error).lower()
     )
@@ -1099,59 +1114,6 @@ async def generate_activity_analysis(
 Рекомендации делай в стиле кнопки "🔥 Философия Sumday77", учитывай её принципы, но не вставляй текст или списки из неё дословно.
 """
 
-    if backend == "gigachat":
-        prompt = f"""
-Ты — бот-ассистент Sumday77. Пиши дружелюбно, компактно и без канцелярита.
-
-Ключевые правила:
-- Главный фокус питания: сначала калории, потом белок. Жиры/углеводы вторичны.
-- При анализе калорий за день обязательно учитывай сожжённые калории на тренировке: сначала назови расход за день, затем учтённую часть активности и скорректированную норму.
-  Сравнивай съеденные калории именно со скорректированной нормой, а не только с базовой целью.
-  С учётом расхода на тренировке объясняй, почему итоговый калорийный баланс попал или не попал в цель.
-- Вес: анализируй динамику (текущий vs предыдущий замер + короткая интерпретация: снижение/рост/без существенных изменений).
-- Если данных по весу мало, напиши нейтрально, что тренд пока неустойчив.
-- Если есть заметки дня — извлекай смысл (самочувствие, голод/аппетит, усталость, срывы, отёки, стресс, сон и др.) и добавляй короткий вывод.
-- Если есть добавки — кратко и спокойно отметь факт соблюдения этого элемента режима, без мед. назначений.
-- Пустые разделы не выводи.
-- {gender_instruction}
-
-Начни отчёт так:
-"Привет! Я на связи и уже подготовил твой отчёт {period_name.lower()}👇"
-
-
-Контекст калорий и цели пользователя:
-{calorie_balance_summary}
-
-Данные пользователя за период:
-{summary}
-
-Черновик сводки за день (опирайся на факты, но перепиши живым языком):
-{daily_draft if daily_draft else "н/д"}
-
-Структурированный input по тренировкам:
-{json.dumps(workout_ai_input, ensure_ascii=False, indent=2)}
-
-{_build_calorie_deficit_prompt_rules(prompt_variant)}
-
-Для блока "Питание" обязательно используй скорректированную норму из контекста калорий: базовая норма + учтённая активность.
-
-Ожидаемая структура (показывай только непустые блоки):
-<b>🏋️ Тренировки</b>
-<b>🍽️ Питание</b>
-<b>⚖️ Вес</b>
-<b>📝 Заметки</b> (если есть)
-<b>💊 Добавки</b> (если есть)
-<b>📈 Гипотеза</b>
-<b>Краткий вывод</b>
-<b>План на завтра</b> (3-5 нумерованных действий)
-В плане на завтра не указывай точные значения или диапазоны ккал для совета по стабилизации калорий к норме: завтрашняя норма зависит от завтрашней активности.
-
-Ограничения:
-1) Без служебных фраз модели.
-2) Если данных по разделу нет — не выдумывай.
-3) Гипотеза строго в формате: «Если [действие], то [эффект], потому что [причина].»
-4) Для отчёта за день цель: 600–1500 символов.
-"""
 
     async def _run_backend() -> str:
         if backend == "gemini":
@@ -1168,13 +1130,18 @@ async def generate_activity_analysis(
                 asyncio.to_thread(gigachat_service.analyze_activity_prompt, prompt),
                 timeout=60.0,
             )
+        elif backend == "deepseek":
+            response = await asyncio.wait_for(
+                asyncio.to_thread(deepseek_service.analyze_activity_prompt, prompt, user_id=user_id),
+                timeout=60.0,
+            )
         else:
             raise ValueError(f"Unknown activity analysis backend: {backend}")
         response = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', response)
         return re.sub(r'\*+$', '', response).strip()
 
     result = await _run_backend()
-    if days_count == 1 and backend in {"openrouter", "gigachat"}:
+    if days_count == 1 and backend in {"openrouter", "gigachat", "deepseek"}:
         for _ in range(2):
             if _is_valid_daily_analysis_text(result, backend=backend):
                 break
@@ -1466,10 +1433,50 @@ async def analyze_activity_day_gigachat(message: Message):
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES)
 async def analyze_activity_day_copy_2(message: Message):
-    """Дублирует стандартный анализ за день для кнопки «📅 Сегодня копия 2»."""
+    """Анализ за день через DeepSeek для кнопки «📅 Сегодня копия 2»."""
     user_id = str(message.from_user.id)
-    logger.info("Starting daily activity analysis copy 2 as a standard daily analysis duplicate, user_id=%s", user_id)
-    await run_daily_activity_analysis(message, user_id)
+    today = date.today()
+    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, today)
+    logger.info("Starting daily activity analysis via DeepSeek, user_id=%s", user_id)
+    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
+    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
+    AnalyticsRepository.track_event(user_id, "daily_analysis_deepseek_started", section="activity")
+    await message.answer("⏳ Подожди немного, бот анализирует твой день через DeepSeek...")
+    try:
+        analysis = await generate_activity_analysis(user_id, today, today, "за день", backend="deepseek")
+        ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="generated")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_deepseek_sent", section="activity")
+        logger.info("Daily activity analysis via DeepSeek sent successfully, user_id=%s", user_id)
+    except Exception as e:
+        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_deepseek_failed", section="activity")
+        if _is_deepseek_temporarily_unavailable_error(e):
+            push_menu_stack(message.bot, activity_analysis_menu)
+            await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
+            return
+        if isinstance(e, DeepSeekServiceConfigError):
+            logger.error("DeepSeek token/config error during daily analysis, user_id=%s error=%s", user_id, e)
+        elif isinstance(e, DeepSeekServiceError):
+            logger.error("DeepSeek request error during daily analysis, user_id=%s error=%s", user_id, e)
+        log_app_error(
+            source="deepseek",
+            error=e,
+            user_id=user_id,
+            context="daily_analysis_deepseek",
+            extra={"handler": "analyze_activity_day_copy_2"},
+        )
+        await message.answer("⚠️ Не удалось сгенерировать анализ дня через DeepSeek. Попробуй позже.")
+        return
+    push_menu_stack(message.bot, activity_analysis_menu)
+    chunks = split_telegram_message(analysis, limit=3900)
+    for i, chunk in enumerate(chunks):
+        reply_markup = activity_analysis_menu if i == len(chunks) - 1 else None
+        try:
+            await message.answer(chunk, parse_mode="HTML", reply_markup=reply_markup)
+        except TelegramBadRequest as e:
+            logger.warning("Failed to send DeepSeek analysis chunk as HTML, fallback to plain text: %s", e)
+            await message.answer(chunk, reply_markup=reply_markup)
 
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES)

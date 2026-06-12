@@ -5,6 +5,7 @@ os.environ.setdefault("API_TOKEN", "test-token")
 from utils.keyboards import (
     ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES,
     ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES,
+    ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES,
     kbju_add_menu,
     activity_analysis_menu,
 )
@@ -36,8 +37,9 @@ def test_activity_analysis_menu_has_today_copy_buttons():
     texts = _reply_keyboard_texts(activity_analysis_menu)
     assert "📅 Сегодня копия" in texts
     assert "📅 Сегодня копия 2" in texts
-    assert "📅 Сегодня копия" in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES
-    assert "📅 Сегодня копия 2" in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES
+    assert "📅 Сегодня копия" not in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES
+    assert "📅 Сегодня копия 2" not in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES
+    assert "📅 Сегодня копия" in ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES
     assert "📅 Сегодня копия 2" in ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES
     assert "📅 Сегодня гигачат" not in texts
 
