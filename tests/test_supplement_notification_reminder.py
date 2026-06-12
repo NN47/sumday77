@@ -82,7 +82,11 @@ def test_confirm_notification_prompt_includes_amount_inline_keyboard():
     callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
     answer_kwargs = callback.message.answer.await_args.kwargs
     assert answer_kwargs["reply_markup"].inline_keyboard[0][0].text == "0,25"
-    assert "или выбери кнопкой" in callback.message.answer.await_args.args[0]
+    assert answer_kwargs["parse_mode"] == "HTML"
+    assert callback.message.answer.await_args.args[0] == (
+        "<b>✅ Зафиксировал время приёма «Магний» в 21:30.</b>\n"
+        "Выбери кнопкой или укажи количество вручную:"
+    )
 
 
 def test_supplement_amount_inline_button_saves_selected_amount():
