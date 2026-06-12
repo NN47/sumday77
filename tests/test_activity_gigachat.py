@@ -1,3 +1,7 @@
+import os
+
+os.environ.setdefault("API_TOKEN", "test-token")
+
 import asyncio
 from datetime import date
 from types import SimpleNamespace
@@ -27,14 +31,22 @@ def test_gigachat_day_analysis_uses_gigachat_backend():
     assert final_call.kwargs.get("parse_mode") == "HTML"
 
 
-def test_today_copy_2_uses_standard_daily_analysis_prompt():
+def test_today_copy_2_uses_deepseek_backend():
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=12345),
         answer=AsyncMock(),
         bot=SimpleNamespace(),
     )
 
-    with patch("handlers.activity.run_daily_activity_analysis", new=AsyncMock(return_value=True)) as run_mock:
+    with (
+        patch("handlers.activity.generate_activity_analysis", new=AsyncMock(return_value="<b>Отчёт</b>")) as generate_mock,
+        patch("handlers.activity.ActivityAnalysisRepository.create_entry") as create_entry,
+        patch("handlers.activity.AnalyticsRepository.track_event"),
+        patch("handlers.activity.push_menu_stack"),
+    ):
         asyncio.run(analyze_activity_day_copy_2(message))
 
-    run_mock.assert_awaited_once_with(message, "12345")
+    generate_mock.assert_awaited_once_with("12345", date.today(), date.today(), "за день", backend="deepseek")
+    create_entry.assert_called_once()
+    final_call = message.answer.await_args_list[-1]
+    assert final_call.kwargs.get("parse_mode") == "HTML"
