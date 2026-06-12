@@ -2341,11 +2341,13 @@ async def confirm_supplement_intake_from_notification(callback: CallbackQuery, s
     except Exception:
         pass
 
+    safe_supplement_name = html.escape(target["name"])
+
     await callback.message.answer(
-        f"✅ Зафиксировал время приёма «{target['name']}» в {time_text}.\n"
-        "Укажи количество для приёма (например: 1 или 2.5) "
-        "или выбери кнопкой:",
+        f"<b>✅ Зафиксировал время приёма «{safe_supplement_name}» в {time_text}.</b>\n"
+        "Выбери кнопкой или укажи количество вручную:",
         reply_markup=build_supplement_amount_inline_keyboard(),
+        parse_mode="HTML",
     )
 
 
