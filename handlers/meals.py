@@ -13,6 +13,7 @@ from aiogram.exceptions import TelegramBadRequest
 from typing import Optional
 from aiogram.fsm.context import FSMContext
 from states.user_states import MealEntryStates
+from utils.calendar_utils import show_calendar_back_button
 from utils.keyboards import (
     MAIN_MENU_BUTTON_ALIASES,
     MEALS_BUTTON_TEXT,
@@ -3044,6 +3045,7 @@ async def calories_calendar(message: Message):
     """Показывает календарь КБЖУ."""
     reset_user_state(message)
     user_id = str(message.from_user.id)
+    await show_calendar_back_button(message)
     await show_kbju_calendar(message, user_id)
 
 

@@ -32,7 +32,7 @@ from database.repositories import CustomWorkoutExerciseRepository
 from utils.workout_utils import calculate_workout_calories
 from utils.validators import parse_date
 from utils.formatters import format_count_with_unit
-from utils.calendar_utils import build_workout_calendar_keyboard
+from utils.calendar_utils import build_workout_calendar_keyboard, show_calendar_back_button
 from utils.workout_formatters import build_day_actions_keyboard
 
 logger = logging.getLogger(__name__)
@@ -205,6 +205,7 @@ async def show_training_calendar(message: Message):
     """Показывает календарь тренировок."""
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} opened training calendar")
+    await show_calendar_back_button(message)
     await show_workout_calendar(message, user_id)
 
 

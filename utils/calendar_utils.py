@@ -2,8 +2,9 @@
 import calendar
 import logging
 from datetime import date
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from config import MONTH_NAMES
+from utils.keyboards import calendar_back_menu
 from database.repositories import (
     WorkoutRepository,
     MealRepository,
@@ -16,6 +17,15 @@ from database.repositories.note_repository import NoteRepository
 from database.repositories.activity_analysis_repository import ActivityAnalysisRepository
 
 logger = logging.getLogger(__name__)
+
+
+async def show_calendar_back_button(message: Message) -> None:
+    """Показывает нижнюю клавиатуру календаря только с кнопкой «Назад»."""
+    await message.answer(
+        "⬇️ Для выхода из календаря используй кнопку «⬅️ Назад» ниже.",
+        reply_markup=calendar_back_menu,
+        disable_notification=True,
+    )
 
 
 def get_month_workout_days(user_id: str, year: int, month: int) -> set[int]:
@@ -107,7 +117,6 @@ def build_calendar_keyboard(
             InlineKeyboardButton(
                 text="◀️", callback_data=f"{callback_prefix}_nav:{prev_year}-{prev_month:02d}"
             ),
-            InlineKeyboardButton(text="Закрыть", callback_data="cal_close"),
             InlineKeyboardButton(
                 text="▶️", callback_data=f"{callback_prefix}_nav:{next_year}-{next_month:02d}"
             ),

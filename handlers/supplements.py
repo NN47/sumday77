@@ -35,6 +35,7 @@ from utils.supplement_keyboards import (
 )
 from utils.calendar_utils import (
     build_supplement_calendar_keyboard,
+    show_calendar_back_button,
     build_supplement_day_actions_keyboard,
     build_supplement_intake_date_calendar_keyboard,
 )
@@ -457,6 +458,7 @@ async def handle_history_time(message: Message, state: FSMContext):
         except ValueError:
             selected_date = date.today()
         user_id = str(message.from_user.id)
+        await show_calendar_back_button(message)
         await message.answer(
             "Выбери день для отметки приёма добавки:",
             reply_markup=build_supplement_intake_date_calendar_keyboard(
@@ -1983,6 +1985,7 @@ async def show_supplement_calendar_menu(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} opened supplement calendar")
     await state.clear()  # Очищаем состояние при открытии календаря
+    await show_calendar_back_button(message)
     await show_supplement_calendar(message, user_id)
 
 

@@ -24,6 +24,7 @@ from states.user_states import WeightStates
 from utils.validators import parse_weight
 from utils.calendar_utils import (
     build_weight_calendar_keyboard,
+    show_calendar_back_button,
     build_weight_day_actions_keyboard,
     build_measurement_calendar_keyboard,
     build_measurement_day_actions_keyboard,
@@ -1363,6 +1364,7 @@ async def show_weight_calendar(message: Message):
     """Показывает календарь веса."""
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} opened weight calendar")
+    await show_calendar_back_button(message)
     await show_weight_calendar_view(message, user_id)
 
 
@@ -1371,6 +1373,7 @@ async def show_measurements_calendar(message: Message):
     """Показывает календарь замеров."""
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} opened measurements calendar")
+    await show_calendar_back_button(message)
     await show_measurements_calendar_view(message, user_id)
 
 

@@ -15,6 +15,7 @@ from utils.keyboards import (
 )
 from utils.calendar_utils import (
     build_water_calendar_keyboard,
+    show_calendar_back_button,
     build_water_day_actions_keyboard,
 )
 from utils.progress_formatters import build_water_progress_bar
@@ -204,6 +205,7 @@ async def water_calendar(message: Message):
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} opened water calendar")
     today = date.today()
+    await show_calendar_back_button(message)
     await show_water_calendar(message, user_id, today.year, today.month)
 
 

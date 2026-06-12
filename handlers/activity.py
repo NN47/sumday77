@@ -24,6 +24,7 @@ from utils.keyboards import (
 from utils.emoji_map import EMOJI_MAP
 from utils.calendar_utils import (
     build_activity_analysis_calendar_keyboard,
+    show_calendar_back_button,
     build_activity_analysis_day_actions_keyboard,
 )
 from database.repositories.activity_analysis_repository import ActivityAnalysisRepository
@@ -1223,6 +1224,7 @@ async def show_activity_analysis_calendar(message: Message, state: FSMContext):
     """Открывает календарь сохранённых анализов деятельности."""
     await state.clear()
     user_id = str(message.from_user.id)
+    await show_calendar_back_button(message)
     await show_activity_analysis_calendar_view(message, user_id)
 
 

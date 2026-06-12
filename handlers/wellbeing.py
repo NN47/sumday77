@@ -9,7 +9,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from database.repositories.note_repository import NoteRepository
 from database.repositories.analytics_repository import AnalyticsRepository
 from states.user_states import WellbeingStates
-from utils.calendar_utils import build_notes_calendar_keyboard
+from utils.calendar_utils import build_notes_calendar_keyboard, show_calendar_back_button
 from utils.keyboards import (
     WELLBEING_AND_PROCEDURES_BUTTON_TEXT,
     LEGACY_WELLBEING_AND_PROCEDURES_BUTTON_TEXT,
@@ -415,6 +415,7 @@ async def open_notes_calendar(callback: CallbackQuery):
     await callback.answer()
     today = date.today()
     user_id = str(callback.from_user.id)
+    await show_calendar_back_button(callback.message)
     await show_notes_calendar(callback.message, user_id, today.year, today.month)
 
 
@@ -422,6 +423,7 @@ async def open_notes_calendar(callback: CallbackQuery):
 async def open_notes_calendar_message(message: Message):
     today = date.today()
     user_id = str(message.from_user.id)
+    await show_calendar_back_button(message)
     await show_notes_calendar(message, user_id, today.year, today.month)
 
 

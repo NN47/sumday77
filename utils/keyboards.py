@@ -75,6 +75,12 @@ ACTIVITY_ANALYSIS_MONTH_BUTTON_ALIASES = {
     "проанализировать месяц",
 }
 
+
+calendar_back_menu = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+    resize_keyboard=True,
+)
+
 # Главное меню
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
