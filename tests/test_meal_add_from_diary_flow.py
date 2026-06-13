@@ -133,6 +133,11 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_add_menu():
     analysis_text = message.answer.await_args_list[1].args[0]
     assert "✅ Продукт сохранён." in analysis_text
     assert message.answer.await_args_list[1].kwargs["parse_mode"] == "HTML"
+    analysis_keyboard = message.answer.await_args_list[1].kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in analysis_keyboard.inline_keyboard] == [["✏️ Редактировать"]]
+    assert [[button.callback_data for button in row] for row in analysis_keyboard.inline_keyboard] == [
+        ["edit_meal:breakfast:2026-04-08"]
+    ]
     answer_text = message.answer.await_args_list[-2].args[0]
     assert "🍱 <b>Уже в этом приёме пищи</b>" in answer_text
     assert "📅 <b>Дата:</b> 08.04.2026" in answer_text
@@ -925,7 +930,8 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     analysis_text = message.answer.await_args_list[-3].args[0]
     answer_text = message.answer.await_args_list[-2].args[0]
 
-    assert "🤖 <b>📝 AI-анализ приёма пищи</b>" in analysis_text
+    assert "<b>📝 AI-анализ приёма пищи</b>" in analysis_text
+    assert "🤖 <b>📝 AI-анализ приёма пищи</b>" not in analysis_text
     assert "AI-анализ (DeepSeek): оценка приёма пищи" not in analysis_text
     assert "• <b>Курица</b> (200 г) — <b>330 ккал</b>" in analysis_text
     assert "🔥 <b>Калории:</b> <b>330 ккал</b>" in analysis_text
@@ -935,5 +941,10 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     assert "➕ Добавь следующий продукт" in answer_text
     assert "✅ Когда приём пищи заполнен — нажми «✅ Завершить приём»." in answer_text
     assert message.answer.await_args_list[-3].kwargs["parse_mode"] == "HTML"
+    analysis_keyboard = message.answer.await_args_list[-3].kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in analysis_keyboard.inline_keyboard] == [["✏️ Редактировать"]]
+    assert [[button.callback_data for button in row] for row in analysis_keyboard.inline_keyboard] == [
+        [f"edit_meal:lunch:{date.today().isoformat()}"]
+    ]
     assert message.answer.await_args_list[-2].kwargs["parse_mode"] == "HTML"
     assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_add_menu
