@@ -83,9 +83,9 @@ def test_kbju_field_editor_has_expected_steps():
 
     protein_keyboard = _build_kbju_field_editor_keyboard(0, "protein")
     protein_rows = [[button.text for button in row] for row in protein_keyboard.inline_keyboard]
-    assert protein_rows[0] == ["-100", "-50", "+50", "+100"]
-    assert protein_rows[1] == ["-25", "-10", "+10", "+25"]
-    assert protein_rows[2] == ["-5", "-1", "+1", "+5"]
+    assert protein_rows[0] == ["-50", "-25", "+25", "+50"]
+    assert protein_rows[1] == ["-10", "-5", "+5", "+10"]
+    assert protein_rows[2] == ["-1", "-0,5", "+0,5", "+1"]
 
 
 def test_weight_editor_uses_smaller_first_two_step_rows():
@@ -115,17 +115,36 @@ def test_custom_product_calories_editor_has_one_kcal_step():
     keyboard = _build_custom_product_value_keyboard("calories", unit="ккал")
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
 
-    assert rows[:4] == [
+    assert rows[:5] == [
         ["-100 ккал", "+100 ккал"],
         ["-50 ккал", "+50 ккал"],
         ["-10 ккал", "+10 ккал"],
+        ["-5 ккал", "+5 ккал"],
         ["-1 ккал", "+1 ккал"],
     ]
 
     callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
     assert callback_rows[3] == [
-        "custom_vchg:calories:-1",
-        "custom_vchg:calories:1",
+        "custom_vchg:calories:-5",
+        "custom_vchg:calories:5",
+    ]
+
+
+def test_custom_product_macro_editors_use_fractional_gram_step():
+    keyboard = _build_custom_product_value_keyboard("protein", unit="г")
+    rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
+
+    assert rows[:4] == [
+        ["-10 г", "+10 г"],
+        ["-5 г", "+5 г"],
+        ["-1 г", "+1 г"],
+        ["-0,5 г", "+0,5 г"],
+    ]
+
+    callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
+    assert callback_rows[3] == [
+        "custom_vchg:protein:-0.5",
+        "custom_vchg:protein:0.5",
     ]
 
 
