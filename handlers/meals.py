@@ -167,9 +167,6 @@ def _format_current_meal_after_save_message(meal_type: str, current_meal_items: 
     lines.extend([
         "",
         "⸻",
-        "",
-        "➕ Добавь следующий продукт этим же способом или выбери другой вариант ниже.",
-        f"✅ Когда приём пищи заполнен — нажми «{FINISH_MEAL_BUTTON_TEXT}».",
     ])
     return "\n".join(lines)
 
@@ -2724,7 +2721,11 @@ async def _keep_meal_entry_open_after_save(
         parse_mode="HTML",
     )
     await message.answer(
-        "⬇️ Выбери следующий способ добавления или заверши приём пищи.",
+        "Можешь выбрать один из недавно добавленных продуктов выше ☝️ "
+        "или воспользоваться одним из этих вариантов:\n\n"
+        "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
+        "• 📷 Анализ еды по фото\n"
+        "• 📋 Анализ этикетки",
         reply_markup=kbju_add_menu,
     )
 
