@@ -35,6 +35,7 @@ class MealEntryStates(StatesGroup):
     custom_product_protein = State()  # Создание своего продукта: белки
     custom_product_fat = State()  # Создание своего продукта: жиры
     custom_product_carbs = State()  # Создание своего продукта: углеводы
+    custom_product_amount = State()  # Создание своего продукта: съеденный вес
     editing_meal = State()  # Старое состояние (для обратной совместимости)
 
 

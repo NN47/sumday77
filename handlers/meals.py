@@ -461,7 +461,196 @@ def _build_recent_search_empty_keyboard(meal_type: str) -> InlineKeyboardMarkup:
 
 def _format_custom_product_step(step: int, text: str) -> str:
     """Форматирует шаг создания продукта в стиле стартового теста КБЖУ."""
-    return f"Шаг {step}/5\n\n{text}"
+    return f"<b>Шаг {step}/5</b>\n\n{text}"
+
+
+def _build_custom_product_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Нижняя клавиатура для пошагового создания своего продукта без меню добавления."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="⬅️ Назад")],
+            [KeyboardButton(text="❌ Отмена")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def _render_custom_product_value_editor_text(
+    *,
+    step: int | None,
+    title: str,
+    value: float,
+    unit: str,
+    note: str,
+) -> str:
+    """Текст экрана изменения числового значения для своего продукта."""
+    header = f"<b>Шаг {step}/5</b>\n\n" if step else ""
+    return (
+        f"{header}<b>{title}</b>\n\n"
+        f"{note}\n\n"
+        f"Текущее значение: <b>{value:g} {unit}</b>\n\n"
+        "Измени значение кнопками или введи число сообщением.\n"
+        "Когда всё верно, нажми <b>✅ Сохранить</b>."
+    )
+
+
+def _build_custom_product_value_keyboard(field: str, *, unit: str) -> InlineKeyboardMarkup:
+    """Inline-кнопки +/− для ввода КБЖУ и веса съеденного продукта."""
+    deltas = [(-100, 100), (-50, 50), (-10, 10), (-1, 1)] if unit == "г" else [(-100, 100), (-50, 50), (-10, 10), (-5, 5)]
+    rows = [
+        [
+            InlineKeyboardButton(text=f"{minus:+g} {unit}", callback_data=f"custom_vchg:{field}:{minus:g}"),
+            InlineKeyboardButton(text=f"{plus:+g} {unit}", callback_data=f"custom_vchg:{field}:{plus:g}"),
+        ]
+        for minus, plus in deltas
+    ]
+    rows.append([InlineKeyboardButton(text="✅ Сохранить", callback_data=f"custom_vsave:{field}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+CUSTOM_PRODUCT_FIELDS = {
+    "calories": {
+        "state": MealEntryStates.custom_product_calories,
+        "step": 2,
+        "title": "🔥 Введите калории продукта",
+        "unit": "ккал",
+        "note": "Укажи <b>калорийность на 100 г продукта</b>.",
+        "next_field": "protein",
+    },
+    "protein": {
+        "state": MealEntryStates.custom_product_protein,
+        "step": 3,
+        "title": "💪 Введите белки продукта",
+        "unit": "г",
+        "note": "Укажи <b>белки на 100 г продукта</b>.",
+        "next_field": "fat",
+    },
+    "fat": {
+        "state": MealEntryStates.custom_product_fat,
+        "step": 4,
+        "title": "🥑 Введите жиры продукта",
+        "unit": "г",
+        "note": "Укажи <b>жиры на 100 г продукта</b>.",
+        "next_field": "carbs",
+    },
+    "carbs": {
+        "state": MealEntryStates.custom_product_carbs,
+        "step": 5,
+        "title": "🍩 Введите углеводы продукта",
+        "unit": "г",
+        "note": "Укажи <b>углеводы на 100 г продукта</b>.",
+        "next_field": "amount",
+    },
+    "amount": {
+        "state": MealEntryStates.custom_product_amount,
+        "step": None,
+        "title": "⚖️ Сколько продукта ты съел(а) в этом приёме пищи?",
+        "unit": "г",
+        "note": "Укажи <b>вес порции</b>, а я пересчитаю КБЖУ из значений на 100 г.",
+        "next_field": None,
+    },
+}
+
+
+async def _show_custom_product_value_editor(message: Message, state: FSMContext, field: str, value: float = 0) -> None:
+    """Показывает редактор значения для шага создания своего продукта."""
+    config = CUSTOM_PRODUCT_FIELDS[field]
+    await state.set_state(config["state"])
+    await state.update_data(custom_product_current_field=field, custom_product_draft_value=float(value))
+    await message.answer(
+        _render_custom_product_value_editor_text(
+            step=config["step"],
+            title=config["title"],
+            value=float(value),
+            unit=config["unit"],
+            note=config["note"],
+        ),
+        reply_markup=_build_custom_product_reply_keyboard(),
+        parse_mode="HTML",
+    )
+    await message.answer(
+        "Можно настроить значение кнопками ниже 👇",
+        reply_markup=_build_custom_product_value_keyboard(field, unit=config["unit"]),
+    )
+
+
+async def _go_to_previous_custom_product_step(message: Message, state: FSMContext) -> None:
+    """Возвращает пользователя на предыдущий шаг создания своего продукта."""
+    data = await state.get_data()
+    current_field = data.get("custom_product_current_field")
+    product = dict(data.get("custom_product") or {})
+    if current_field == "amount":
+        await _show_custom_product_value_editor(message, state, "carbs", float(product.get("carbs", 0)))
+    elif current_field == "carbs":
+        await _show_custom_product_value_editor(message, state, "fat", float(product.get("fat", 0)))
+    elif current_field == "fat":
+        await _show_custom_product_value_editor(message, state, "protein", float(product.get("protein", 0)))
+    elif current_field == "protein":
+        await _show_custom_product_value_editor(message, state, "calories", float(product.get("calories", 0)))
+    else:
+        await state.set_state(MealEntryStates.custom_product_name)
+        await message.answer(
+            _format_custom_product_step(1, "<b>Введите название продукта:</b>"),
+            reply_markup=_build_custom_product_reply_keyboard(),
+            parse_mode="HTML",
+        )
+
+
+async def _advance_custom_product_after_save(message: Message, state: FSMContext, field: str, value: float) -> None:
+    """Сохраняет значение текущего поля и переводит к следующему шагу."""
+    data = await state.get_data()
+    product = dict(data.get("custom_product") or {})
+    product[field] = value
+    await state.update_data(custom_product=product, custom_product_draft_value=None)
+    next_field = CUSTOM_PRODUCT_FIELDS[field]["next_field"]
+    if next_field:
+        start_value = 100 if next_field == "amount" else float(product.get(next_field, 0))
+        await _show_custom_product_value_editor(message, state, next_field, start_value)
+        return
+    await _save_custom_product(message, state)
+
+
+@router.callback_query(lambda c: c.data.startswith("custom_vchg:"))
+async def custom_product_value_change(callback: CallbackQuery, state: FSMContext):
+    """Меняет черновое значение КБЖУ/веса кнопками +/−."""
+    _, field, delta_str = callback.data.split(":", maxsplit=2)
+    config = CUSTOM_PRODUCT_FIELDS.get(field)
+    if not config:
+        await callback.answer("Неизвестное поле", show_alert=True)
+        return
+    data = await state.get_data()
+    value = max(0.0, float(data.get("custom_product_draft_value") or 0) + float(delta_str))
+    if field == "amount":
+        value = max(1.0, value)
+    await state.update_data(custom_product_draft_value=value, custom_product_current_field=field)
+    await callback.answer()
+    await callback.message.edit_text(
+        _render_custom_product_value_editor_text(
+            step=config["step"],
+            title=config["title"],
+            value=value,
+            unit=config["unit"],
+            note=config["note"],
+        ),
+        reply_markup=_build_custom_product_value_keyboard(field, unit=config["unit"]),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("custom_vsave:"))
+async def custom_product_value_save(callback: CallbackQuery, state: FSMContext):
+    """Фиксирует введённое значение и только после этого переводит к следующему шагу."""
+    _, field = callback.data.split(":", maxsplit=1)
+    if field not in CUSTOM_PRODUCT_FIELDS:
+        await callback.answer("Неизвестное поле", show_alert=True)
+        return
+    data = await state.get_data()
+    value = float(data.get("custom_product_draft_value") or 0)
+    if field == "amount" and value <= 0:
+        await callback.answer("Вес должен быть больше 0 г", show_alert=True)
+        return
+    await callback.answer()
+    await _advance_custom_product_after_save(callback.message, state, field, value)
 
 
 def _build_my_product_keyboard(meal_type: str) -> ReplyKeyboardMarkup:
@@ -1868,8 +2057,9 @@ async def custom_product_create_from_reply(message: Message, state: FSMContext):
     await state.set_state(MealEntryStates.custom_product_name)
     await state.update_data(meal_type=meal_type, custom_product={}, in_my_product_menu=False)
     await message.answer(
-        _format_custom_product_step(1, "Введите название продукта:"),
-        reply_markup=kbju_add_menu,
+        _format_custom_product_step(1, "<b>Введите название продукта</b> для продукта, у которого дальше укажем <b>КБЖУ на 100 г</b>:"),
+        reply_markup=_build_custom_product_reply_keyboard(),
+        parse_mode="HTML",
     )
 
 
@@ -2043,8 +2233,9 @@ async def custom_product_create(callback: CallbackQuery, state: FSMContext):
     await state.set_state(MealEntryStates.custom_product_name)
     await state.update_data(meal_type=meal_type, custom_product={}, in_my_product_menu=False)
     await callback.message.answer(
-        _format_custom_product_step(1, "Введите название продукта:"),
-        reply_markup=kbju_add_menu,
+        _format_custom_product_step(1, "<b>Введите название продукта</b> для продукта, у которого дальше укажем <b>КБЖУ на 100 г</b>:"),
+        reply_markup=_build_custom_product_reply_keyboard(),
+        parse_mode="HTML",
     )
 
 
@@ -2111,17 +2302,16 @@ async def handle_custom_product_name(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     if await _reroute_add_method_button_if_needed(message, state, text):
         return
-    if text in BACK_BUTTON_TEXTS:
+    if text in BACK_BUTTON_TEXTS or text == "❌ Отмена":
         data = await state.get_data()
         meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
         await _show_my_product_menu(message, state, meal_type=meal_type, user_id=str(message.from_user.id))
         return
     if len(text) < 2:
-        await message.answer("Название слишком короткое. Введите название продукта:")
+        await message.answer("Название слишком короткое. Введите название продукта:", reply_markup=_build_custom_product_reply_keyboard())
         return
     await state.update_data(custom_product={"name": text})
-    await state.set_state(MealEntryStates.custom_product_calories)
-    await message.answer(_format_custom_product_step(2, "Введите калории продукта (ккал):"), reply_markup=kbju_add_menu)
+    await _show_custom_product_value_editor(message, state, "calories", 0)
 
 
 async def _handle_custom_product_macro(
@@ -2136,16 +2326,20 @@ async def _handle_custom_product_macro(
     text = (message.text or "").strip()
     if await _reroute_add_method_button_if_needed(message, state, text):
         return
+    if text in BACK_BUTTON_TEXTS:
+        await _go_to_previous_custom_product_step(message, state)
+        return
+    if text == "❌ Отмена":
+        data = await state.get_data()
+        meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+        await _show_my_product_menu(message, state, meal_type=meal_type, user_id=str(message.from_user.id))
+        return
     value = _parse_non_negative_number(text)
     if value is None:
         await message.answer("Введите число 0 или больше. Можно использовать запятую или точку.")
         return
-    data = await state.get_data()
-    product = dict(data.get("custom_product") or {})
-    product[field] = value
-    await state.update_data(custom_product=product)
-    await state.set_state(next_state)
-    await message.answer(_format_custom_product_step(next_step, next_prompt), reply_markup=kbju_add_menu)
+    await state.update_data(custom_product_draft_value=value)
+    await _show_custom_product_value_editor(message, state, field, value)
 
 
 @router.message(MealEntryStates.custom_product_calories)
@@ -2186,18 +2380,35 @@ async def handle_custom_product_fat(message: Message, state: FSMContext):
 
 @router.message(MealEntryStates.custom_product_carbs)
 async def handle_custom_product_carbs(message: Message, state: FSMContext):
-    text = (message.text or "").strip()
-    if await _reroute_add_method_button_if_needed(message, state, text):
-        return
-    carbs = _parse_non_negative_number(text)
-    if carbs is None:
-        await message.answer("Введите число 0 или больше. Можно использовать запятую или точку.")
-        return
+    await _handle_custom_product_macro(
+        message,
+        state,
+        field="carbs",
+        next_state=MealEntryStates.custom_product_amount,
+        next_step=0,
+        next_prompt="",
+    )
 
+
+@router.message(MealEntryStates.custom_product_amount)
+async def handle_custom_product_amount(message: Message, state: FSMContext):
+    await _handle_custom_product_macro(
+        message,
+        state,
+        field="amount",
+        next_state=None,
+        next_step=0,
+        next_prompt="",
+    )
+
+
+async def _save_custom_product(message: Message, state: FSMContext) -> None:
+    """Сохраняет свой продукт и добавляет съеденную порцию в приём пищи."""
     data = await state.get_data()
     product = dict(data.get("custom_product") or {})
-    product["carbs"] = carbs
     name = str(product.get("name") or "Мой продукт").strip()
+    amount_g = max(1.0, float(product.get("amount") or 100))
+    ratio = amount_g / 100.0
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
     try:
@@ -2205,19 +2416,29 @@ async def handle_custom_product_carbs(message: Message, state: FSMContext):
     except ValueError:
         entry_date = date.today()
 
+    calories = float(product.get("calories", 0)) * ratio
+    protein = float(product.get("protein", 0)) * ratio
+    fat = float(product.get("fat", 0)) * ratio
+    carbs = float(product.get("carbs", 0)) * ratio
     products_json = json.dumps(
         [
             {
                 "name": name,
-                "grams": 100,
-                "kcal": float(product.get("calories", 0)),
-                "protein": float(product.get("protein", 0)),
-                "fat": float(product.get("fat", 0)),
-                "carbs": float(product.get("carbs", 0)),
-                "calories": float(product.get("calories", 0)),
-                "protein_g": float(product.get("protein", 0)),
-                "fat_total_g": float(product.get("fat", 0)),
-                "carbohydrates_total_g": float(product.get("carbs", 0)),
+                "grams": amount_g,
+                "kcal": calories,
+                "protein": protein,
+                "fat": fat,
+                "carbs": carbs,
+                "calories": calories,
+                "protein_g": protein,
+                "fat_total_g": fat,
+                "carbohydrates_total_g": carbs,
+                "per_100g": {
+                    "calories": float(product.get("calories", 0)),
+                    "protein": float(product.get("protein", 0)),
+                    "fat": float(product.get("fat", 0)),
+                    "carbs": float(product.get("carbs", 0)),
+                },
                 "source": "custom_product",
             }
         ],
@@ -2228,10 +2449,10 @@ async def handle_custom_product_carbs(message: Message, state: FSMContext):
         user_id=user_id,
         raw_query=name,
         description=name,
-        calories=float(product.get("calories", 0)),
-        protein=float(product.get("protein", 0)),
-        fat=float(product.get("fat", 0)),
-        carbs=float(product.get("carbs", 0)),
+        calories=calories,
+        protein=protein,
+        fat=fat,
+        carbs=carbs,
         entry_date=entry_date,
         products_json=products_json,
         meal_type=meal_type,
@@ -2251,6 +2472,9 @@ async def handle_custom_product_carbs(message: Message, state: FSMContext):
             "✅ <b>Свой продукт создан и добавлен.</b>",
             "",
             f"<b>Продукт:</b> {html.escape(name)}",
+            f"<b>Порция:</b> {amount_g:g} г",
+            "",
+            "<b>КБЖУ на 100 г:</b>",
             _format_kbju_summary_block(
                 {
                     "calories": float(product.get("calories", 0)),
@@ -2259,6 +2483,9 @@ async def handle_custom_product_carbs(message: Message, state: FSMContext):
                     "carbs": float(product.get("carbs", 0)),
                 }
             ),
+            "",
+            "<b>В этом приёме пищи:</b>",
+            _format_kbju_summary_block({"calories": calories, "protein": protein, "fat": fat, "carbs": carbs}),
         ],
         parse_mode="HTML",
     )
