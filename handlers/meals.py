@@ -464,12 +464,22 @@ def _format_custom_product_step(step: int, text: str) -> str:
     return f"<b>Шаг {step}/5</b>\n\n{text}"
 
 
+def _format_custom_product_name_step() -> str:
+    """Текст первого шага создания своего продукта."""
+    return _format_custom_product_step(
+        1,
+        "<b>Сейчас мы добавим твой продукт вручную.</b>\n\n"
+        "Я по шагам попрошу <b>название</b>, затем <b>калории, белки, жиры, углеводы</b> "
+        "и <b>вес порции</b>. Так продукт сохранится, и в следующий раз его можно будет быстро выбрать из списка.\n\n"
+        "<b>Для начала введи название продукта:</b>",
+    )
+
+
 def _build_custom_product_reply_keyboard() -> ReplyKeyboardMarkup:
     """Нижняя клавиатура для пошагового создания своего продукта без меню добавления."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="⬅️ Назад")],
-            [KeyboardButton(text="❌ Отмена")],
         ],
         resize_keyboard=True,
     )
@@ -590,7 +600,7 @@ async def _go_to_previous_custom_product_step(message: Message, state: FSMContex
     else:
         await state.set_state(MealEntryStates.custom_product_name)
         await message.answer(
-            _format_custom_product_step(1, "<b>Введите название продукта:</b>"),
+            _format_custom_product_name_step(),
             reply_markup=_build_custom_product_reply_keyboard(),
             parse_mode="HTML",
         )
@@ -2057,7 +2067,7 @@ async def custom_product_create_from_reply(message: Message, state: FSMContext):
     await state.set_state(MealEntryStates.custom_product_name)
     await state.update_data(meal_type=meal_type, custom_product={}, in_my_product_menu=False)
     await message.answer(
-        _format_custom_product_step(1, "<b>Введите название продукта</b> для продукта, у которого дальше укажем <b>КБЖУ на 100 г</b>:"),
+        _format_custom_product_name_step(),
         reply_markup=_build_custom_product_reply_keyboard(),
         parse_mode="HTML",
     )
@@ -2233,7 +2243,7 @@ async def custom_product_create(callback: CallbackQuery, state: FSMContext):
     await state.set_state(MealEntryStates.custom_product_name)
     await state.update_data(meal_type=meal_type, custom_product={}, in_my_product_menu=False)
     await callback.message.answer(
-        _format_custom_product_step(1, "<b>Введите название продукта</b> для продукта, у которого дальше укажем <b>КБЖУ на 100 г</b>:"),
+        _format_custom_product_name_step(),
         reply_markup=_build_custom_product_reply_keyboard(),
         parse_mode="HTML",
     )
