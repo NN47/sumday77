@@ -179,3 +179,22 @@ def test_product_actions_keyboard_has_change_name_button():
     assert callback_rows[0] == ["meal_pact_name:2"]
     assert ["⚖️ Изменить вес"] in rows
     assert ["🧮 Изменить КБЖУ"] in rows
+
+
+def test_custom_product_value_editor_sends_single_inline_editor():
+    from unittest.mock import AsyncMock
+
+    import asyncio
+
+    from handlers.meals import _show_custom_product_value_editor
+
+    message = SimpleNamespace(answer=AsyncMock())
+    state = SimpleNamespace(set_state=AsyncMock(), update_data=AsyncMock())
+
+    asyncio.run(_show_custom_product_value_editor(message, state, "amount", 100))
+
+    message.answer.assert_awaited_once()
+    _, kwargs = message.answer.await_args
+    assert "Сколько продукта" in message.answer.await_args.args[0]
+    assert kwargs["parse_mode"] == "HTML"
+    assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "custom_vchg:amount:-100"

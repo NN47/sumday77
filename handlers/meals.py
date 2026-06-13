@@ -578,12 +578,8 @@ async def _show_custom_product_value_editor(message: Message, state: FSMContext,
             unit=config["unit"],
             note=config["note"],
         ),
-        reply_markup=_build_custom_product_reply_keyboard(),
-        parse_mode="HTML",
-    )
-    await message.answer(
-        "Можно настроить значение кнопками ниже 👇",
         reply_markup=_build_custom_product_value_keyboard(field, unit=config["unit"]),
+        parse_mode="HTML",
     )
 
 
