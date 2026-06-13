@@ -119,6 +119,60 @@ def _format_kbju_summary_block(totals: dict, *, bold_values: bool = False) -> st
     )
 
 
+def _format_ai_food_analysis_message(title: str, items: list, totals: dict) -> str:
+    """Форматирует красивое отдельное сообщение результата AI-анализа продукта."""
+    lines = [f"🤖 <b>{html.escape(title)}</b>", "", "📌 <b>Распознанные продукты:</b>"]
+    if items:
+        for item in items:
+            item_name = html.escape(str(item.get("name") or "продукт"))
+            grams = float(item.get("grams", 0) or 0)
+            kcal = float(item.get("kcal", 0) or 0)
+            protein = float(item.get("protein", 0) or 0)
+            fat = float(item.get("fat", 0) or 0)
+            carbs = float(item.get("carbs", 0) or 0)
+            lines.append(
+                f"• <b>{item_name}</b> ({grams:.0f} г) — "
+                f"<b>{kcal:.0f} ккал</b> "
+                f"<i>(Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f})</i>"
+            )
+    else:
+        lines.append("• Не удалось выделить продукты отдельно — использую общий итог.")
+
+    lines.extend(
+        [
+            "",
+            "📊 <b>Итого за добавленный продукт:</b>",
+            _format_kbju_summary_block(totals, bold_values=True),
+            "",
+            "✅ <b>Продукт сохранён.</b>",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _format_current_meal_after_save_message(meal_type: str, current_meal_items: list, entry_date: date) -> str:
+    """Форматирует отдельное сообщение текущего состава приёма пищи после сохранения."""
+    lines = [
+        "🍱 <b>Уже в этом приёме пищи</b>",
+        f"📅 <b>Дата:</b> {entry_date.strftime('%d.%m.%Y')}",
+        "",
+    ]
+    if current_meal_items:
+        from utils.meal_formatters import format_meal_message
+
+        lines.append(format_meal_message(meal_type, current_meal_items))
+    else:
+        lines.append(f"Пока в {display_meal_type(meal_type).lower()} нет сохранённых продуктов.")
+
+    lines.extend([
+        "",
+        "⸻",
+        "",
+        "➕ Добавь следующий продукт этим же способом или выбери другой вариант ниже.",
+        f"✅ Когда приём пищи заполнен — нажми «{FINISH_MEAL_BUTTON_TEXT}».",
+    ])
+    return "\n".join(lines)
+
 def _format_label_result_header(source: str, product_name: str) -> str:
     """Форматирует первую строку результата анализа упаковки."""
     safe_product_name = html.escape(product_name or "Продукт")
@@ -2567,26 +2621,18 @@ async def _handle_provider_food_input(
     items = kbju_data.get("items", [])
     total = kbju_data.get("total", {})
 
-    if provider_title == "📝 AI-анализ приёма пищи":
-        lines = [f"<b>{provider_title}:</b>\n"]
-    else:
-        lines = [f"<b>{html.escape(provider_title)}: оценка приёма пищи</b>\n"]
-
-    for item in items:
-        item_name = html.escape(str(item.get("name") or "продукт"))
-        lines.append(
-            f"• <b>{item_name}</b> ({float(item.get('grams', 0)):.0f} г) — "
-            f"<b>{float(item.get('kcal', 0)):.0f} ккал</b> "
-            f"<i>(Б {float(item.get('protein', 0)):.1f} / Ж {float(item.get('fat', 0)):.1f} / У {float(item.get('carbs', 0)):.1f})</i>"
-        )
-
-    lines.append("\n<b>ИТОГО:</b>")
-    lines.append(
-        f"🔥 <b>Калории:</b> {float(total.get('kcal', 0)):.0f} ккал\n"
-        f"💪 <b>Белки:</b> {float(total.get('protein', 0)):.1f} г\n"
-        f"🥑 <b>Жиры:</b> {float(total.get('fat', 0)):.1f} г\n"
-        f"🍩 <b>Углеводы:</b> {float(total.get('carbs', 0)):.1f} г"
+    analysis_title = (
+        provider_title
+        if provider_title == "📝 AI-анализ приёма пищи"
+        else f"{provider_title}: оценка приёма пищи"
     )
+    analysis_totals = {
+        "calories": float(total.get("kcal", 0) or 0),
+        "protein": float(total.get("protein", 0) or 0),
+        "fat": float(total.get("fat", 0) or 0),
+        "carbs": float(total.get("carbs", 0) or 0),
+    }
+    lines = [_format_ai_food_analysis_message(analysis_title, items, analysis_totals)]
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
@@ -2611,7 +2657,6 @@ async def _handle_provider_food_input(
         message.bot.last_meal_ids = {}
     message.bot.last_meal_ids[user_id] = saved_meal.id
 
-    lines.append("\n✅ <b>Продукт сохранён.</b>")
     await _keep_meal_entry_open_after_save(
         message,
         state,
@@ -2656,29 +2701,21 @@ async def _keep_meal_entry_open_after_save(
         user_id=user_id,
     )
 
-    lines = list(intro_lines or [])
-    if lines:
-        lines.append("")
+    if intro_lines:
+        await message.answer("\n".join(intro_lines), parse_mode=parse_mode)
 
-    if current_meal_items:
-        from utils.meal_formatters import format_meal_message
-
-        lines.append("<b>Уже в этом приёме пищи:</b>")
-        lines.append(format_meal_message(normalized_meal_type, current_meal_items))
-    else:
-        lines.append(f"Пока в {display_meal_type(normalized_meal_type).lower()} нет сохранённых продуктов.")
-
-    lines.append("")
-    lines.append("Добавь следующий продукт этим же способом или выбери другой вариант ниже.")
-    lines.append(f"Когда приём пищи заполнен — нажми «{FINISH_MEAL_BUTTON_TEXT}».")
+    current_meal_text = _format_current_meal_after_save_message(
+        normalized_meal_type,
+        current_meal_items,
+        entry_date,
+    )
 
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(
-        "\n".join(lines),
+        current_meal_text,
         reply_markup=_build_meal_entry_post_save_keyboard(normalized_meal_type, entry_date),
         parse_mode="HTML",
     )
-
 
 @router.message(MealEntryStates.waiting_for_openrouter_food_input)
 async def handle_openrouter_food_input(message: Message, state: FSMContext):
@@ -3152,34 +3189,14 @@ async def _handle_food_photo_analysis(
         except (TypeError, ValueError):
             return 0.0
 
-    lines = ["📷 Анализ фото еды (ИИ):\n"]
-
     totals_for_db = {
         "calories": safe_float(total.get("kcal")),
         "protein": safe_float(total.get("protein")),
         "fat": safe_float(total.get("fat")),
         "carbs": safe_float(total.get("carbs")),
     }
-
-    for item in items:
-        name = item.get("name") or "продукт"
-        grams = safe_float(item.get("grams"))
-        cal = safe_float(item.get("kcal"))
-        p = safe_float(item.get("protein"))
-        f = safe_float(item.get("fat"))
-        c = safe_float(item.get("carbs"))
-
-        lines.append(
-            f"• {name} ({grams:.0f} г) — {cal:.0f} ккал (Б {p:.1f} / Ж {f:.1f} / У {c:.1f})"
-        )
-
-    lines.append("\nИТОГО:")
-    lines.append(
-        f"🔥 Калории: {totals_for_db['calories']:.0f} ккал\n"
-        f"💪 Белки: {totals_for_db['protein']:.1f} г\n"
-        f"🥑 Жиры: {totals_for_db['fat']:.1f} г\n"
-        f"🍩 Углеводы: {totals_for_db['carbs']:.1f} г"
-    )
+    analysis_title = "📷 Анализ фото еды (ИИ)"
+    lines = [_format_ai_food_analysis_message(analysis_title, items, totals_for_db)]
 
     saved_meal = MealRepository.save_meal(
         user_id=user_id,

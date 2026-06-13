@@ -126,17 +126,20 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_add_menu():
     assert state._data["meal_type"] == meals.MealType.BREAKFAST.value
     assert state._data["pending_add_method"] is None
     push_stack.assert_called_once_with(message.bot, meals.kbju_add_menu)
-    assert message.answer.await_count == 2
+    assert message.answer.await_count == 3
     recent_text = message.answer.await_args_list[0].args[0]
     assert "🕘 <b>Недавно добавленные • страница 1</b>" in recent_text
     assert "<b>Чёрный кофе</b>" in recent_text
+    analysis_text = message.answer.await_args_list[1].args[0]
+    assert "✅ Продукт сохранён." in analysis_text
+    assert message.answer.await_args_list[1].kwargs["parse_mode"] == "HTML"
     answer_text = message.answer.await_args_list[-1].args[0]
-    assert "✅ Продукт сохранён." in answer_text
-    assert "<b>Уже в этом приёме пищи:</b>" in answer_text
+    assert "🍱 <b>Уже в этом приёме пищи</b>" in answer_text
+    assert "📅 <b>Дата:</b> 08.04.2026" in answer_text
     assert "🍳 <b>Завтрак • 5 ккал</b>" in answer_text
     assert "• <b>Чёрный кофе</b> (250 г)" in answer_text
-    assert "Добавь следующий продукт" in answer_text
-    assert "Когда приём пищи заполнен — нажми «✅ Завершить приём»." in answer_text
+    assert "➕ Добавь следующий продукт" in answer_text
+    assert "✅ Когда приём пищи заполнен — нажми «✅ Завершить приём»." in answer_text
     keyboard = message.answer.await_args_list[-1].kwargs["reply_markup"]
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [["✏️ Редактировать", "🕘 Недавние"]]
     assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
@@ -830,14 +833,17 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     state.set_state.assert_awaited_with(meals.MealEntryStates.choosing_meal_type)
     assert state._data["meal_type"] == meals.MealType.LUNCH.value
     assert "AI text meal analysis provider=deepseek" in caplog.text
+    analysis_text = message.answer.await_args_list[-2].args[0]
     answer_text = message.answer.await_args_list[-1].args[0]
 
-    assert "<b>📝 AI-анализ приёма пищи:</b>" in answer_text
-    assert "AI-анализ (DeepSeek): оценка приёма пищи" not in answer_text
-    assert "• <b>Курица</b> (200 г) — <b>330 ккал</b>" in answer_text
-    assert "🔥 <b>Калории:</b> 330 ккал" in answer_text
-    assert "<b>Уже в этом приёме пищи:</b>" in answer_text
+    assert "🤖 <b>📝 AI-анализ приёма пищи</b>" in analysis_text
+    assert "AI-анализ (DeepSeek): оценка приёма пищи" not in analysis_text
+    assert "• <b>Курица</b> (200 г) — <b>330 ккал</b>" in analysis_text
+    assert "🔥 <b>Калории:</b> <b>330 ккал</b>" in analysis_text
+    assert "✅ <b>Продукт сохранён.</b>" in analysis_text
+    assert "🍱 <b>Уже в этом приёме пищи</b>" in answer_text
     assert "🍲 <b>Обед • 330 ккал</b>" in answer_text
-    assert "Добавь следующий продукт" in answer_text
-    assert "Когда приём пищи заполнен — нажми «✅ Завершить приём»." in answer_text
+    assert "➕ Добавь следующий продукт" in answer_text
+    assert "✅ Когда приём пищи заполнен — нажми «✅ Завершить приём»." in answer_text
+    assert message.answer.await_args_list[-2].kwargs["parse_mode"] == "HTML"
     assert message.answer.await_args_list[-1].kwargs["parse_mode"] == "HTML"
