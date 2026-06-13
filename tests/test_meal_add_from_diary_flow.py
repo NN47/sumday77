@@ -189,6 +189,54 @@ def test_custom_product_final_inline_save_uses_callback_user_and_restores_add_me
     assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_add_menu
 
 
+def test_custom_product_text_value_is_saved_and_advances_to_next_field():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    message.text = "65"
+    state = _DummyState()
+    state._data.update({"custom_product": {"name": "Йогурт"}, "meal_type": meals.MealType.SNACK.value})
+
+    asyncio.run(meals.handle_custom_product_calories(message, state))
+
+    assert state._data["custom_product"]["calories"] == 65.0
+    state.set_state.assert_awaited_with(meals.MealEntryStates.custom_product_protein)
+    text = message.answer.await_args.args[0]
+    assert "💪 Введите белки продукта" in text
+    assert "Текущее значение: <b>0 г</b>" in text
+
+
+def test_custom_product_text_amount_save_uses_entered_per_100g_calories():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    message.text = "50"
+    state = _DummyState()
+    state._data.update(
+        {
+            "custom_product": {
+                "name": "Йогурт",
+                "calories": 65,
+                "protein": 0,
+                "fat": 0,
+                "carbs": 15,
+            },
+            "meal_type": meals.MealType.SNACK.value,
+            "entry_date": "2026-04-08",
+        }
+    )
+    saved_meal = SimpleNamespace(id=77)
+
+    with patch("handlers.meals.MealRepository.save_meal", return_value=saved_meal) as save_meal, patch(
+        "handlers.meals.MealRepository.get_meals_for_date", return_value=[]
+    ), patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]), patch("handlers.meals.push_menu_stack"):
+        asyncio.run(meals.handle_custom_product_amount(message, state))
+
+    assert save_meal.call_args.kwargs["description"] == "Йогурт"
+    assert save_meal.call_args.kwargs["calories"] == 32.5
+    assert save_meal.call_args.kwargs["carbs"] == 7.5
+    assert '"name": "Йогурт"' in save_meal.call_args.kwargs["products_json"]
+    assert '"kcal": 32.5' in save_meal.call_args.kwargs["products_json"]
+
+
 def test_meal_entry_recent_inline_button_opens_recent_products_page():
     callback = _build_callback("meal_entry_recent:dinner:1")
     state = _DummyState()
