@@ -518,23 +518,30 @@ def _format_callback_delta(value: float | int) -> str:
 def _build_custom_product_value_keyboard(field: str, *, unit: str) -> InlineKeyboardMarkup:
     """Inline-кнопки +/− для ввода КБЖУ и веса съеденного продукта."""
     if field == "calories":
-        deltas = [(-100, 100), (-50, 50), (-10, 10), (-5, 5), (-1, 1)]
+        delta_rows = [
+            (-100, -50, -20, 20, 50, 100),
+            (-10, -5, -1, 1, 5, 10),
+        ]
     elif field in {"protein", "fat", "carbs"}:
-        deltas = [(-10, 10), (-5, 5), (-1, 1), (-0.5, 0.5)]
+        delta_rows = [
+            (-10, -5, -1, 1, 5, 10),
+            (-0.5, -0.2, -0.1, 0.1, 0.2, 0.5),
+        ]
     else:
-        deltas = [(-100, 100), (-50, 50), (-10, 10), (-5, 5), (-1, 1)]
+        delta_rows = [
+            (-100, -50, 50, 100),
+            (-25, -10, 10, 25),
+            (-5, -1, 1, 5),
+        ]
     rows = [
         [
             InlineKeyboardButton(
-                text=f"{_format_button_delta(minus)} {unit}",
-                callback_data=f"custom_vchg:{field}:{_format_callback_delta(minus)}",
-            ),
-            InlineKeyboardButton(
-                text=f"{_format_button_delta(plus)} {unit}",
-                callback_data=f"custom_vchg:{field}:{_format_callback_delta(plus)}",
-            ),
+                text=f"{_format_button_delta(delta)} {unit}",
+                callback_data=f"custom_vchg:{field}:{_format_callback_delta(delta)}",
+            )
+            for delta in delta_row
         ]
-        for minus, plus in deltas
+        for delta_row in delta_rows
     ]
     rows.append([InlineKeyboardButton(text="✅ Сохранить", callback_data=f"custom_vsave:{field}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
