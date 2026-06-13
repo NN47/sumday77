@@ -1,5 +1,6 @@
 import asyncio
 import os
+from datetime import datetime as real_datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -115,3 +116,42 @@ def test_supplement_amount_inline_button_saves_selected_amount():
     callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
     callback.message.answer.assert_awaited_once()
     state.clear.assert_awaited_once()
+
+
+def test_manual_supplement_selection_prompts_amount_without_time_step():
+    message = SimpleNamespace(
+        text="Магний",
+        from_user=SimpleNamespace(id=12345),
+        bot=SimpleNamespace(),
+        answer=AsyncMock(),
+    )
+    state_data = {"from_calendar": False}
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value=state_data),
+        update_data=AsyncMock(),
+        set_state=AsyncMock(),
+    )
+    fixed_now = real_datetime(2026, 6, 13, 22, 45, tzinfo=supplements.MSK_TZ)
+
+    with patch(
+        "handlers.supplements.SupplementRepository.get_supplements",
+        return_value=[{"id": 7, "name": "Магний", "notifications_enabled": True}],
+    ), patch("handlers.supplements.datetime") as datetime_mock:
+        datetime_mock.now.return_value = fixed_now
+        datetime_mock.combine.side_effect = real_datetime.combine
+        asyncio.run(supplements.log_supplement_intake(message, state))
+
+    state.set_state.assert_awaited_once_with(supplements.SupplementStates.entering_history_amount)
+    state.update_data.assert_awaited_once()
+    update_kwargs = state.update_data.await_args.kwargs
+    assert update_kwargs["supplement_id"] == 7
+    assert update_kwargs["supplement_name"] == "Магний"
+    assert update_kwargs["entry_date"] == "2026-06-13"
+    assert update_kwargs["timestamp"] == "2026-06-13T22:45:00"
+    answer_kwargs = message.answer.await_args.kwargs
+    assert answer_kwargs["reply_markup"].inline_keyboard[0][0].text == "0,25"
+    assert answer_kwargs["parse_mode"] == "HTML"
+    assert message.answer.await_args.args[0] == (
+        "<b>✅ Зафиксировал время приёма «Магний» в 22:45.</b>\n"
+        "Выбери кнопкой или укажи количество вручную:"
+    )
