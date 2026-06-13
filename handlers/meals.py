@@ -121,7 +121,7 @@ def _format_kbju_summary_block(totals: dict, *, bold_values: bool = False) -> st
 
 def _format_ai_food_analysis_message(title: str, items: list, totals: dict) -> str:
     """Форматирует красивое отдельное сообщение результата AI-анализа продукта."""
-    lines = [f"🤖 <b>{html.escape(title)}</b>", "", "📌 <b>Распознанные продукты:</b>"]
+    lines = [f"<b>{html.escape(title)}</b>", "", "📌 <b>Распознанные продукты:</b>"]
     if items:
         for item in items:
             item_name = html.escape(str(item.get("name") or "продукт"))
@@ -1346,6 +1346,21 @@ async def _show_recent_meals_page(
     )
     return True
 
+
+def _build_meal_entry_edit_keyboard(meal_type: str, entry_date: date) -> InlineKeyboardMarkup:
+    """Inline-кнопка редактирования под уведомлением о сохранении продукта."""
+    normalized_meal_type = normalize_meal_type(meal_type, fallback=MealType.SNACK.value)
+    iso_date = entry_date.isoformat()
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✏️ Редактировать",
+                    callback_data=f"edit_meal:{normalized_meal_type}:{iso_date}",
+                )
+            ]
+        ]
+    )
 
 def _build_meal_entry_post_save_keyboard(meal_type: str, entry_date: date) -> InlineKeyboardMarkup:
     """Inline-действия под сообщением после сохранения продукта в текущий приём пищи."""
@@ -2702,7 +2717,11 @@ async def _keep_meal_entry_open_after_save(
     )
 
     if intro_lines:
-        await message.answer("\n".join(intro_lines), parse_mode=parse_mode)
+        await message.answer(
+            "\n".join(intro_lines),
+            reply_markup=_build_meal_entry_edit_keyboard(normalized_meal_type, entry_date),
+            parse_mode=parse_mode,
+        )
 
     current_meal_text = _format_current_meal_after_save_message(
         normalized_meal_type,

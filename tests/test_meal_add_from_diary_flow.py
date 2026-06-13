@@ -133,6 +133,9 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_add_menu():
     analysis_text = message.answer.await_args_list[1].args[0]
     assert "✅ Продукт сохранён." in analysis_text
     assert message.answer.await_args_list[1].kwargs["parse_mode"] == "HTML"
+    analysis_keyboard = message.answer.await_args_list[1].kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in analysis_keyboard.inline_keyboard] == [["✏️ Редактировать"]]
+    assert [[button.callback_data for button in row] for row in analysis_keyboard.inline_keyboard] == [["edit_meal:breakfast:2026-04-08"]]
     answer_text = message.answer.await_args_list[-1].args[0]
     assert "🍱 <b>Уже в этом приёме пищи</b>" in answer_text
     assert "📅 <b>Дата:</b> 08.04.2026" in answer_text
@@ -213,6 +216,7 @@ def test_meal_finish_button_returns_to_food_diary_for_entry_date():
     message.text = meals.FINISH_MEAL_BUTTON_TEXT
     state = _DummyState()
     state._data["meal_type"] = meals.MealType.LUNCH.value
+    state._data["entry_date"] = "2026-04-08"
     state._data["entry_date"] = "2026-04-08"
 
     with patch("handlers.meals._return_to_food_diary", new=AsyncMock()) as return_to_diary:
@@ -792,6 +796,7 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     message.from_user = SimpleNamespace(id=12345)
     state = _DummyState()
     state._data["meal_type"] = meals.MealType.LUNCH.value
+    state._data["entry_date"] = "2026-04-08"
     raw_deepseek_json = (
         '{"items":[{"name":"Курица","grams":200,"kcal":330,'
         '"protein":62,"fat":7,"carbs":0}],'
@@ -836,7 +841,8 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     analysis_text = message.answer.await_args_list[-2].args[0]
     answer_text = message.answer.await_args_list[-1].args[0]
 
-    assert "🤖 <b>📝 AI-анализ приёма пищи</b>" in analysis_text
+    assert "<b>📝 AI-анализ приёма пищи</b>" in analysis_text
+    assert "🤖" not in analysis_text
     assert "AI-анализ (DeepSeek): оценка приёма пищи" not in analysis_text
     assert "• <b>Курица</b> (200 г) — <b>330 ккал</b>" in analysis_text
     assert "🔥 <b>Калории:</b> <b>330 ккал</b>" in analysis_text
@@ -845,5 +851,8 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     assert "🍲 <b>Обед • 330 ккал</b>" in answer_text
     assert "➕ Добавь следующий продукт" in answer_text
     assert "✅ Когда приём пищи заполнен — нажми «✅ Завершить приём»." in answer_text
+    analysis_keyboard = message.answer.await_args_list[-2].kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in analysis_keyboard.inline_keyboard] == [["✏️ Редактировать"]]
+    assert [[button.callback_data for button in row] for row in analysis_keyboard.inline_keyboard] == [["edit_meal:lunch:2026-04-08"]]
     assert message.answer.await_args_list[-2].kwargs["parse_mode"] == "HTML"
     assert message.answer.await_args_list[-1].kwargs["parse_mode"] == "HTML"
