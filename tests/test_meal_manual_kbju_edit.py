@@ -116,8 +116,8 @@ def test_custom_product_calories_editor_has_one_kcal_step():
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
 
     assert rows[:2] == [
-        ["-100 ккал", "-50 ккал", "-20 ккал", "+20 ккал", "+50 ккал", "+100 ккал"],
-        ["-10 ккал", "-5 ккал", "-1 ккал", "+1 ккал", "+5 ккал", "+10 ккал"],
+        ["-100", "-50", "-20", "+20", "+50", "+100"],
+        ["-10", "-5", "-1", "+1", "+5", "+10"],
     ]
 
     callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
@@ -136,8 +136,8 @@ def test_custom_product_macro_editors_use_fractional_gram_step():
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
 
     assert rows[:2] == [
-        ["-10 г", "-5 г", "-1 г", "+1 г", "+5 г", "+10 г"],
-        ["-0,5 г", "-0,2 г", "-0,1 г", "+0,1 г", "+0,2 г", "+0,5 г"],
+        ["-10", "-5", "-1", "+1", "+5", "+10"],
+        ["-0,5", "-0,2", "-0,1", "+0,1", "+0,2", "+0,5"],
     ]
 
     callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]

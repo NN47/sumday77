@@ -536,7 +536,7 @@ def _build_custom_product_value_keyboard(field: str, *, unit: str) -> InlineKeyb
     rows = [
         [
             InlineKeyboardButton(
-                text=f"{_format_button_delta(delta)} {unit}",
+                text=_format_button_delta(delta),
                 callback_data=f"custom_vchg:{field}:{_format_callback_delta(delta)}",
             )
             for delta in delta_row
