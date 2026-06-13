@@ -116,15 +116,15 @@ def test_custom_product_calories_editor_has_one_kcal_step():
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
 
     assert rows[:2] == [
-        ["-100 ккал", "-50 ккал", "-20 ккал", "+20 ккал", "+50 ккал", "+100 ккал"],
-        ["-10 ккал", "-5 ккал", "-1 ккал", "+1 ккал", "+5 ккал", "+10 ккал"],
+        ["+1 ккал", "+5 ккал", "+10 ккал", "+20 ккал", "+50 ккал", "+100 ккал"],
+        ["-1 ккал", "-5 ккал", "-10 ккал", "-20 ккал", "-50 ккал", "-100 ккал"],
     ]
 
     callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
     assert callback_rows[0] == [
-        "custom_vchg:calories:-100",
-        "custom_vchg:calories:-50",
-        "custom_vchg:calories:-20",
+        "custom_vchg:calories:1",
+        "custom_vchg:calories:5",
+        "custom_vchg:calories:10",
         "custom_vchg:calories:20",
         "custom_vchg:calories:50",
         "custom_vchg:calories:100",
@@ -136,18 +136,18 @@ def test_custom_product_macro_editors_use_fractional_gram_step():
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
 
     assert rows[:2] == [
-        ["-10 г", "-5 г", "-1 г", "+1 г", "+5 г", "+10 г"],
-        ["-0,5 г", "-0,2 г", "-0,1 г", "+0,1 г", "+0,2 г", "+0,5 г"],
+        ["+0,1 г", "+0,2 г", "+0,5 г", "+1 г", "+5 г", "+10 г"],
+        ["-0,1 г", "-0,2 г", "-0,5 г", "-1 г", "-5 г", "-10 г"],
     ]
 
     callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
     assert callback_rows[1] == [
-        "custom_vchg:protein:-0.5",
-        "custom_vchg:protein:-0.2",
         "custom_vchg:protein:-0.1",
-        "custom_vchg:protein:0.1",
-        "custom_vchg:protein:0.2",
-        "custom_vchg:protein:0.5",
+        "custom_vchg:protein:-0.2",
+        "custom_vchg:protein:-0.5",
+        "custom_vchg:protein:-1",
+        "custom_vchg:protein:-5",
+        "custom_vchg:protein:-10",
     ]
 
 
