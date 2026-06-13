@@ -519,13 +519,13 @@ def _build_custom_product_value_keyboard(field: str, *, unit: str) -> InlineKeyb
     """Inline-кнопки +/− для ввода КБЖУ и веса съеденного продукта."""
     if field == "calories":
         delta_rows = [
-            (-100, -50, -20, 20, 50, 100),
-            (-10, -5, -1, 1, 5, 10),
+            (1, 5, 10, 20, 50, 100),
+            (-1, -5, -10, -20, -50, -100),
         ]
     elif field in {"protein", "fat", "carbs"}:
         delta_rows = [
-            (-10, -5, -1, 1, 5, 10),
-            (-0.5, -0.2, -0.1, 0.1, 0.2, 0.5),
+            (0.1, 0.2, 0.5, 1, 5, 10),
+            (-0.1, -0.2, -0.5, -1, -5, -10),
         ]
     else:
         delta_rows = [
