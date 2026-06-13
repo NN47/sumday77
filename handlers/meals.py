@@ -99,6 +99,7 @@ ADD_METHOD_TEXTS = {
     "label": "📋 Анализ этикетки",
     "label_openai": "🧪 Анализ этикетки OpenAI",
     "barcode": "📷 Скан штрих-кода",
+    "custom": "🧺 Мой продукт",
 }
 
 
@@ -413,6 +414,56 @@ def _build_recent_search_empty_keyboard(meal_type: str) -> InlineKeyboardMarkup:
         ]
     )
 
+
+def _format_custom_product_step(step: int, text: str) -> str:
+    """Форматирует шаг создания продукта в стиле стартового теста КБЖУ."""
+    return f"Шаг {step}/5\n\n{text}"
+
+
+def _build_my_product_keyboard(meal_type: str) -> InlineKeyboardMarkup:
+    """Кнопки нижней части экрана «Мой продукт»."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Создать продукт", callback_data=f"custom_product_create:{meal_type}")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"custom_product_back:{meal_type}")],
+        ]
+    )
+
+
+def _parse_non_negative_number(raw_text: str) -> float | None:
+    """Парсит неотрицательное число из пользовательского ввода."""
+    try:
+        value = float((raw_text or "").strip().replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+    if value < 0:
+        return None
+    return value
+
+
+async def _show_my_product_menu(
+    message: Message,
+    state: FSMContext,
+    *,
+    meal_type: str,
+    user_id: str,
+) -> None:
+    """Показывает выбор своих/недавних продуктов и кнопку создания нового продукта."""
+    shown = await _show_recent_meals_page(message, state, meal_type=meal_type, page=1, user_id=user_id)
+    if shown:
+        text = (
+            "<b>🧺 Мой продукт</b>\n\n"
+            "Выбери продукт из недавних выше или создай новый продукт вручную."
+        )
+    else:
+        text = (
+            "<b>🧺 Мой продукт</b>\n\n"
+            "У тебя пока нет добавленных продуктов. Создай первый продукт вручную."
+        )
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(meal_type=meal_type, pending_add_method=None)
+    await message.answer(text, reply_markup=_build_my_product_keyboard(meal_type), parse_mode="HTML")
+
 AI_TEMPORARY_UNAVAILABLE_TEXT = "Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
 AI_QUOTA_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за лимита запросов."
 AI_CONFIG_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за ошибки настройки."
@@ -465,6 +516,9 @@ async def _reroute_add_method_button_if_needed(message: Message, state: FSMConte
         return True
     if text == ADD_METHOD_TEXTS["barcode"]:
         await kbju_add_via_barcode(message, state)
+        return True
+    if text == ADD_METHOD_TEXTS["custom"]:
+        await kbju_add_via_custom_product(message, state)
         return True
     return False
 
@@ -1733,6 +1787,9 @@ async def select_meal_type(message: Message, state: FSMContext):
         if pending_method == "barcode":
             await kbju_add_via_barcode(message, state)
             return
+        if pending_method == "custom":
+            await kbju_add_via_custom_product(message, state)
+            return
         if pending_method == "calorieninjas":
             await kbju_add_via_calorieninjas(message, state)
             return
@@ -1869,6 +1926,202 @@ async def kbju_add_via_gigachat(message: Message, state: FSMContext):
     await message.answer(
         "🧠 GigaChat\n\nОтправь продукты и количество одним сообщением.",
         reply_markup=kbju_add_menu,
+    )
+
+
+@router.message(lambda m: m.text == "🧺 Мой продукт")
+async def kbju_add_via_custom_product(message: Message, state: FSMContext):
+    """Открывает выбор своего продукта или сценарий создания нового продукта."""
+    if not await _ensure_meal_type_selected(message, state, "custom"):
+        return
+    data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    await _show_my_product_menu(
+        message,
+        state,
+        meal_type=meal_type,
+        user_id=str(message.from_user.id),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("custom_product_back:"))
+async def custom_product_back(callback: CallbackQuery, state: FSMContext):
+    """Возвращает из «Моего продукта» к способам добавления."""
+    await callback.answer()
+    _, meal_type = callback.data.split(":", maxsplit=1)
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(meal_type=meal_type, pending_add_method=None)
+    await _show_input_methods(callback.message, state, user_id=str(callback.from_user.id))
+
+
+@router.callback_query(lambda c: c.data.startswith("custom_product_create:"))
+async def custom_product_create(callback: CallbackQuery, state: FSMContext):
+    """Начинает пошаговое создание продукта."""
+    await callback.answer()
+    _, meal_type = callback.data.split(":", maxsplit=1)
+    await state.set_state(MealEntryStates.custom_product_name)
+    await state.update_data(meal_type=meal_type, custom_product={})
+    await callback.message.answer(
+        _format_custom_product_step(1, "Введите название продукта:"),
+        reply_markup=kbju_add_menu,
+    )
+
+
+@router.message(MealEntryStates.custom_product_name)
+async def handle_custom_product_name(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if await _reroute_add_method_button_if_needed(message, state, text):
+        return
+    if text in BACK_BUTTON_TEXTS:
+        data = await state.get_data()
+        meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+        await _show_my_product_menu(message, state, meal_type=meal_type, user_id=str(message.from_user.id))
+        return
+    if len(text) < 2:
+        await message.answer("Название слишком короткое. Введите название продукта:")
+        return
+    await state.update_data(custom_product={"name": text})
+    await state.set_state(MealEntryStates.custom_product_calories)
+    await message.answer(_format_custom_product_step(2, "Введите калории продукта (ккал):"), reply_markup=kbju_add_menu)
+
+
+async def _handle_custom_product_macro(
+    message: Message,
+    state: FSMContext,
+    *,
+    field: str,
+    next_state,
+    next_step: int,
+    next_prompt: str,
+) -> None:
+    text = (message.text or "").strip()
+    if await _reroute_add_method_button_if_needed(message, state, text):
+        return
+    value = _parse_non_negative_number(text)
+    if value is None:
+        await message.answer("Введите число 0 или больше. Можно использовать запятую или точку.")
+        return
+    data = await state.get_data()
+    product = dict(data.get("custom_product") or {})
+    product[field] = value
+    await state.update_data(custom_product=product)
+    await state.set_state(next_state)
+    await message.answer(_format_custom_product_step(next_step, next_prompt), reply_markup=kbju_add_menu)
+
+
+@router.message(MealEntryStates.custom_product_calories)
+async def handle_custom_product_calories(message: Message, state: FSMContext):
+    await _handle_custom_product_macro(
+        message,
+        state,
+        field="calories",
+        next_state=MealEntryStates.custom_product_protein,
+        next_step=3,
+        next_prompt="Введите белки продукта (г):",
+    )
+
+
+@router.message(MealEntryStates.custom_product_protein)
+async def handle_custom_product_protein(message: Message, state: FSMContext):
+    await _handle_custom_product_macro(
+        message,
+        state,
+        field="protein",
+        next_state=MealEntryStates.custom_product_fat,
+        next_step=4,
+        next_prompt="Введите жиры продукта (г):",
+    )
+
+
+@router.message(MealEntryStates.custom_product_fat)
+async def handle_custom_product_fat(message: Message, state: FSMContext):
+    await _handle_custom_product_macro(
+        message,
+        state,
+        field="fat",
+        next_state=MealEntryStates.custom_product_carbs,
+        next_step=5,
+        next_prompt="Введите углеводы продукта (г):",
+    )
+
+
+@router.message(MealEntryStates.custom_product_carbs)
+async def handle_custom_product_carbs(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if await _reroute_add_method_button_if_needed(message, state, text):
+        return
+    carbs = _parse_non_negative_number(text)
+    if carbs is None:
+        await message.answer("Введите число 0 или больше. Можно использовать запятую или точку.")
+        return
+
+    data = await state.get_data()
+    product = dict(data.get("custom_product") or {})
+    product["carbs"] = carbs
+    name = str(product.get("name") or "Мой продукт").strip()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date_str = data.get("entry_date")
+    try:
+        entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
+    except ValueError:
+        entry_date = date.today()
+
+    products_json = json.dumps(
+        [
+            {
+                "name": name,
+                "grams": 100,
+                "kcal": float(product.get("calories", 0)),
+                "protein": float(product.get("protein", 0)),
+                "fat": float(product.get("fat", 0)),
+                "carbs": float(product.get("carbs", 0)),
+                "calories": float(product.get("calories", 0)),
+                "protein_g": float(product.get("protein", 0)),
+                "fat_total_g": float(product.get("fat", 0)),
+                "carbohydrates_total_g": float(product.get("carbs", 0)),
+                "source": "custom_product",
+            }
+        ],
+        ensure_ascii=False,
+    )
+    user_id = str(message.from_user.id)
+    saved_meal = MealRepository.save_meal(
+        user_id=user_id,
+        raw_query=name,
+        description=name,
+        calories=float(product.get("calories", 0)),
+        protein=float(product.get("protein", 0)),
+        fat=float(product.get("fat", 0)),
+        carbs=float(product.get("carbs", 0)),
+        entry_date=entry_date,
+        products_json=products_json,
+        meal_type=meal_type,
+        is_manually_corrected=True,
+    )
+    if not hasattr(message.bot, "last_meal_ids"):
+        message.bot.last_meal_ids = {}
+    message.bot.last_meal_ids[user_id] = saved_meal.id
+
+    await _keep_meal_entry_open_after_save(
+        message,
+        state,
+        user_id=user_id,
+        entry_date=entry_date,
+        meal_type=meal_type,
+        intro_lines=[
+            "✅ <b>Свой продукт создан и добавлен.</b>",
+            "",
+            f"<b>Продукт:</b> {html.escape(name)}",
+            _format_kbju_summary_block(
+                {
+                    "calories": float(product.get("calories", 0)),
+                    "protein": float(product.get("protein", 0)),
+                    "fat": float(product.get("fat", 0)),
+                    "carbs": float(product.get("carbs", 0)),
+                }
+            ),
+        ],
+        parse_mode="HTML",
     )
 
 
@@ -2707,6 +2960,20 @@ async def handle_label_photo(message: Message, state: FSMContext):
     )
 
 
+@router.message(MealEntryStates.waiting_for_label_photo)
+async def handle_label_non_photo(message: Message, state: FSMContext):
+    """Просит прислать фото этикетки или переключает способ добавления."""
+    text = (message.text or "").strip()
+    if await _reroute_add_method_button_if_needed(message, state, text):
+        return
+    if text in BACK_BUTTON_TEXTS:
+        from handlers.common import go_back
+
+        await go_back(message, state)
+        return
+    await message.answer("Пожалуйста, отправь фото этикетки или выбери другой способ добавления.")
+
+
 @router.message(MealEntryStates.waiting_for_openai_label_photo, F.photo)
 async def handle_openai_label_photo(message: Message, state: FSMContext):
     """Обрабатывает фото этикетки через OpenAI."""
@@ -2724,7 +2991,10 @@ async def handle_openai_label_photo(message: Message, state: FSMContext):
 @router.message(MealEntryStates.waiting_for_openai_label_photo)
 async def handle_openai_label_non_photo(message: Message, state: FSMContext):
     """Просит прислать именно фото для OpenAI-анализа этикетки."""
-    if message.text in BACK_BUTTON_TEXTS:
+    text = (message.text or "").strip()
+    if await _reroute_add_method_button_if_needed(message, state, text):
+        return
+    if text in BACK_BUTTON_TEXTS:
         from handlers.common import go_back
         await go_back(message, state)
         return
@@ -2861,7 +3131,10 @@ async def handle_barcode_photo(message: Message, state: FSMContext):
 @router.message(MealEntryStates.waiting_for_weight_input)
 async def handle_weight_input(message: Message, state: FSMContext):
     """Обрабатывает ввод веса для этикетки или штрих-кода."""
-    if message.text == "⬅️ Назад":
+    text = (message.text or "").strip()
+    if await _reroute_add_method_button_if_needed(message, state, text):
+        return
+    if text == "⬅️ Назад":
         from handlers.common import go_back
         await go_back(message, state)
         return
@@ -2871,7 +3144,7 @@ async def handle_weight_input(message: Message, state: FSMContext):
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     
     try:
-        weight_grams = float(message.text.replace(",", "."))
+        weight_grams = float(text.replace(",", "."))
         if weight_grams <= 0:
             raise ValueError
     except (ValueError, AttributeError):

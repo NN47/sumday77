@@ -23,13 +23,14 @@ def test_kbju_menu_hides_duplicate_daily_report_button():
     assert "📆 Календарь КБЖУ" in texts
 
 
-def test_kbju_add_menu_exposes_only_primary_ai_input_buttons():
+def test_kbju_add_menu_exposes_primary_input_and_custom_product_buttons():
     texts = _reply_keyboard_texts(kbju_add_menu)
 
     assert texts == [
         "📝 Ввести приём пищи текстом (AI-анализ)",
         "📷 Анализ еды по фото",
         "📋 Анализ этикетки",
+        "🧺 Мой продукт",
         FINISH_MEAL_BUTTON_TEXT,
         "🔄 Главное меню",
     ]
