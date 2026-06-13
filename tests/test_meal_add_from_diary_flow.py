@@ -126,26 +126,67 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_add_menu():
     assert state._data["meal_type"] == meals.MealType.BREAKFAST.value
     assert state._data["pending_add_method"] is None
     push_stack.assert_called_once_with(message.bot, meals.kbju_add_menu)
-    assert message.answer.await_count == 3
+    assert message.answer.await_count == 4
     recent_text = message.answer.await_args_list[0].args[0]
     assert "🕘 <b>Недавно добавленные • страница 1</b>" in recent_text
     assert "<b>Чёрный кофе</b>" in recent_text
     analysis_text = message.answer.await_args_list[1].args[0]
     assert "✅ Продукт сохранён." in analysis_text
     assert message.answer.await_args_list[1].kwargs["parse_mode"] == "HTML"
-    answer_text = message.answer.await_args_list[-1].args[0]
+    answer_text = message.answer.await_args_list[-2].args[0]
     assert "🍱 <b>Уже в этом приёме пищи</b>" in answer_text
     assert "📅 <b>Дата:</b> 08.04.2026" in answer_text
     assert "🍳 <b>Завтрак • 5 ккал</b>" in answer_text
     assert "• <b>Чёрный кофе</b> (250 г)" in answer_text
     assert "➕ Добавь следующий продукт" in answer_text
     assert "✅ Когда приём пищи заполнен — нажми «✅ Завершить приём»." in answer_text
-    keyboard = message.answer.await_args_list[-1].kwargs["reply_markup"]
+    keyboard = message.answer.await_args_list[-2].kwargs["reply_markup"]
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [["✏️ Редактировать", "🕘 Недавние"]]
     assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
         ["edit_meal:breakfast:2026-04-08", "meal_entry_recent:breakfast:1"]
     ]
-    assert message.answer.await_args_list[-1].kwargs["parse_mode"] == "HTML"
+    assert message.answer.await_args_list[-2].kwargs["parse_mode"] == "HTML"
+    assert message.answer.await_args_list[-1].args[0].startswith("⬇️ Выбери следующий способ")
+    assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_add_menu
+
+
+def test_custom_product_final_inline_save_uses_callback_user_and_restores_add_menu():
+    message = _build_message()
+    # Callback messages are sent by the bot and may not carry the user's id.
+    message.from_user = SimpleNamespace(id=999)
+    callback = SimpleNamespace(
+        data="custom_vsave:amount",
+        from_user=SimpleNamespace(id=12345),
+        message=message,
+        answer=AsyncMock(),
+    )
+    state = _DummyState()
+    state._data.update(
+        {
+            "custom_product": {
+                "name": "Творог",
+                "calories": 100,
+                "protein": 10,
+                "fat": 2,
+                "carbs": 3,
+            },
+            "custom_product_draft_value": 150,
+            "meal_type": meals.MealType.SNACK.value,
+            "entry_date": "2026-04-08",
+        }
+    )
+    saved_meal = SimpleNamespace(id=77)
+
+    with patch("handlers.meals.MealRepository.save_meal", return_value=saved_meal) as save_meal, patch(
+        "handlers.meals.MealRepository.get_meals_for_date", return_value=[]
+    ), patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]), patch("handlers.meals.push_menu_stack"):
+        asyncio.run(meals.custom_product_value_save(callback, state))
+
+    callback.answer.assert_awaited_once()
+    assert save_meal.call_args.kwargs["user_id"] == "12345"
+    assert message.bot.last_meal_ids["12345"] == 77
+    assert state._data["meal_type"] == meals.MealType.SNACK.value
+    assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_add_menu
 
 
 def test_meal_entry_recent_inline_button_opens_recent_products_page():
@@ -833,8 +874,8 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     state.set_state.assert_awaited_with(meals.MealEntryStates.choosing_meal_type)
     assert state._data["meal_type"] == meals.MealType.LUNCH.value
     assert "AI text meal analysis provider=deepseek" in caplog.text
-    analysis_text = message.answer.await_args_list[-2].args[0]
-    answer_text = message.answer.await_args_list[-1].args[0]
+    analysis_text = message.answer.await_args_list[-3].args[0]
+    answer_text = message.answer.await_args_list[-2].args[0]
 
     assert "🤖 <b>📝 AI-анализ приёма пищи</b>" in analysis_text
     assert "AI-анализ (DeepSeek): оценка приёма пищи" not in analysis_text
@@ -845,5 +886,6 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     assert "🍲 <b>Обед • 330 ккал</b>" in answer_text
     assert "➕ Добавь следующий продукт" in answer_text
     assert "✅ Когда приём пищи заполнен — нажми «✅ Завершить приём»." in answer_text
+    assert message.answer.await_args_list[-3].kwargs["parse_mode"] == "HTML"
     assert message.answer.await_args_list[-2].kwargs["parse_mode"] == "HTML"
-    assert message.answer.await_args_list[-1].kwargs["parse_mode"] == "HTML"
+    assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_add_menu
