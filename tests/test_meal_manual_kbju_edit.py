@@ -116,18 +116,26 @@ def test_custom_product_calories_editor_has_one_kcal_step():
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
 
     assert rows[:2] == [
-        ["-100", "-50", "-20", "+20", "+50", "+100"],
-        ["-10", "-5", "-1", "+1", "+5", "+10"],
+        ["+1", "+5", "+10", "+20", "+50", "+100"],
+        ["-1", "-5", "-10", "-20", "-50", "-100"],
     ]
 
     callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
     assert callback_rows[0] == [
-        "custom_vchg:calories:-100",
-        "custom_vchg:calories:-50",
-        "custom_vchg:calories:-20",
+        "custom_vchg:calories:1",
+        "custom_vchg:calories:5",
+        "custom_vchg:calories:10",
         "custom_vchg:calories:20",
         "custom_vchg:calories:50",
         "custom_vchg:calories:100",
+    ]
+    assert callback_rows[1] == [
+        "custom_vchg:calories:-1",
+        "custom_vchg:calories:-5",
+        "custom_vchg:calories:-10",
+        "custom_vchg:calories:-20",
+        "custom_vchg:calories:-50",
+        "custom_vchg:calories:-100",
     ]
 
 
@@ -136,18 +144,26 @@ def test_custom_product_macro_editors_use_fractional_gram_step():
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
 
     assert rows[:2] == [
-        ["-10", "-5", "-1", "+1", "+5", "+10"],
-        ["-0,5", "-0,2", "-0,1", "+0,1", "+0,2", "+0,5"],
+        ["+0,1", "+0,2", "+0,5", "+1", "+5", "+10"],
+        ["-0,1", "-0,2", "-0,5", "-1", "-5", "-10"],
     ]
 
     callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
-    assert callback_rows[1] == [
-        "custom_vchg:protein:-0.5",
-        "custom_vchg:protein:-0.2",
-        "custom_vchg:protein:-0.1",
+    assert callback_rows[0] == [
         "custom_vchg:protein:0.1",
         "custom_vchg:protein:0.2",
         "custom_vchg:protein:0.5",
+        "custom_vchg:protein:1",
+        "custom_vchg:protein:5",
+        "custom_vchg:protein:10",
+    ]
+    assert callback_rows[1] == [
+        "custom_vchg:protein:-0.1",
+        "custom_vchg:protein:-0.2",
+        "custom_vchg:protein:-0.5",
+        "custom_vchg:protein:-1",
+        "custom_vchg:protein:-5",
+        "custom_vchg:protein:-10",
     ]
 
 
