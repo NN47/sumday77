@@ -700,7 +700,7 @@ async def _advance_custom_product_after_save(
     await state.update_data(custom_product=product, custom_product_draft_value=None)
     next_field = CUSTOM_PRODUCT_FIELDS[field]["next_field"]
     if next_field:
-        start_value = 100 if next_field == "amount" else float(product.get(next_field, 0))
+        start_value = float(product.get(next_field, 0))
         await _show_custom_product_value_editor(message, state, next_field, start_value)
         return
     await _save_custom_product(message, state, user_id=user_id)

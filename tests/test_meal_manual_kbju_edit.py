@@ -13,6 +13,7 @@ from handlers.meals import (
     _render_product_actions_text,
     _render_weight_editor_text,
     _parse_kbju_bulk_input,
+    _advance_custom_product_after_save,
 )
 from utils.emoji_map import EMOJI_MAP
 from utils.meal_formatters import _extract_product_lines
@@ -217,6 +218,26 @@ def test_product_actions_keyboard_has_change_name_button():
     assert callback_rows[0] == ["meal_pact_name:2"]
     assert ["⚖️ Изменить вес"] in rows
     assert ["🧮 Изменить КБЖУ"] in rows
+
+
+def test_custom_product_amount_step_initial_value_is_zero():
+    from unittest.mock import AsyncMock
+
+    import asyncio
+
+    message = SimpleNamespace(answer=AsyncMock())
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"custom_product": {}}),
+        update_data=AsyncMock(),
+        set_state=AsyncMock(),
+    )
+
+    asyncio.run(_advance_custom_product_after_save(message, state, "carbs", 12))
+
+    message.answer.assert_awaited_once()
+    assert "Текущее значение: <b>0 г</b>" in message.answer.await_args.args[0]
+    state.update_data.assert_any_await(custom_product={"carbs": 12}, custom_product_draft_value=None)
+    state.update_data.assert_any_await(custom_product_current_field="amount", custom_product_draft_value=0.0)
 
 
 def test_custom_product_value_editor_sends_single_inline_editor():
