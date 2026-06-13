@@ -496,7 +496,10 @@ def _render_custom_product_value_editor_text(
 
 def _build_custom_product_value_keyboard(field: str, *, unit: str) -> InlineKeyboardMarkup:
     """Inline-кнопки +/− для ввода КБЖУ и веса съеденного продукта."""
-    deltas = [(-100, 100), (-50, 50), (-10, 10), (-1, 1)] if unit == "г" else [(-100, 100), (-50, 50), (-10, 10), (-5, 5)]
+    if unit in {"г", "ккал"}:
+        deltas = [(-100, 100), (-50, 50), (-10, 10), (-1, 1)]
+    else:
+        deltas = [(-100, 100), (-50, 50), (-10, 10), (-5, 5)]
     rows = [
         [
             InlineKeyboardButton(text=f"{minus:+g} {unit}", callback_data=f"custom_vchg:{field}:{minus:g}"),

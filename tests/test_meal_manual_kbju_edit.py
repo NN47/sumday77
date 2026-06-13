@@ -4,6 +4,7 @@ import pytest
 
 from handlers.meals import (
     _apply_product_manual_macros,
+    _build_custom_product_value_keyboard,
     _build_kbju_editor_keyboard,
     _build_kbju_field_editor_keyboard,
     _build_product_actions_keyboard,
@@ -107,6 +108,24 @@ def test_weight_editor_uses_smaller_first_two_step_rows():
         "meal_wchg:0:-10",
         "meal_wchg:0:10",
         "meal_wchg:0:25",
+    ]
+
+
+def test_custom_product_calories_editor_has_one_kcal_step():
+    keyboard = _build_custom_product_value_keyboard("calories", unit="ккал")
+    rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
+
+    assert rows[:4] == [
+        ["-100 ккал", "+100 ккал"],
+        ["-50 ккал", "+50 ккал"],
+        ["-10 ккал", "+10 ккал"],
+        ["-1 ккал", "+1 ккал"],
+    ]
+
+    callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
+    assert callback_rows[3] == [
+        "custom_vchg:calories:-1",
+        "custom_vchg:calories:1",
     ]
 
 
