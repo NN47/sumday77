@@ -2434,8 +2434,7 @@ async def _handle_custom_product_macro(
     if value is None:
         await message.answer("Введите число 0 или больше. Можно использовать запятую или точку.")
         return
-    await state.update_data(custom_product_draft_value=value)
-    await _show_custom_product_value_editor(message, state, field, value)
+    await _advance_custom_product_after_save(message, state, field, value, user_id=str(message.from_user.id))
 
 
 @router.message(MealEntryStates.custom_product_calories)
