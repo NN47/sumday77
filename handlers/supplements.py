@@ -320,6 +320,20 @@ async def send_supplement_history_time_prompt(
     )
 
 
+async def send_supplement_amount_prompt(
+    message: Message, supplement_name: str, timestamp: datetime, prefix: str = ""
+):
+    """Просит указать количество приёма добавки с быстрыми inline-кнопками."""
+    safe_supplement_name = html.escape(supplement_name)
+    await message.answer(
+        f"{prefix}<b>✅ Зафиксировал время приёма «{safe_supplement_name}» "
+        f"в {timestamp.strftime('%H:%M')}.</b>\n"
+        "Выбери кнопкой или укажи количество вручную:",
+        reply_markup=build_supplement_amount_inline_keyboard(),
+        parse_mode="HTML",
+    )
+
+
 async def start_log_supplement_flow(message: Message, state: FSMContext, user_id: str):
     """Начинает процесс отметки приёма добавки."""
     supplements_list = SupplementRepository.get_supplements(user_id)
@@ -380,20 +394,24 @@ async def log_supplement_intake(message: Message, state: FSMContext):
         return
     
     entry_date_raw = state_data.get("entry_date")
+    now = datetime.now(MSK_TZ)
     if isinstance(entry_date_raw, str):
         try:
             target_date = date.fromisoformat(entry_date_raw)
         except ValueError:
-            target_date = date.today()
+            target_date = now.date()
     else:
-        target_date = date.today()
+        target_date = now.date()
+
+    timestamp = datetime.combine(target_date, now.time().replace(second=0, microsecond=0))
     await state.update_data(
         supplement_name=target["name"],
         supplement_id=target["id"],
         entry_date=target_date.isoformat(),
+        timestamp=timestamp.isoformat(),
     )
-    await state.set_state(SupplementStates.entering_history_time)
-    await send_supplement_history_time_prompt(message, target_date)
+    await state.set_state(SupplementStates.entering_history_amount)
+    await send_supplement_amount_prompt(message, target["name"], timestamp)
 
 
 @router.message(SupplementStates.choosing_date_for_intake)
@@ -2344,14 +2362,7 @@ async def confirm_supplement_intake_from_notification(callback: CallbackQuery, s
     except Exception:
         pass
 
-    safe_supplement_name = html.escape(target["name"])
-
-    await callback.message.answer(
-        f"<b>✅ Зафиксировал время приёма «{safe_supplement_name}» в {time_text}.</b>\n"
-        "Выбери кнопкой или укажи количество вручную:",
-        reply_markup=build_supplement_amount_inline_keyboard(),
-        parse_mode="HTML",
-    )
+    await send_supplement_amount_prompt(callback.message, target["name"], timestamp)
 
 
 def register_supplement_handlers(dp):
