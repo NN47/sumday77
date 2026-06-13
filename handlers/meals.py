@@ -8,7 +8,7 @@ import html
 from dataclasses import dataclass
 from datetime import date
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.exceptions import TelegramBadRequest
 from typing import Optional
 from aiogram.fsm.context import FSMContext
@@ -306,9 +306,21 @@ def _expand_recent_meals(recent_meals: list, limit: int = 64) -> list[RecentMeal
     return items
 
 
-def _format_recent_meals_text(recent_meals: list[RecentMealItem], page: int) -> str:
+def _is_custom_product_meal(meal) -> bool:
+    """Проверяет, что запись создана именно через кнопку «Мой продукт»."""
+    return any(product.get("source") == "custom_product" for product in _parse_recent_products(meal))
+
+
+def _get_custom_product_items(user_id: str, limit: int = 64) -> list[RecentMealItem]:
+    """Возвращает только продукты, созданные пользователем через кнопку «Мой продукт»."""
+    source_meals = MealRepository.get_user_meal_history(user_id)
+    custom_meals = [meal for meal in source_meals if _is_custom_product_meal(meal)]
+    return _expand_recent_meals(custom_meals, limit=limit)
+
+
+def _format_recent_meals_text(recent_meals: list[RecentMealItem], page: int, *, title: str = "🕘 <b>Недавно добавленные") -> str:
     start_idx = (page - 1) * RECENT_MEALS_PAGE_SIZE
-    lines: list[str] = [f"🕘 <b>Недавно добавленные • страница {page}</b>", ""]
+    lines: list[str] = [f"{title} • страница {page}</b>", ""]
     for offset, item in enumerate(recent_meals, start=start_idx + 1):
         lines.extend(
             [
@@ -371,6 +383,38 @@ def _build_recent_meals_keyboard(recent_meals: list[RecentMealItem], meal_type: 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _build_custom_products_keyboard(
+    products: list[RecentMealItem],
+    meal_type: str,
+    page: int,
+    has_prev: bool,
+    has_next: bool,
+) -> InlineKeyboardMarkup:
+    """Inline-выбор своих продуктов в визуальном стиле списка недавних."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for offset, item in enumerate(products, start=1):
+        title = _truncate_recent_name(item.title)
+        number = (page - 1) * RECENT_MEALS_PAGE_SIZE + offset
+        product_idx = "" if item.product_index is None else str(item.product_index)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{_format_emoji_number(number)} {title}",
+                    callback_data=f"custom_product_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}",
+                )
+            ]
+        )
+
+    nav_row: list[InlineKeyboardButton] = []
+    if has_prev:
+        nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"custom_product_page:{meal_type}:{page-1}"))
+    if has_next:
+        nav_row.append(InlineKeyboardButton(text="➡️ Показать ещё", callback_data=f"custom_product_page:{meal_type}:{page+1}"))
+    if nav_row:
+        rows.append(nav_row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def _build_recent_search_results_keyboard(
     items: list[RecentMealItem],
     meal_type: str,
@@ -420,13 +464,14 @@ def _format_custom_product_step(step: int, text: str) -> str:
     return f"Шаг {step}/5\n\n{text}"
 
 
-def _build_my_product_keyboard(meal_type: str) -> InlineKeyboardMarkup:
-    """Кнопки нижней части экрана «Мой продукт»."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Создать продукт", callback_data=f"custom_product_create:{meal_type}")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"custom_product_back:{meal_type}")],
-        ]
+def _build_my_product_keyboard(meal_type: str) -> ReplyKeyboardMarkup:
+    """Обычные кнопки нижней части экрана «Мой продукт»."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="➕ Создать продукт")],
+            [KeyboardButton(text="⬅️ Назад")],
+        ],
+        resize_keyboard=True,
     )
 
 
@@ -448,20 +493,35 @@ async def _show_my_product_menu(
     meal_type: str,
     user_id: str,
 ) -> None:
-    """Показывает выбор своих/недавних продуктов и кнопку создания нового продукта."""
-    shown = await _show_recent_meals_page(message, state, meal_type=meal_type, page=1, user_id=user_id)
-    if shown:
+    """Показывает продукты, созданные через «Мой продукт», и обычные кнопки действий."""
+    products = _get_custom_product_items(user_id, limit=64)
+    if products:
+        total_pages = max(1, math.ceil(len(products) / RECENT_MEALS_PAGE_SIZE))
+        page = 1
+        page_items = products[:RECENT_MEALS_PAGE_SIZE]
+        await message.answer(
+            _format_recent_meals_text(page_items, page, title="🧺 <b>Мои продукты"),
+            reply_markup=_build_custom_products_keyboard(
+                page_items,
+                meal_type,
+                page,
+                has_prev=False,
+                has_next=page < total_pages,
+            ),
+            parse_mode="HTML",
+        )
         text = (
             "<b>🧺 Мой продукт</b>\n\n"
-            "Выбери продукт из недавних выше или создай новый продукт вручную."
+            "Выбери один из своих продуктов выше или создай новый продукт вручную."
         )
     else:
         text = (
             "<b>🧺 Мой продукт</b>\n\n"
-            "У тебя пока нет добавленных продуктов. Создай первый продукт вручную."
+            "Здесь ты можешь сам внести свой продукт: название и КБЖУ на 100 г.\n"
+            "Нажми «➕ Создать продукт», чтобы добавить первый продукт."
         )
     await state.set_state(MealEntryStates.choosing_meal_type)
-    await state.update_data(meal_type=meal_type, pending_add_method=None)
+    await state.update_data(meal_type=meal_type, pending_add_method=None, in_my_product_menu=True)
     await message.answer(text, reply_markup=_build_my_product_keyboard(meal_type), parse_mode="HTML")
 
 AI_TEMPORARY_UNAVAILABLE_TEXT = "Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
@@ -1798,6 +1858,21 @@ async def select_meal_type(message: Message, state: FSMContext):
     await _show_input_methods(message, state)
 
 
+@router.message(MealEntryStates.choosing_meal_type, lambda m: (m.text or "").strip() == "➕ Создать продукт")
+async def custom_product_create_from_reply(message: Message, state: FSMContext):
+    """Начинает создание своего продукта с обычной кнопки."""
+    data = await state.get_data()
+    if not data.get("in_my_product_menu"):
+        return
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    await state.set_state(MealEntryStates.custom_product_name)
+    await state.update_data(meal_type=meal_type, custom_product={}, in_my_product_menu=False)
+    await message.answer(
+        _format_custom_product_step(1, "Введите название продукта:"),
+        reply_markup=kbju_add_menu,
+    )
+
+
 @router.message(MealEntryStates.choosing_meal_type, lambda m: (m.text or "").strip() in BACK_BUTTON_TEXTS or (m.text or "").strip() in MEAL_FINISH_BUTTON_TEXTS or (m.text or "").strip() in MAIN_MENU_BUTTON_ALIASES)
 async def handle_meal_type_menu_navigation(message: Message, state: FSMContext):
     """Обрабатывает навигационные кнопки на шаге выбора приёма пищи."""
@@ -1814,6 +1889,12 @@ async def handle_meal_type_menu_navigation(message: Message, state: FSMContext):
         return
 
     data = await state.get_data()
+    if data.get("in_my_product_menu"):
+        meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+        await state.update_data(in_my_product_menu=False, meal_type=meal_type, pending_add_method=None)
+        await _show_input_methods(message, state, user_id=str(message.from_user.id))
+        return
+
     selected_meal_type = normalize_meal_type(data.get("meal_type"), fallback="")
     if selected_meal_type in MEAL_TYPE_ORDER:
         await state.update_data(meal_type=None, pending_add_method=None)
@@ -1960,10 +2041,68 @@ async def custom_product_create(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     _, meal_type = callback.data.split(":", maxsplit=1)
     await state.set_state(MealEntryStates.custom_product_name)
-    await state.update_data(meal_type=meal_type, custom_product={})
+    await state.update_data(meal_type=meal_type, custom_product={}, in_my_product_menu=False)
     await callback.message.answer(
         _format_custom_product_step(1, "Введите название продукта:"),
         reply_markup=kbju_add_menu,
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("custom_product_page:"))
+async def custom_product_page(callback: CallbackQuery, state: FSMContext):
+    """Переключает страницы списка своих продуктов."""
+    await callback.answer()
+    _, meal_type, page_str = callback.data.split(":", maxsplit=2)
+    products = _get_custom_product_items(str(callback.from_user.id), limit=64)
+    if not products:
+        await callback.message.answer(
+            "Здесь ты можешь сам внести свой продукт. Нажми «➕ Создать продукт», чтобы добавить первый."
+        )
+        return
+    total_pages = max(1, math.ceil(len(products) / RECENT_MEALS_PAGE_SIZE))
+    page = min(max(1, int(page_str)), total_pages)
+    start = (page - 1) * RECENT_MEALS_PAGE_SIZE
+    page_items = products[start : start + RECENT_MEALS_PAGE_SIZE]
+    await state.update_data(recent_meals_page=page, meal_type=meal_type, in_my_product_menu=True)
+    await callback.message.answer(
+        _format_recent_meals_text(page_items, page, title="🧺 <b>Мои продукты"),
+        reply_markup=_build_custom_products_keyboard(
+            page_items,
+            meal_type,
+            page,
+            has_prev=page > 1,
+            has_next=page < total_pages,
+        ),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("custom_product_pick:"))
+async def custom_product_pick(callback: CallbackQuery, state: FSMContext):
+    """Открывает подтверждение добавления своего продукта."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    _, meal_type, page_str, source_meal_id_str, *product_idx_parts = parts
+    product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
+    source_meal_id = int(source_meal_id_str)
+    source_meal = MealRepository.get_meal_by_id(source_meal_id, str(callback.from_user.id))
+    if not source_meal or not _is_custom_product_meal(source_meal):
+        await callback.message.answer("❌ Не удалось найти свой продукт.")
+        return
+    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
+    await state.update_data(
+        recent_source_meal_id=source_meal_id,
+        recent_source_product_idx=product_index,
+        recent_custom_amount_g=None,
+        recent_meals_page=int(page_str),
+        recent_pick_origin="recent",
+        meal_type=meal_type,
+        in_my_product_menu=True,
+    )
+    await callback.message.answer(
+        _render_recent_meal_confirm_text(meal_type, recent_item, amount_g=recent_item.amount_g),
+        reply_markup=_build_recent_meal_confirm_keyboard(source_meal_id, meal_type, int(page_str), product_index),
+        parse_mode="HTML",
     )
 
 
