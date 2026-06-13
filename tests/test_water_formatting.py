@@ -9,7 +9,7 @@ if str(ROOT_PATH) not in sys.path:
     sys.path.insert(0, str(ROOT_PATH))
 
 from handlers.water import build_water_added_text
-from utils.keyboards import water_quick_add_inline
+from utils.keyboards import steps_menu, water_quick_add_inline
 
 
 def test_build_water_added_text_bolds_confirmation_and_labels():
@@ -46,3 +46,16 @@ def test_water_quick_add_inline_has_requested_adjustment_buttons():
         "quick_water_add_300",
         "quick_water_add_500",
     ]
+
+
+def test_steps_menu_numeric_rows_have_four_buttons():
+    numeric_rows = [
+        row
+        for row in steps_menu.keyboard
+        if all(button.text.isdigit() for button in row)
+    ]
+
+    assert len(numeric_rows) == 10
+    assert all(len(row) == 4 for row in numeric_rows)
+    assert [button.text for button in numeric_rows[0]] == ["500", "1000", "1500", "2000"]
+    assert [button.text for button in numeric_rows[-1]] == ["18500", "19000", "19500", "20000"]
