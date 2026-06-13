@@ -24,7 +24,8 @@ MEALS_BUTTON_ALIASES = {
 AI_ANALYSIS_BUTTON_TEXT = "🧠 ИИ анализ"
 KBJU_ADD_MEAL_BUTTON_TEXT = "➕ Добавить прием пищи"
 KBJU_ADD_MEAL_BUTTON_ALIASES = {KBJU_ADD_MEAL_BUTTON_TEXT, "➕ Добавить"}
-FINISH_MEAL_BUTTON_TEXT = "✅ Завершить приём пищи"
+FINISH_MEAL_BUTTON_TEXT = "✅ Завершить приём"
+LEGACY_FINISH_MEAL_BUTTON_TEXT = "✅ Завершить приём пищи"
 
 
 ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT = "📅 Сегодня"
