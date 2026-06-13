@@ -685,7 +685,14 @@ async def _go_to_previous_custom_product_step(message: Message, state: FSMContex
         )
 
 
-async def _advance_custom_product_after_save(message: Message, state: FSMContext, field: str, value: float) -> None:
+async def _advance_custom_product_after_save(
+    message: Message,
+    state: FSMContext,
+    field: str,
+    value: float,
+    *,
+    user_id: str | None = None,
+) -> None:
     """Сохраняет значение текущего поля и переводит к следующему шагу."""
     data = await state.get_data()
     product = dict(data.get("custom_product") or {})
@@ -696,7 +703,7 @@ async def _advance_custom_product_after_save(message: Message, state: FSMContext
         start_value = 100 if next_field == "amount" else float(product.get(next_field, 0))
         await _show_custom_product_value_editor(message, state, next_field, start_value)
         return
-    await _save_custom_product(message, state)
+    await _save_custom_product(message, state, user_id=user_id)
 
 
 @router.callback_query(lambda c: c.data.startswith("custom_vchg:"))
@@ -739,7 +746,7 @@ async def custom_product_value_save(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Вес должен быть больше 0 г", show_alert=True)
         return
     await callback.answer()
-    await _advance_custom_product_after_save(callback.message, state, field, value)
+    await _advance_custom_product_after_save(callback.message, state, field, value, user_id=str(callback.from_user.id))
 
 
 def _build_my_product_keyboard(meal_type: str) -> ReplyKeyboardMarkup:
@@ -1327,8 +1334,8 @@ async def _show_recent_meals_page(
     *,
     user_id: str | None = None,
 ) -> bool:
-    resolved_user_id = user_id or str(message.from_user.id)
-    source_meals = MealRepository.get_recent_unique_meals(resolved_user_id, limit=64)
+    user_id = user_id or str(message.from_user.id)
+    source_meals = MealRepository.get_recent_unique_meals(user_id, limit=64)
     all_recent_meals = _expand_recent_meals(source_meals, limit=64)
     if not all_recent_meals:
         return False
@@ -2491,7 +2498,7 @@ async def handle_custom_product_amount(message: Message, state: FSMContext):
     )
 
 
-async def _save_custom_product(message: Message, state: FSMContext) -> None:
+async def _save_custom_product(message: Message, state: FSMContext, *, user_id: str | None = None) -> None:
     """Сохраняет свой продукт и добавляет съеденную порцию в приём пищи."""
     data = await state.get_data()
     product = dict(data.get("custom_product") or {})
@@ -2533,9 +2540,9 @@ async def _save_custom_product(message: Message, state: FSMContext) -> None:
         ],
         ensure_ascii=False,
     )
-    user_id = str(message.from_user.id)
+    resolved_user_id = user_id or str(message.from_user.id)
     saved_meal = MealRepository.save_meal(
-        user_id=user_id,
+        user_id=resolved_user_id,
         raw_query=name,
         description=name,
         calories=calories,
@@ -2549,12 +2556,12 @@ async def _save_custom_product(message: Message, state: FSMContext) -> None:
     )
     if not hasattr(message.bot, "last_meal_ids"):
         message.bot.last_meal_ids = {}
-    message.bot.last_meal_ids[user_id] = saved_meal.id
+    message.bot.last_meal_ids[resolved_user_id] = saved_meal.id
 
     await _keep_meal_entry_open_after_save(
         message,
         state,
-        user_id=user_id,
+        user_id=resolved_user_id,
         entry_date=entry_date,
         meal_type=meal_type,
         intro_lines=[
@@ -2715,6 +2722,10 @@ async def _keep_meal_entry_open_after_save(
         current_meal_text,
         reply_markup=_build_meal_entry_post_save_keyboard(normalized_meal_type, entry_date),
         parse_mode="HTML",
+    )
+    await message.answer(
+        "⬇️ Выбери следующий способ добавления или заверши приём пищи.",
+        reply_markup=kbju_add_menu,
     )
 
 @router.message(MealEntryStates.waiting_for_openrouter_food_input)
