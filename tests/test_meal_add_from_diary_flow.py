@@ -136,7 +136,7 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_add_menu():
     assert "🍳 <b>Завтрак • 5 ккал</b>" in answer_text
     assert "• <b>Чёрный кофе</b> (250 г)" in answer_text
     assert "Добавь следующий продукт" in answer_text
-    assert "Когда приём пищи заполнен — нажми «✅ Завершить приём пищи»." in answer_text
+    assert "Когда приём пищи заполнен — нажми «✅ Завершить приём»." in answer_text
     keyboard = message.answer.await_args_list[-1].kwargs["reply_markup"]
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [["✏️ Редактировать", "🕘 Недавние"]]
     assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
@@ -839,5 +839,5 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     assert "<b>Уже в этом приёме пищи:</b>" in answer_text
     assert "🍲 <b>Обед • 330 ккал</b>" in answer_text
     assert "Добавь следующий продукт" in answer_text
-    assert "Когда приём пищи заполнен — нажми «✅ Завершить приём пищи»." in answer_text
+    assert "Когда приём пищи заполнен — нажми «✅ Завершить приём»." in answer_text
     assert message.answer.await_args_list[-1].kwargs["parse_mode"] == "HTML"
