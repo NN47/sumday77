@@ -1518,15 +1518,30 @@ def _extract_recent_meal_amount_g(meal) -> int:
     return max(1, int(round(grams_value)))
 
 
-def _build_recent_meal_confirm_keyboard(source_meal_id: int, meal_type: str, page: int, product_index: int | None = None) -> InlineKeyboardMarkup:
+def _build_recent_meal_confirm_keyboard(
+    source_meal_id: int,
+    meal_type: str,
+    page: int,
+    product_index: int | None = None,
+    *,
+    include_delete: bool = False,
+) -> InlineKeyboardMarkup:
     product_idx = "" if product_index is None else str(product_index)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Добавить", callback_data=f"recent_meal_confirm:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
-            [InlineKeyboardButton(text="✏️ Изменить вес", callback_data=f"recent_meal_edit_weight:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"recent_meal_back:{meal_type}:{page}")],
-        ]
-    )
+    rows = [
+        [InlineKeyboardButton(text="✅ Добавить", callback_data=f"recent_meal_confirm:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
+        [InlineKeyboardButton(text="✏️ Изменить вес", callback_data=f"recent_meal_edit_weight:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
+    ]
+    if include_delete:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🗑 Удалить",
+                    callback_data=f"custom_product_delete_ask:{meal_type}:{page}:{source_meal_id}:{product_idx}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"recent_meal_back:{meal_type}:{page}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _render_recent_weight_editor_text(item: RecentMealItem, draft_amount_g: int | None = None) -> str:
@@ -1767,6 +1782,15 @@ async def recent_meal_back(callback: CallbackQuery, state: FSMContext):
                 page=int(data.get("recent_search_page") or page_str),
             )
             return
+
+    if data.get("recent_pick_origin") == "custom" or data.get("in_my_product_menu"):
+        await _show_my_product_menu(
+            callback.message,
+            state,
+            meal_type=meal_type,
+            user_id=str(callback.from_user.id),
+        )
+        return
 
     await _show_recent_meals_page(
         callback.message,
@@ -2395,15 +2419,104 @@ async def custom_product_pick(callback: CallbackQuery, state: FSMContext):
         recent_source_product_idx=product_index,
         recent_custom_amount_g=None,
         recent_meals_page=int(page_str),
-        recent_pick_origin="recent",
+        recent_pick_origin="custom",
         meal_type=meal_type,
         in_my_product_menu=True,
     )
     await callback.message.answer(
         _render_recent_meal_confirm_text(meal_type, recent_item, amount_g=recent_item.amount_g),
-        reply_markup=_build_recent_meal_confirm_keyboard(source_meal_id, meal_type, int(page_str), product_index),
+        reply_markup=_build_recent_meal_confirm_keyboard(
+            source_meal_id,
+            meal_type,
+            int(page_str),
+            product_index,
+            include_delete=True,
+        ),
         parse_mode="HTML",
     )
+
+
+def _build_custom_product_delete_confirm_keyboard(
+    source_meal_id: int,
+    meal_type: str,
+    page: int,
+    product_index: int | None = None,
+) -> InlineKeyboardMarkup:
+    product_idx = "" if product_index is None else str(product_index)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🗑 Да, удалить",
+                    callback_data=f"custom_product_delete:{meal_type}:{page}:{source_meal_id}:{product_idx}",
+                )
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"custom_product_pick:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
+        ]
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("custom_product_delete_ask:"))
+async def custom_product_delete_ask(callback: CallbackQuery, state: FSMContext):
+    """Запрашивает подтверждение удаления своего продукта из списка."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    _, meal_type, page_str, source_meal_id_str, *product_idx_parts = parts
+    product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
+    source_meal_id = int(source_meal_id_str)
+    source_meal = MealRepository.get_meal_by_id(source_meal_id, str(callback.from_user.id))
+    if not source_meal or not _is_custom_product_meal(source_meal):
+        await callback.message.answer("❌ Не удалось найти свой продукт.")
+        return
+
+    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
+    await callback.message.edit_text(
+        f'Удалить продукт «{html.escape(recent_item.title or "Мой продукт")}» из списка своих продуктов?',
+        reply_markup=_build_custom_product_delete_confirm_keyboard(source_meal_id, meal_type, int(page_str), product_index),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("custom_product_delete:"))
+async def custom_product_delete(callback: CallbackQuery, state: FSMContext):
+    """Удаляет свой продукт и возвращает список оставшихся продуктов."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    _, meal_type, _page_str, source_meal_id_str, *product_idx_parts = parts
+    product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
+    source_meal_id = int(source_meal_id_str)
+    user_id = str(callback.from_user.id)
+    source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
+    if not source_meal or not _is_custom_product_meal(source_meal):
+        await callback.message.answer("❌ Не удалось найти свой продукт.")
+        return
+
+    products = _parse_recent_products(source_meal)
+    if product_index is not None and len(products) > 1:
+        products.pop(product_index)
+        totals, api_details = _build_meal_update_payload(products)
+        success = MealRepository.update_meal(
+            meal_id=source_meal_id,
+            user_id=user_id,
+            description=getattr(source_meal, "raw_query", None),
+            calories=totals["calories"],
+            protein=totals["protein_g"],
+            fat=totals["fat_total_g"],
+            carbs=totals["carbohydrates_total_g"],
+            products_json=json.dumps(products, ensure_ascii=False),
+            api_details=api_details,
+            is_manually_corrected=True,
+        )
+    else:
+        success = MealRepository.delete_meal(source_meal_id, user_id)
+
+    if not success:
+        await callback.message.answer("❌ Не удалось удалить продукт. Попробуй позже.")
+        return
+
+    await state.update_data(recent_source_meal_id=None, recent_source_product_idx=None, recent_custom_amount_g=None)
+    await callback.message.answer("✅ Продукт удалён из списка своих продуктов.")
+    await _show_my_product_menu(callback.message, state, meal_type=meal_type, user_id=user_id)
 
 
 @router.message(MealEntryStates.custom_product_name)

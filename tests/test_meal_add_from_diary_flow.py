@@ -722,6 +722,59 @@ def test_recent_search_results_keyboard_uses_absolute_numbers_on_later_pages():
     assert keyboard.inline_keyboard[1][0].text.startswith("1️⃣8️⃣ ")
 
 
+
+def test_custom_product_pick_shows_delete_button():
+    callback = _build_callback("custom_product_pick:dinner:1:7:0")
+    state = _DummyState()
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Виноград белый",
+        description=None,
+        products_json=(
+            '[{"name":"Виноград белый","grams":70,"kcal":46,"protein":0.3,"fat":0.1,'
+            '"carbs":11.9,"source":"custom_product"}]'
+        ),
+        calories=46,
+        protein=0.3,
+        fat=0.1,
+        carbs=11.9,
+    )
+
+    with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal):
+        asyncio.run(meals.custom_product_pick(callback, state))
+
+    markup = callback.message.answer.await_args.kwargs["reply_markup"]
+    button_texts = [button.text for row in markup.inline_keyboard for button in row]
+    assert button_texts == ["✅ Добавить", "✏️ Изменить вес", "🗑 Удалить", "⬅️ Назад"]
+    assert state._data["recent_pick_origin"] == "custom"
+
+
+def test_custom_product_delete_removes_saved_product_and_returns_to_my_products():
+    callback = _build_callback("custom_product_delete:dinner:1:7:0")
+    state = _DummyState()
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Виноград белый",
+        description=None,
+        products_json=(
+            '[{"name":"Виноград белый","grams":70,"kcal":46,"protein":0.3,"fat":0.1,'
+            '"carbs":11.9,"source":"custom_product"}]'
+        ),
+        calories=46,
+        protein=0.3,
+        fat=0.1,
+        carbs=11.9,
+    )
+
+    with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal), patch(
+        "handlers.meals.MealRepository.delete_meal", return_value=True
+    ) as delete_meal, patch("handlers.meals._show_my_product_menu", new=AsyncMock()) as show_my_product:
+        asyncio.run(meals.custom_product_delete(callback, state))
+
+    delete_meal.assert_called_once_with(7, "12345")
+    callback.message.answer.assert_awaited_once_with("✅ Продукт удалён из списка своих продуктов.")
+    show_my_product.assert_awaited_once_with(callback.message, state, meal_type="dinner", user_id="12345")
+
 def test_recent_meal_back_returns_to_search_results_when_product_opened_from_search():
     callback = _build_callback("recent_meal_back:dinner:1")
     state = _DummyState()
