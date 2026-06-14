@@ -1817,6 +1817,7 @@ async def recent_meal_page(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(lambda c: c.data.startswith("recent_meal_edit_weight:"))
 async def recent_meal_edit_weight(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
+    data = await state.get_data()
     parts = callback.data.split(":")
     _, meal_type, page_str, source_meal_id_str, *product_idx_parts = parts
     product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
@@ -1828,14 +1829,20 @@ async def recent_meal_edit_weight(callback: CallbackQuery, state: FSMContext):
         return
     recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
     current_amount = int(recent_item.amount_g or 100)
-    data = await state.get_data()
     custom_amount = int(data.get("recent_custom_amount_g") or current_amount)
+    pick_origin = (
+        "custom"
+        if data.get("recent_pick_origin") == "custom" or data.get("in_my_product_menu")
+        else data.get("recent_pick_origin", "recent")
+    )
     await state.update_data(
         recent_source_meal_id=source_meal_id,
         recent_source_product_idx=product_index,
         recent_weight_edit_mode=True,
         recent_weight_draft_g=custom_amount,
         recent_meals_page=int(page_str),
+        recent_pick_origin=pick_origin,
+        in_my_product_menu=pick_origin == "custom",
         meal_type=meal_type,
     )
     await callback.message.answer(
@@ -1920,6 +1927,7 @@ async def recent_meal_weight_save_draft(callback: CallbackQuery, state: FSMConte
             meal_type,
             int(data.get("recent_meals_page") or 1),
             product_index,
+            include_delete=data.get("recent_pick_origin") == "custom" or data.get("in_my_product_menu"),
         ),
         parse_mode="HTML",
     )
@@ -1956,6 +1964,7 @@ async def recent_meal_weight_back(callback: CallbackQuery, state: FSMContext):
             meal_type,
             int(data.get("recent_meals_page") or 1),
             product_index,
+            include_delete=data.get("recent_pick_origin") == "custom" or data.get("in_my_product_menu"),
         ),
         parse_mode="HTML",
     )
