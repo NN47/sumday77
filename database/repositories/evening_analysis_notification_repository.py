@@ -101,7 +101,7 @@ class EveningAnalysisNotificationRepository:
                 state.remind_later_date = target_date
                 state.remind_later_count = 0
 
-            if state.remind_later_count >= 2:
+            if state.remind_later_count >= 7:
                 state.reminder_due_at = None
                 state.updated_at = now
                 return None

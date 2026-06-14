@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 from handlers.activity import analyze_activity_day_copy_2, analyze_activity_day_gigachat
 
 
-def test_gigachat_day_analysis_uses_gigachat_backend():
+def test_today_copy_uses_standard_daily_analysis_flow():
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=12345),
         answer=AsyncMock(),
@@ -25,13 +25,13 @@ def test_gigachat_day_analysis_uses_gigachat_backend():
     ):
         asyncio.run(analyze_activity_day_gigachat(message))
 
-    generate_mock.assert_awaited_once_with("12345", date.today(), date.today(), "за день", backend="gigachat")
+    generate_mock.assert_awaited_once_with("12345", date.today(), date.today(), "за день")
     create_entry.assert_called_once()
     final_call = message.answer.await_args_list[-1]
     assert final_call.kwargs.get("parse_mode") == "HTML"
 
 
-def test_today_copy_2_uses_deepseek_backend():
+def test_today_copy_2_uses_standard_daily_analysis_flow():
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=12345),
         answer=AsyncMock(),
@@ -46,7 +46,7 @@ def test_today_copy_2_uses_deepseek_backend():
     ):
         asyncio.run(analyze_activity_day_copy_2(message))
 
-    generate_mock.assert_awaited_once_with("12345", date.today(), date.today(), "за день", backend="deepseek")
+    generate_mock.assert_awaited_once_with("12345", date.today(), date.today(), "за день")
     create_entry.assert_called_once()
     final_call = message.answer.await_args_list[-1]
     assert final_call.kwargs.get("parse_mode") == "HTML"
