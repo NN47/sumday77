@@ -20,7 +20,7 @@ class _DummyState:
 
 
 def _build_message():
-    return SimpleNamespace(answer=AsyncMock(), bot=SimpleNamespace())
+    return SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock(), bot=SimpleNamespace())
 
 
 def _build_callback(callback_data: str):
@@ -820,6 +820,67 @@ def test_recent_meal_back_returns_to_recent_list_for_regular_recent_pick():
         user_id="12345",
     )
     show_search.assert_not_awaited()
+
+
+def test_recent_weight_edit_from_my_products_preserves_custom_origin():
+    callback = _build_callback("recent_meal_edit_weight:dinner:1:7:0")
+    state = _DummyState()
+    state._data.update({"in_my_product_menu": True})
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Виноград белый",
+        description=None,
+        products_json=(
+            '[{"name":"Виноград белый","grams":70,"kcal":46,"protein":0.3,"fat":0.1,'
+            '"carbs":11.9,"source":"custom_product"}]'
+        ),
+        calories=46,
+        protein=0.3,
+        fat=0.1,
+        carbs=11.9,
+    )
+
+    with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal):
+        asyncio.run(meals.recent_meal_edit_weight(callback, state))
+
+    assert state._data["recent_pick_origin"] == "custom"
+    assert state._data["in_my_product_menu"] is True
+
+
+def test_recent_weight_back_from_my_products_keeps_delete_button_on_confirm_card():
+    callback = _build_callback("recent_wback")
+    state = _DummyState()
+    state._data.update(
+        {
+            "recent_source_meal_id": 7,
+            "recent_source_product_idx": 0,
+            "recent_pick_origin": "custom",
+            "in_my_product_menu": True,
+            "meal_type": "dinner",
+            "recent_meals_page": 1,
+        }
+    )
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Виноград белый",
+        description=None,
+        products_json=(
+            '[{"name":"Виноград белый","grams":70,"kcal":46,"protein":0.3,"fat":0.1,'
+            '"carbs":11.9,"source":"custom_product"}]'
+        ),
+        calories=46,
+        protein=0.3,
+        fat=0.1,
+        carbs=11.9,
+    )
+
+    with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal):
+        asyncio.run(meals.recent_meal_weight_back(callback, state))
+
+    markup = callback.message.edit_text.await_args.kwargs["reply_markup"]
+    button_texts = [button.text for row in markup.inline_keyboard for button in row]
+    assert button_texts == ["✅ Добавить", "✏️ Изменить вес", "🗑 Удалить", "⬅️ Назад"]
+
 
 def test_recent_confirm_uses_single_selected_product():
     callback = _build_callback("recent_meal_confirm:dinner:1:7:1")
