@@ -1027,10 +1027,10 @@ async def generate_activity_analysis(
 Очень важно:
 - Не считай количество записей тренировок, я уже дал тебе готовый текст по объёму и видам упражнений.
 - Цель по КБЖУ уже указана в данных, не используй формулировки вроде "если твоя цель...".
-- История веса может включать несколько измерений — используй её для оценки тенденции, не говори, что измерение одно, если в данных есть история.
+- История веса может включать несколько измерений — анализируй динамику веса и используй её для оценки тенденции; не говори, что измерение одно, если в данных есть история.
 - Используй HTML-теги <b>текст</b> для выделения важных цифр и фактов жирным шрифтом.
 - Обрати внимание на проценты выполнения целей КБЖУ — выдели их жирным и дай оценку.
-- В блоке питания оцени калории от скорректированной нормы: базовая норма + учтённая часть сожжённых за день калорий. Не сравнивай съеденные калории только с базовой нормой, если активность была.
+- В блоке питания оцени калории от скорректированной нормы: базовая норма + учтённая часть сожжённых за день калорий. С учётом расхода на тренировке не сравнивай съеденные калории только с базовой нормой, если активность была.
 - Если есть сравнение с предыдущим периодом, обязательно упомяни это в анализе.
 - Если есть статистика по дням недели, используй её для выявления паттернов активности.
 - Если период анализа = 1 день, не используй формулировки про проценты тренировочных дней и «за период». Пиши выводы только про текущий день.
@@ -1370,8 +1370,8 @@ async def start_evening_activity_analysis(callback: CallbackQuery):
 
 @router.callback_query(lambda c: c.data and c.data.startswith(f"{EVENING_ANALYSIS_REMIND_PREFIX}:"))
 async def remind_evening_activity_analysis_later(callback: CallbackQuery):
-    """Планирует повторное вечернее уведомление анализа дня через 45 минут."""
-    await callback.answer("Хорошо, напомню позже ⏰")
+    """Планирует повторное вечернее уведомление анализа дня через 30 минут."""
+    await callback.answer("Напомню через пол часа")
     user_id = str(callback.from_user.id)
     target_date = date.fromisoformat(callback.data.split(":", 1)[1])
     due_at = datetime.utcnow() + EVENING_ANALYSIS_REMINDER_DELAY
@@ -1379,106 +1379,21 @@ async def remind_evening_activity_analysis_later(callback: CallbackQuery):
     if reminder_number is None:
         await callback.message.answer("На сегодня больше не буду напоминать об анализе дня ⏰")
         return
-    await callback.message.answer("Хорошо, напомню позже ⏰")
+    await callback.message.answer("Хорошо, напомню через пол часа ⏰")
 
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES)
 async def analyze_activity_day_gigachat(message: Message):
-    """Анализ за день через GigaChat."""
+    """Копия стандартного анализа за день с тем же промптом, что у кнопки «📅 Сегодня»."""
     user_id = str(message.from_user.id)
-    today = date.today()
-    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, today)
-    logger.info("Starting daily activity analysis via GigaChat, user_id=%s", user_id)
-    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
-    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
-    AnalyticsRepository.track_event(user_id, "daily_analysis_gigachat_started", section="activity")
-    await message.answer("⏳ Подожди немного, бот анализирует твой день через GigaChat...")
-    try:
-        analysis = await generate_activity_analysis(user_id, today, today, "за день", backend="gigachat")
-        ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="generated")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_gigachat_sent", section="activity")
-        logger.info("Daily activity analysis via GigaChat sent successfully, user_id=%s", user_id)
-    except Exception as e:
-        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_gigachat_failed", section="activity")
-        if _is_gigachat_temporarily_unavailable_error(e):
-            push_menu_stack(message.bot, activity_analysis_menu)
-            await message.answer(
-                "GigaChat сейчас временно недоступен.\n\nПопробуй чуть позже — и всё снова заработает.",
-                reply_markup=activity_analysis_menu,
-            )
-            return
-        if isinstance(e, GigaChatServiceConfigError):
-            logger.error("GigaChat token/config error during daily analysis, user_id=%s error=%s", user_id, e)
-        elif isinstance(e, GigaChatServiceError):
-            logger.error("GigaChat request error during daily analysis, user_id=%s error=%s", user_id, e)
-        log_app_error(
-            source="gigachat",
-            error=e,
-            user_id=user_id,
-            context="daily_analysis_gigachat",
-            extra={"handler": "analyze_activity_day_gigachat"},
-        )
-        await message.answer("⚠️ Не удалось сгенерировать анализ дня через GigaChat. Попробуй позже.")
-        return
-    push_menu_stack(message.bot, activity_analysis_menu)
-    chunks = split_telegram_message(analysis, limit=3900)
-    for i, chunk in enumerate(chunks):
-        reply_markup = activity_analysis_menu if i == len(chunks) - 1 else None
-        try:
-            await message.answer(chunk, parse_mode="HTML", reply_markup=reply_markup)
-        except TelegramBadRequest as e:
-            logger.warning("Failed to send GigaChat analysis chunk as HTML, fallback to plain text: %s", e)
-            await message.answer(chunk, reply_markup=reply_markup)
+    await run_daily_activity_analysis(message, user_id)
 
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES)
 async def analyze_activity_day_copy_2(message: Message):
-    """Анализ за день через DeepSeek для кнопки «📅 Сегодня копия 2»."""
+    """Копия стандартного анализа за день с тем же промптом, что у кнопки «📅 Сегодня»."""
     user_id = str(message.from_user.id)
-    today = date.today()
-    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, today)
-    logger.info("Starting daily activity analysis via DeepSeek, user_id=%s", user_id)
-    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
-    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
-    AnalyticsRepository.track_event(user_id, "daily_analysis_deepseek_started", section="activity")
-    await message.answer("⏳ Подожди немного, бот анализирует твой день через DeepSeek...")
-    try:
-        analysis = await generate_activity_analysis(user_id, today, today, "за день", backend="deepseek")
-        ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="generated")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_deepseek_sent", section="activity")
-        logger.info("Daily activity analysis via DeepSeek sent successfully, user_id=%s", user_id)
-    except Exception as e:
-        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_deepseek_failed", section="activity")
-        if _is_deepseek_temporarily_unavailable_error(e):
-            push_menu_stack(message.bot, activity_analysis_menu)
-            await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
-            return
-        if isinstance(e, DeepSeekServiceConfigError):
-            logger.error("DeepSeek token/config error during daily analysis, user_id=%s error=%s", user_id, e)
-        elif isinstance(e, DeepSeekServiceError):
-            logger.error("DeepSeek request error during daily analysis, user_id=%s error=%s", user_id, e)
-        log_app_error(
-            source="deepseek",
-            error=e,
-            user_id=user_id,
-            context="daily_analysis_deepseek",
-            extra={"handler": "analyze_activity_day_copy_2"},
-        )
-        await message.answer("⚠️ Не удалось сгенерировать анализ дня через DeepSeek. Попробуй позже.")
-        return
-    push_menu_stack(message.bot, activity_analysis_menu)
-    chunks = split_telegram_message(analysis, limit=3900)
-    for i, chunk in enumerate(chunks):
-        reply_markup = activity_analysis_menu if i == len(chunks) - 1 else None
-        try:
-            await message.answer(chunk, parse_mode="HTML", reply_markup=reply_markup)
-        except TelegramBadRequest as e:
-            logger.warning("Failed to send DeepSeek analysis chunk as HTML, fallback to plain text: %s", e)
-            await message.answer(chunk, reply_markup=reply_markup)
+    await run_daily_activity_analysis(message, user_id)
 
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES)

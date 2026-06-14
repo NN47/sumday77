@@ -19,8 +19,9 @@ MEAL_TYPE_PREPOSITIONAL = {
     "ужин": "ужине",
 }
 EVENING_ANALYSIS_TIME = time(22, 22)
-EVENING_ANALYSIS_REMINDER_DELAY = timedelta(minutes=45)
-EVENING_ANALYSIS_MAX_REMINDERS = 2
+EVENING_ANALYSIS_REMINDER_DELAY = timedelta(minutes=30)
+EVENING_ANALYSIS_REMINDER_CUTOFF_TIME = time(2, 0)
+EVENING_ANALYSIS_MAX_REMINDERS = 7
 EVENING_ANALYSIS_START_PREFIX = "evening_analysis_start"
 EVENING_ANALYSIS_REMIND_PREFIX = "evening_analysis_remind"
 SUPPLEMENT_CONFIRM_PREFIX = "sup_confirm"
@@ -162,6 +163,11 @@ class NotificationScheduler:
             reply_markup=self.build_evening_analysis_keyboard(target_date),
         )
 
+    def _is_before_evening_analysis_cutoff(self, local_now: datetime, target_date) -> bool:
+        """Возвращает True, если напоминания за target_date ещё можно отправлять до 02:00 МСК."""
+        cutoff_at = datetime.combine(target_date + timedelta(days=1), EVENING_ANALYSIS_REMINDER_CUTOFF_TIME, tzinfo=MSK_TZ)
+        return local_now < cutoff_at
+
     async def check_and_send_evening_analysis_notifications(self):
         """Проверяет и отправляет вечерние уведомления ИИ-анализа дня."""
         try:
@@ -212,8 +218,14 @@ class NotificationScheduler:
                         continue
 
                     if state.reminder_due_at and state.reminder_due_at <= now_utc:
-                        if state.remind_later_date == local_today and state.remind_later_count <= EVENING_ANALYSIS_MAX_REMINDERS:
-                            pending_notifications.append((user.user_id, local_today, True))
+                        reminder_target_date = state.remind_later_date or local_today
+                        if (
+                            state.remind_later_count <= EVENING_ANALYSIS_MAX_REMINDERS
+                            and self._is_before_evening_analysis_cutoff(local_now, reminder_target_date)
+                        ):
+                            pending_notifications.append((user.user_id, reminder_target_date, True))
+                        else:
+                            state.reminder_due_at = None
                         continue
 
                     is_target_time_reached = local_now.time() >= EVENING_ANALYSIS_TIME
