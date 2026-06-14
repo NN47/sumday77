@@ -768,6 +768,47 @@ def test_recent_meal_back_returns_to_recent_list_for_regular_recent_pick():
     )
     show_search.assert_not_awaited()
 
+
+def test_recent_meal_back_returns_to_my_products_for_custom_product_pick():
+    callback = _build_callback("recent_meal_back:dinner:2")
+    state = _DummyState()
+    state._data.update({"recent_pick_origin": "custom_product", "in_my_product_menu": True})
+
+    with patch("handlers.meals._show_custom_products_page", new=AsyncMock(return_value=True)) as show_custom, patch(
+        "handlers.meals._show_recent_meals_page", new=AsyncMock()
+    ) as show_recent:
+        asyncio.run(meals.recent_meal_back(callback, state))
+
+    show_custom.assert_awaited_once_with(
+        callback.message,
+        state,
+        meal_type="dinner",
+        page=2,
+        user_id="12345",
+    )
+    show_recent.assert_not_awaited()
+
+
+def test_custom_product_pick_marks_origin_as_my_products():
+    callback = _build_callback("custom_product_pick:dinner:2:7:0")
+    state = _DummyState()
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Творог",
+        description="Творог",
+        products_json='[{"name":"Творог","grams":100,"kcal":120,"protein":16,"fat":5,"carbs":3,"source":"custom_product"}]',
+        calories=120,
+        protein=16,
+        fat=5,
+        carbs=3,
+    )
+
+    with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal):
+        asyncio.run(meals.custom_product_pick(callback, state))
+
+    assert state._data["recent_pick_origin"] == "custom_product"
+    assert state._data["in_my_product_menu"] is True
+
 def test_recent_confirm_uses_single_selected_product():
     callback = _build_callback("recent_meal_confirm:dinner:1:7:1")
     state = _DummyState()

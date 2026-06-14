@@ -1768,6 +1768,17 @@ async def recent_meal_back(callback: CallbackQuery, state: FSMContext):
             )
             return
 
+    if data.get("recent_pick_origin") == "custom_product" or data.get("in_my_product_menu"):
+        shown = await _show_custom_products_page(
+            callback.message,
+            state,
+            meal_type=meal_type,
+            page=int(page_str),
+            user_id=str(callback.from_user.id),
+        )
+        if shown:
+            return
+
     await _show_recent_meals_page(
         callback.message,
         state,
@@ -2348,23 +2359,24 @@ async def custom_product_create(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("custom_product_page:"))
-async def custom_product_page(callback: CallbackQuery, state: FSMContext):
-    """Переключает страницы списка своих продуктов."""
-    await callback.answer()
-    _, meal_type, page_str = callback.data.split(":", maxsplit=2)
-    products = _get_custom_product_items(str(callback.from_user.id), limit=64)
+async def _show_custom_products_page(
+    message: Message,
+    state: FSMContext,
+    *,
+    meal_type: str,
+    page: int,
+    user_id: str,
+) -> bool:
+    """Показывает страницу списка «Мои продукты»."""
+    products = _get_custom_product_items(user_id, limit=64)
     if not products:
-        await callback.message.answer(
-            "Здесь ты можешь сам внести свой продукт. Нажми «➕ Создать продукт», чтобы добавить первый."
-        )
-        return
+        return False
     total_pages = max(1, math.ceil(len(products) / RECENT_MEALS_PAGE_SIZE))
-    page = min(max(1, int(page_str)), total_pages)
+    page = min(max(1, page), total_pages)
     start = (page - 1) * RECENT_MEALS_PAGE_SIZE
     page_items = products[start : start + RECENT_MEALS_PAGE_SIZE]
     await state.update_data(recent_meals_page=page, meal_type=meal_type, in_my_product_menu=True)
-    await callback.message.answer(
+    await message.answer(
         _format_recent_meals_text(page_items, page, title="🧺 <b>Мои продукты"),
         reply_markup=_build_custom_products_keyboard(
             page_items,
@@ -2375,6 +2387,25 @@ async def custom_product_page(callback: CallbackQuery, state: FSMContext):
         ),
         parse_mode="HTML",
     )
+    return True
+
+
+@router.callback_query(lambda c: c.data.startswith("custom_product_page:"))
+async def custom_product_page(callback: CallbackQuery, state: FSMContext):
+    """Переключает страницы списка своих продуктов."""
+    await callback.answer()
+    _, meal_type, page_str = callback.data.split(":", maxsplit=2)
+    shown = await _show_custom_products_page(
+        callback.message,
+        state,
+        meal_type=meal_type,
+        page=int(page_str),
+        user_id=str(callback.from_user.id),
+    )
+    if not shown:
+        await callback.message.answer(
+            "Здесь ты можешь сам внести свой продукт. Нажми «➕ Создать продукт», чтобы добавить первый."
+        )
 
 
 @router.callback_query(lambda c: c.data.startswith("custom_product_pick:"))
@@ -2395,7 +2426,7 @@ async def custom_product_pick(callback: CallbackQuery, state: FSMContext):
         recent_source_product_idx=product_index,
         recent_custom_amount_g=None,
         recent_meals_page=int(page_str),
-        recent_pick_origin="recent",
+        recent_pick_origin="custom_product",
         meal_type=meal_type,
         in_my_product_menu=True,
     )
