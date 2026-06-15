@@ -735,6 +735,30 @@ async def generate_activity_analysis(
     weight_trend_start = min(start_date, end_date - timedelta(days=6))
     trend_weights = WeightRepository.get_weights_for_date_range(user_id, weight_trend_start, end_date)
 
+    # Если сегодня есть замер, а предыдущий был раньше недельного окна,
+    # для дневного отчёта всё равно подтягиваем ближайший прошлый замер из полной истории.
+    # Иначе модель видит только сегодняшнюю запись и ошибочно пишет, что измерение одно.
+    if days_count == 1 and weights and len(trend_weights) < 2:
+        recent_weight_history = WeightRepository.get_weights(user_id, limit=2)
+        known_weight_ids = {getattr(w, "id", None) for w in trend_weights}
+        known_weight_keys = {
+            (getattr(w, "date", None), str(getattr(w, "value", "")))
+            for w in trend_weights
+        }
+        for weight_entry in recent_weight_history:
+            weight_id = getattr(weight_entry, "id", None)
+            weight_key = (getattr(weight_entry, "date", None), str(getattr(weight_entry, "value", "")))
+            if (weight_id is not None and weight_id in known_weight_ids) or weight_key in known_weight_keys:
+                continue
+            trend_weights.append(weight_entry)
+            known_weight_ids.add(weight_id)
+            known_weight_keys.add(weight_key)
+        trend_weights = sorted(
+            trend_weights,
+            key=lambda w: (getattr(w, "date", date.min), getattr(w, "id", 0) or 0),
+            reverse=True,
+        )
+
     if trend_weights:
         current_weight = trend_weights[0]
         if len(trend_weights) > 1:

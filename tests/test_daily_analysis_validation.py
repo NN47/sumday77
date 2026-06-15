@@ -77,3 +77,37 @@ def test_daily_analysis_fallback_used_after_invalid_regeneration():
     assert "📈 Гипотеза" in result
     assert "Краткий вывод" in result
     assert "План на завтра" in result
+
+
+def test_daily_analysis_uses_previous_weight_older_than_week_in_prompt():
+    target_date = date(2026, 6, 15)
+    current_weight = SimpleNamespace(id=2, date=target_date, value="76.5")
+    older_weight = SimpleNamespace(id=1, date=date(2026, 6, 1), value="77.2")
+
+    def fake_weights_for_range(_user_id, start, end):
+        if start == target_date and end == target_date:
+            return [current_weight]
+        return [current_weight]
+
+    with (
+        patch("database.repositories.WorkoutRepository.get_workouts_for_period", return_value=[]),
+        patch("database.repositories.WorkoutRepository.get_workouts_for_day", return_value=[]),
+        patch("database.repositories.MealRepository.get_kbju_settings", return_value=None),
+        patch("database.repositories.MealRepository.get_meals_for_date", return_value=[]),
+        patch("database.repositories.WeightRepository.get_weights_for_date_range", side_effect=fake_weights_for_range),
+        patch("database.repositories.WeightRepository.get_weights", return_value=[current_weight, older_weight]),
+        patch("database.repositories.WaterRepository.get_daily_total", return_value=0),
+        patch("database.repositories.SupplementRepository.get_supplements", return_value=[]),
+        patch("database.repositories.SupplementRepository.get_entries_for_day", return_value=[]),
+        patch("database.repositories.ProcedureRepository.get_procedures_for_day", return_value=[]),
+        patch("database.repositories.WellbeingRepository.get_entries_for_period", return_value=[]),
+        patch("database.repositories.NoteRepository.get_note_for_date", return_value=None),
+        patch("handlers.activity.gemini_service", new=SimpleNamespace(analyze=lambda prompt: prompt)),
+    ):
+        result = asyncio.run(
+            generate_activity_analysis("123", target_date, target_date, "за день")
+        )
+
+    assert "Текущий вес: 76.5 кг (от 15.06.2026) (-0.7 кг" in result
+    assert "01.06: 77.2 кг" in result
+    assert "Изменение относительно предыдущего замера: -0.7 кг" in result
