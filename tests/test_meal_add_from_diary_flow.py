@@ -327,6 +327,47 @@ def test_meal_type_navigation_back_from_add_methods_keeps_meal_type_choice_activ
     go_back.assert_not_awaited()
 
 
+def test_my_product_menu_back_returns_to_add_methods():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    message.text = "⬅️ Назад"
+    state = _DummyState()
+    state._data.update({
+        "meal_type": meals.MealType.DINNER.value,
+        "in_my_product_menu": True,
+    })
+
+    with patch("handlers.meals._show_input_methods", new=AsyncMock()) as show_methods:
+        asyncio.run(meals.handle_meal_type_menu_navigation(message, state))
+
+    assert state._data["in_my_product_menu"] is False
+    assert state._data["meal_type"] == meals.MealType.DINNER.value
+    assert state._data["pending_add_method"] is None
+    show_methods.assert_awaited_once_with(message, state, user_id="12345")
+
+
+def test_show_my_product_menu_keeps_add_methods_as_back_target():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    state = _DummyState()
+
+    with patch("handlers.meals.push_menu_stack") as push_stack, patch(
+        "handlers.meals._get_custom_product_items", return_value=[]
+    ):
+        asyncio.run(
+            meals._show_my_product_menu(
+                message,
+                state,
+                meal_type=meals.MealType.SNACK.value,
+                user_id="12345",
+            )
+        )
+
+    assert push_stack.call_args_list[0].args == (message.bot, meals.kbju_add_menu)
+    assert push_stack.call_args_list[1].args[0] is message.bot
+    assert message.answer.await_args.kwargs["reply_markup"] is push_stack.call_args_list[1].args[1]
+
+
 def test_meal_finish_button_returns_to_food_diary_for_entry_date():
     message = _build_message()
     message.from_user = SimpleNamespace(id=12345)

@@ -817,7 +817,10 @@ async def _show_my_product_menu(
         )
     await state.set_state(MealEntryStates.choosing_meal_type)
     await state.update_data(meal_type=meal_type, pending_add_method=None, in_my_product_menu=True)
-    await message.answer(text, reply_markup=_build_my_product_keyboard(meal_type), parse_mode="HTML")
+    my_product_keyboard = _build_my_product_keyboard(meal_type)
+    push_menu_stack(message.bot, kbju_add_menu)
+    push_menu_stack(message.bot, my_product_keyboard)
+    await message.answer(text, reply_markup=my_product_keyboard, parse_mode="HTML")
 
 AI_TEMPORARY_UNAVAILABLE_TEXT = "Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
 AI_QUOTA_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за лимита запросов."
