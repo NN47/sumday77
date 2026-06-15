@@ -5,12 +5,34 @@ from datetime import date, datetime
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from database.models import EveningAnalysisNotificationState
+from database.models import ActivityAnalysisEntry, EveningAnalysisNotificationState
 from database.session import get_db_session
 
 
 class EveningAnalysisNotificationRepository:
     """Методы работы с состоянием вечерних уведомлений анализа дня."""
+
+    @staticmethod
+    def has_analysis_for_date(user_id: str, target_date: date) -> bool:
+        """Возвращает True, если сгенерированный анализ дня уже есть или отмечен запущенным."""
+        user_id = str(user_id)
+        with get_db_session() as session:
+            state = (
+                session.query(EveningAnalysisNotificationState)
+                .filter(EveningAnalysisNotificationState.user_id == user_id)
+                .first()
+            )
+            if state and state.last_daily_analysis_date == target_date:
+                return True
+
+            return (
+                session.query(ActivityAnalysisEntry.id)
+                .filter(ActivityAnalysisEntry.user_id == user_id)
+                .filter(ActivityAnalysisEntry.date == target_date)
+                .filter(ActivityAnalysisEntry.source == "generated")
+                .first()
+                is not None
+            )
 
     @staticmethod
     def get_or_create_state(user_id: str) -> EveningAnalysisNotificationState:
@@ -92,7 +114,16 @@ class EveningAnalysisNotificationRepository:
                 state = EveningAnalysisNotificationState(user_id=user_id)
                 session.add(state)
 
-            if state.last_daily_analysis_date == target_date:
+            generated_today_exists = (
+                session.query(ActivityAnalysisEntry.id)
+                .filter(ActivityAnalysisEntry.user_id == user_id)
+                .filter(ActivityAnalysisEntry.date == target_date)
+                .filter(ActivityAnalysisEntry.source == "generated")
+                .first()
+                is not None
+            )
+            if state.last_daily_analysis_date == target_date or generated_today_exists:
+                state.last_daily_analysis_date = target_date
                 state.reminder_due_at = None
                 state.updated_at = now
                 return None
@@ -110,6 +141,33 @@ class EveningAnalysisNotificationRepository:
             state.reminder_due_at = due_at
             state.updated_at = now
             return state.remind_later_count
+
+    @staticmethod
+    def defer_reminder(user_id: str, target_date: date, due_at: datetime) -> None:
+        """Тихо переносит напоминание без увеличения счётчика повторов."""
+        user_id = str(user_id)
+        now = datetime.utcnow()
+        with get_db_session() as session:
+            state = (
+                session.query(EveningAnalysisNotificationState)
+                .filter(EveningAnalysisNotificationState.user_id == user_id)
+                .first()
+            )
+            if state is None:
+                state = EveningAnalysisNotificationState(user_id=user_id)
+                session.add(state)
+
+            if state.last_daily_analysis_date == target_date:
+                state.reminder_due_at = None
+                state.updated_at = now
+                return
+
+            if state.remind_later_date != target_date:
+                state.remind_later_date = target_date
+                state.remind_later_count = 0
+
+            state.reminder_due_at = due_at
+            state.updated_at = now
 
     @staticmethod
     def mark_reminder_sent(user_id: str, target_date: date) -> None:

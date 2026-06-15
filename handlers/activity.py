@@ -1371,15 +1371,19 @@ async def start_evening_activity_analysis(callback: CallbackQuery):
 @router.callback_query(lambda c: c.data and c.data.startswith(f"{EVENING_ANALYSIS_REMIND_PREFIX}:"))
 async def remind_evening_activity_analysis_later(callback: CallbackQuery):
     """Планирует повторное вечернее уведомление анализа дня через 30 минут."""
-    await callback.answer("Напомню через 30 минут")
     user_id = str(callback.from_user.id)
     target_date = date.fromisoformat(callback.data.split(":", 1)[1])
+    if EveningAnalysisNotificationRepository.has_analysis_for_date(user_id, target_date):
+        await callback.answer()
+        return
+
+    await callback.answer("⏰ Хорошо, напомню позже.")
     due_at = datetime.utcnow() + EVENING_ANALYSIS_REMINDER_DELAY
     reminder_number = EveningAnalysisNotificationRepository.schedule_reminder(user_id, target_date, due_at)
     if reminder_number is None:
         await callback.message.answer("На сегодня больше не буду напоминать об анализе дня ⏰")
         return
-    await callback.message.answer("Хорошо, напомню через 30 минут ⏰")
+    await callback.message.answer("⏰ Хорошо, напомню позже.")
 
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES)
