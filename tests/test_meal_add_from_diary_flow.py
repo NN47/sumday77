@@ -980,6 +980,52 @@ def test_meal_weight_done_returns_to_food_diary_for_edited_date():
     return_to_diary.assert_awaited_once_with(callback.message, "12345", target_date)
 
 
+
+def test_edit_meal_from_active_entry_sets_return_context():
+    target_date = date(2026, 4, 8)
+    callback = _build_callback(f"edit_meal:breakfast:{target_date.isoformat()}")
+    state = _DummyState()
+    state._data.update({"meal_type": meals.MealType.BREAKFAST.value, "entry_date": target_date.isoformat()})
+    meal = SimpleNamespace(id=7, products_json='[{"name":"Кофе","grams":250}]', api_details=None)
+
+    with patch("handlers.meals.MealRepository.get_meals_for_type_for_date", return_value=[meal]), patch(
+        "handlers.meals.MealRepository.get_meal_by_id", return_value=meal
+    ):
+        asyncio.run(meals.edit_meal_from_diary_block(callback, state))
+
+    assert state._data["return_to_meal_entry"] is True
+    assert state._data["return_meal_type"] == meals.MealType.BREAKFAST.value
+
+
+def test_meal_weight_done_returns_to_active_meal_entry_when_edit_started_inside_entry():
+    target_date = date(2026, 4, 8)
+    callback = _build_callback("meal_wdone")
+    state = _DummyState()
+    state._data.update(
+        {
+            "target_date": target_date.isoformat(),
+            "return_to_meal_entry": True,
+            "return_meal_type": meals.MealType.LUNCH.value,
+        }
+    )
+
+    with patch("handlers.meals._keep_meal_entry_open_after_save", new=AsyncMock()) as keep_open, patch(
+        "handlers.meals._return_to_food_diary", new=AsyncMock()
+    ) as return_to_diary:
+        asyncio.run(meals.meal_weight_done(callback, state))
+
+    state.clear.assert_awaited_once()
+    callback.message.answer.assert_awaited_once_with("✅ Изменения выполнены")
+    keep_open.assert_awaited_once_with(
+        callback.message,
+        state,
+        user_id="12345",
+        entry_date=target_date,
+        meal_type=meals.MealType.LUNCH.value,
+    )
+    return_to_diary.assert_not_awaited()
+
+
 def test_meal_weight_save_stays_in_product_editing_until_done():
     callback = _build_callback("meal_wsave:0")
     state = _DummyState()

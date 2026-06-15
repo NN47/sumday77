@@ -4425,6 +4425,9 @@ async def _start_meal_edit_flow(
     user_id: str,
     meal_id: int,
     target_date: date,
+    *,
+    return_to_meal_entry: bool = False,
+    return_meal_type: str | None = None,
 ) -> None:
     """Общий сценарий запуска редактирования конкретной записи приёма пищи."""
     meal = MealRepository.get_meal_by_id(meal_id, user_id)
@@ -4450,6 +4453,8 @@ async def _start_meal_edit_flow(
         weight_drafts={},
         kbju_drafts={},
         editing_product_idx=initial_product_idx,
+        return_to_meal_entry=return_to_meal_entry,
+        return_meal_type=return_meal_type,
     )
     await state.set_state(MealEntryStates.editing_meal_weight)
 
@@ -4546,12 +4551,25 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
     meal_type = normalize_meal_type(parts[1], fallback=MealType.SNACK.value)
     target_date = date.fromisoformat(parts[2]) if len(parts) > 2 else date.today()
     user_id = str(callback.from_user.id)
+    current_data = await state.get_data()
+    return_to_meal_entry = (
+        current_data.get("meal_type") == meal_type
+        and current_data.get("entry_date") == target_date.isoformat()
+    )
     meals_for_type = MealRepository.get_meals_for_type_for_date(user_id, target_date, meal_type)
     if not meals_for_type:
         await callback.message.answer("❌ В этом приёме пищи пока нечего редактировать.")
         return
     if len(meals_for_type) == 1:
-        await _start_meal_edit_flow(callback.message, state, user_id, meals_for_type[-1].id, target_date)
+        await _start_meal_edit_flow(
+            callback.message,
+            state,
+            user_id,
+            meals_for_type[-1].id,
+            target_date,
+            return_to_meal_entry=return_to_meal_entry,
+            return_meal_type=meal_type,
+        )
         return
 
     merged_products: list[dict] = []
@@ -4575,6 +4593,8 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
         editing_product_idx=None,
         grouped_meal_ids=[m.id for m in meals_for_type],
         grouped_meal_type=meal_type,
+        return_to_meal_entry=return_to_meal_entry,
+        return_meal_type=meal_type,
     )
     await state.set_state(MealEntryStates.editing_meal_weight)
 
@@ -4734,7 +4754,7 @@ async def meal_weight_back_to_edit_type(callback: CallbackQuery, state: FSMConte
 
 @router.callback_query(lambda c: c.data == "meal_wdone")
 async def meal_weight_done(callback: CallbackQuery, state: FSMContext):
-    """Завершает редактирование веса и возвращает пользователя в дневник питания."""
+    """Завершает редактирование веса и возвращает пользователя в нужный контекст."""
     await callback.answer("Изменения сохранены")
     data = await state.get_data()
     target_date_raw = data.get("target_date")
@@ -4744,8 +4764,25 @@ async def meal_weight_done(callback: CallbackQuery, state: FSMContext):
         target_date = date.today()
 
     user_id = str(callback.from_user.id)
+    return_to_meal_entry = bool(data.get("return_to_meal_entry"))
+    return_meal_type = normalize_meal_type(
+        data.get("return_meal_type") or data.get("grouped_meal_type") or data.get("meal_type"),
+        fallback=MealType.SNACK.value,
+    )
+
     await state.clear()
     await callback.message.answer("✅ Изменения выполнены")
+
+    if return_to_meal_entry:
+        await _keep_meal_entry_open_after_save(
+            callback.message,
+            state,
+            user_id=user_id,
+            entry_date=target_date,
+            meal_type=return_meal_type,
+        )
+        return
+
     await _return_to_food_diary(callback.message, user_id, target_date)
 
 @router.callback_query(lambda c: c.data == "meal_wcancel")
