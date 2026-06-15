@@ -2,9 +2,10 @@
 import asyncio
 import logging
 import json
+import random
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
-from aiogram import Bot
+from aiogram import Bot, Dispatcher
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from database.session import get_db_session
 from database.models import ActivityAnalysisEntry, User, Supplement, KbjuSettings, EveningAnalysisNotificationState
@@ -20,6 +21,9 @@ MEAL_TYPE_PREPOSITIONAL = {
 }
 EVENING_ANALYSIS_TIME = time(22, 22)
 EVENING_ANALYSIS_REMINDER_DELAY = timedelta(minutes=30)
+EVENING_ANALYSIS_BUSY_RESCHEDULE_MIN_DELAY = timedelta(minutes=10)
+EVENING_ANALYSIS_BUSY_RESCHEDULE_MAX_DELAY = timedelta(minutes=15)
+EVENING_ANALYSIS_RECENT_ACTIVITY_WINDOW = timedelta(minutes=5)
 EVENING_ANALYSIS_REMINDER_CUTOFF_TIME = time(2, 0)
 EVENING_ANALYSIS_MAX_REMINDERS = 7
 EVENING_ANALYSIS_START_PREFIX = "evening_analysis_start"
@@ -68,8 +72,9 @@ def build_supplement_notification_keyboard(supplement_id: int, time_text: str) -
 class NotificationScheduler:
     """Планировщик уведомлений о приёмах пищи и добавках."""
     
-    def __init__(self, bot: Bot):
+    def __init__(self, bot: Bot, dispatcher: Dispatcher | None = None):
         self.bot = bot
+        self.dispatcher = dispatcher
         self.running = False
         self.sent_notifications_today = set()  # Для предотвращения дублирования уведомлений
         self._last_check_date = None  # Дата последней проверки для сброса кэша
@@ -154,6 +159,74 @@ class NotificationScheduler:
         except Exception:
             return MSK_TZ
 
+    def _get_busy_reschedule_due_at(self) -> datetime:
+        """Возвращает UTC-время переноса напоминания на 10–15 минут."""
+        delay_seconds = random.randint(
+            int(EVENING_ANALYSIS_BUSY_RESCHEDULE_MIN_DELAY.total_seconds()),
+            int(EVENING_ANALYSIS_BUSY_RESCHEDULE_MAX_DELAY.total_seconds()),
+        )
+        return datetime.utcnow() + timedelta(seconds=delay_seconds)
+
+    async def get_day_analysis_reminder_block_reason(
+        self,
+        user_id: str,
+        target_date,
+        *,
+        last_seen_at=None,
+        skip_db: bool = False,
+    ) -> str | None:
+        """Возвращает причину блокировки напоминания анализа дня или None, если можно отправлять."""
+        user_id = str(user_id)
+        if not skip_db:
+            with get_db_session() as session:
+                state = (
+                    session.query(EveningAnalysisNotificationState)
+                    .filter(EveningAnalysisNotificationState.user_id == user_id)
+                    .first()
+                )
+                if state and state.last_daily_analysis_date == target_date:
+                    return "analysis_done"
+
+                generated_today_exists = (
+                    session.query(ActivityAnalysisEntry.id)
+                    .filter(ActivityAnalysisEntry.user_id == user_id)
+                    .filter(ActivityAnalysisEntry.date == target_date)
+                    .filter(ActivityAnalysisEntry.source == "generated")
+                    .first()
+                    is not None
+                )
+                if generated_today_exists:
+                    return "analysis_done"
+
+                user = session.query(User).filter(User.user_id == user_id).first()
+                last_seen_at = getattr(user, "last_seen_at", None)
+
+        if last_seen_at and datetime.utcnow() - last_seen_at < EVENING_ANALYSIS_RECENT_ACTIVITY_WINDOW:
+            return "recent_activity"
+
+        if self.dispatcher is not None:
+            try:
+                fsm_context = self.dispatcher.fsm.get_context(
+                    bot=self.bot,
+                    chat_id=int(user_id),
+                    user_id=int(user_id),
+                )
+                if await fsm_context.get_state():
+                    return "active_fsm"
+            except Exception as e:
+                logger.warning(
+                    "Не удалось проверить FSM-состояние для напоминания анализа дня: user_id=%s error=%s",
+                    user_id,
+                    e,
+                )
+
+        return None
+
+    async def can_send_day_analysis_reminder(self, user_id: str, target_date) -> bool:
+        """Возвращает True, если напоминание анализа дня можно отправить сейчас."""
+        block_reason = await self.get_day_analysis_reminder_block_reason(user_id, target_date)
+        return block_reason is None
+
     async def send_evening_analysis_notification(self, user_id: str, target_date, *, is_reminder: bool = False) -> bool:
         """Отправляет основное или повторное уведомление анализа дня."""
         text = EVENING_ANALYSIS_REMINDER_TEXT if is_reminder else EVENING_ANALYSIS_MAIN_TEXT
@@ -223,14 +296,55 @@ class NotificationScheduler:
                             state.remind_later_count <= EVENING_ANALYSIS_MAX_REMINDERS
                             and self._is_before_evening_analysis_cutoff(local_now, reminder_target_date)
                         ):
-                            pending_notifications.append((user.user_id, reminder_target_date, True))
+                            generated_reminder_date_exists = (
+                                session.query(ActivityAnalysisEntry.id)
+                                .filter(ActivityAnalysisEntry.user_id == user.user_id)
+                                .filter(ActivityAnalysisEntry.date == reminder_target_date)
+                                .filter(ActivityAnalysisEntry.source == "generated")
+                                .first()
+                                is not None
+                            )
+                            if state.last_daily_analysis_date == reminder_target_date or generated_reminder_date_exists:
+                                state.last_daily_analysis_date = reminder_target_date
+                                state.reminder_due_at = None
+                                continue
+
+                            block_reason = await self.get_day_analysis_reminder_block_reason(
+                                user.user_id,
+                                reminder_target_date,
+                                last_seen_at=getattr(user, "last_seen_at", None),
+                                skip_db=True,
+                            )
+                            if block_reason in {"active_fsm", "recent_activity"}:
+                                state.remind_later_date = reminder_target_date
+                                state.reminder_due_at = self._get_busy_reschedule_due_at()
+                                state.updated_at = datetime.utcnow()
+                            else:
+                                is_first_evening_notification = state.last_evening_notification_date != reminder_target_date
+                                pending_notifications.append(
+                                    (user.user_id, reminder_target_date, not is_first_evening_notification)
+                                )
                         else:
                             state.reminder_due_at = None
                         continue
 
                     is_target_time_reached = local_now.time() >= EVENING_ANALYSIS_TIME
                     if is_target_time_reached and state.last_evening_notification_date != local_today:
-                        pending_notifications.append((user.user_id, local_today, False))
+                        block_reason = await self.get_day_analysis_reminder_block_reason(
+                            user.user_id,
+                            local_today,
+                            last_seen_at=getattr(user, "last_seen_at", None),
+                            skip_db=True,
+                        )
+                        if block_reason == "analysis_done":
+                            state.last_daily_analysis_date = local_today
+                            state.reminder_due_at = None
+                        elif block_reason in {"active_fsm", "recent_activity"}:
+                            state.remind_later_date = local_today
+                            state.reminder_due_at = self._get_busy_reschedule_due_at()
+                            state.updated_at = datetime.utcnow()
+                        else:
+                            pending_notifications.append((user.user_id, local_today, False))
 
             if pending_notifications:
                 logger.info("Отправка вечерних уведомлений анализа дня: %s", len(pending_notifications))

@@ -185,3 +185,71 @@ def test_evening_analysis_notification_is_retried_when_telegram_send_fails():
 
     bot.send_message.assert_awaited_once()
     mark_sent.assert_not_called()
+
+
+def test_evening_analysis_notification_is_deferred_after_recent_activity():
+    fixed_now = datetime(2026, 4, 8, 22, 23, tzinfo=ZoneInfo("Europe/Moscow"))
+    user = SimpleNamespace(
+        user_id="12345",
+        timezone="Europe/Moscow",
+        last_seen_at=fixed_now.astimezone(ZoneInfo("UTC")).replace(tzinfo=None),
+    )
+    session = FakeSession([user])
+    bot = SimpleNamespace(send_message=AsyncMock())
+    scheduler = NotificationScheduler(bot)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now.astimezone(tz) if tz else fixed_now.replace(tzinfo=None)
+
+        @classmethod
+        def utcnow(cls):
+            return fixed_now.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+    with (
+        patch("services.notification_scheduler.datetime", FixedDateTime),
+        patch("services.notification_scheduler.get_db_session", return_value=fake_db_session(session)),
+        patch("services.notification_scheduler.random.randint", return_value=600),
+        patch(
+            "services.notification_scheduler.EveningAnalysisNotificationRepository.mark_evening_notification_sent"
+        ) as mark_sent,
+    ):
+        asyncio.run(scheduler.check_and_send_evening_analysis_notifications())
+
+    bot.send_message.assert_not_awaited()
+    mark_sent.assert_not_called()
+    state = session.states["12345"]
+    assert state.remind_later_date == date(2026, 4, 8)
+    assert state.reminder_due_at == FixedDateTime.utcnow() + __import__("datetime").timedelta(minutes=10)
+
+
+def test_evening_analysis_notification_is_skipped_when_analysis_already_generated():
+    user = SimpleNamespace(user_id="12345", timezone="Europe/Moscow")
+    session = FakeSession([user], generated_exists=True)
+    bot = SimpleNamespace(send_message=AsyncMock())
+    scheduler = NotificationScheduler(bot)
+    fixed_now = datetime(2026, 4, 8, 22, 23, tzinfo=ZoneInfo("Europe/Moscow"))
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now.astimezone(tz) if tz else fixed_now.replace(tzinfo=None)
+
+        @classmethod
+        def utcnow(cls):
+            return fixed_now.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+    with (
+        patch("services.notification_scheduler.datetime", FixedDateTime),
+        patch("services.notification_scheduler.get_db_session", return_value=fake_db_session(session)),
+        patch(
+            "services.notification_scheduler.EveningAnalysisNotificationRepository.mark_evening_notification_sent"
+        ) as mark_sent,
+    ):
+        asyncio.run(scheduler.check_and_send_evening_analysis_notifications())
+
+    bot.send_message.assert_not_awaited()
+    mark_sent.assert_not_called()
+    assert session.states["12345"].last_daily_analysis_date == date(2026, 4, 8)
+    assert session.states["12345"].reminder_due_at is None
