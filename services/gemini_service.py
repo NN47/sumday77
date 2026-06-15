@@ -439,7 +439,7 @@ class GeminiService:
                 item.get("nutrition_per_100g") if isinstance(item.get("nutrition_per_100g"), dict) else {}
             )
 
-            grams = get_num(item, "grams", "weight_g", "weight")
+            grams = get_num(item, "grams", "estimated_weight_g", "weight_g", "weight")
             kcal = (
                 get_num(item, "kcal", "calories")
                 or get_num(nutrition_total, "kcal", "calories")
@@ -519,7 +519,21 @@ class GeminiService:
         return {"items": normalized_items, "total": total}
 
     def estimate_kbju_from_photo(self, image_bytes: bytes) -> Optional[dict]:
-        prompt = """Ты нутрициолог. Оцени КБЖУ еды на фотографии. Ответь строго JSON с items и total."""
+        prompt = """Ты нутрициолог. Оцени еду на фотографии.
+Верни строго валидный JSON без пояснений в формате:
+{
+  "items": [
+    {"name": "название", "grams": 123, "kcal": 123, "protein": 1.2, "fat": 3.4, "carbs": 5.6}
+  ],
+  "total": {"kcal": 123, "protein": 1.2, "fat": 3.4, "carbs": 5.6}
+}
+
+Правила:
+- для каждого продукта/ингредиента обязательно оцени примерную массу в граммах и заполни поле grams числом;
+- если точный вес неизвестен, оцени примерную порцию по фото;
+- КБЖУ для items указывай за оценённую массу продукта, не на 100 г;
+- total должен равняться сумме items;
+- числа возвращай числами, не строками."""
         try:
             from google.genai import types
 

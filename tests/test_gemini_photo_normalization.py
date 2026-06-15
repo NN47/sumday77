@@ -55,3 +55,26 @@ def test_normalize_kbju_payload_calculates_from_per_100g() -> None:
     assert item["fat"] == 0.8
     assert item["carbs"] == 14.0
     assert normalized["total"] == {"kcal": 70.0, "protein": 6.0, "fat": 0.8, "carbs": 14.0}
+
+
+def test_normalize_kbju_payload_uses_estimated_weight_g_for_photo_items() -> None:
+    service = GeminiService()
+    payload = {
+        "items": [
+            {
+                "name": "Тосты",
+                "estimated_weight_g": 60,
+                "calories": 156,
+                "protein": 5,
+                "fat": 2,
+                "carbohydrates": 31.2,
+            }
+        ],
+        "total": {"calories": 156, "protein": 5, "fat": 2, "carbs": 31.2},
+    }
+
+    normalized = service._normalize_kbju_payload(payload)
+
+    assert normalized is not None
+    assert normalized["items"][0]["grams"] == 60.0
+    assert normalized["items"][0]["kcal"] == 156.0
