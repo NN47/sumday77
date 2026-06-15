@@ -5332,7 +5332,6 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
     user_id = str(callback.from_user.id)
     data = await state.get_data()
     meal_id = data.get("meal_id")
-    target_date_str = data.get("target_date", date.today().isoformat())
     saved_products = data.get("saved_products", [])
     drafts = data.get("weight_drafts", {})
 
@@ -5363,7 +5362,6 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
     totals, api_details = _build_meal_update_payload(source_products)
     meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
     raw_query = meal.raw_query if meal and hasattr(meal, "raw_query") else None
-    changed_meal_type = normalize_meal_type(getattr(meal, "meal_type", None)) if meal else None
 
     success = MealRepository.update_meal(
         meal_id=source_meal_id,
@@ -5389,21 +5387,6 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "<b>✏️ Выбери продукт для редактирования:</b>",
         reply_markup=_build_weight_products_keyboard(saved_products),
-    )
-
-    if isinstance(target_date_str, str):
-        try:
-            target_date = date.fromisoformat(target_date_str)
-        except ValueError:
-            target_date = date.today()
-    else:
-        target_date = date.today()
-    await _render_day_meals_messages(
-        callback.message,
-        user_id,
-        target_date,
-        include_back=True,
-        changed_meal_type=changed_meal_type,
     )
 
 
@@ -5450,7 +5433,6 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
     user_id = str(callback.from_user.id)
     data = await state.get_data()
     meal_id = data.get("meal_id")
-    target_date_str = data.get("target_date", date.today().isoformat())
     saved_products = data.get("saved_products", [])
     drafts = data.get("weight_drafts", {})
 
@@ -5461,9 +5443,6 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
     if not source_meal_id:
         await callback.answer("Не удалось определить запись для удаления", show_alert=True)
         return
-
-    meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
-    changed_meal_type = normalize_meal_type(getattr(meal, "meal_type", None)) if meal else None
 
     saved_products.pop(product_idx)
     drafts = {
@@ -5508,8 +5487,8 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
             products_json=json.dumps(source_products),
             api_details=api_details,
             is_manually_corrected=bool(
-            any(bool(p.get("is_manually_corrected")) for p in source_products)
-        ),
+                any(bool(p.get("is_manually_corrected")) for p in source_products)
+            ),
         )
         if not success:
             await callback.answer("Не удалось обновить запись", show_alert=True)
@@ -5521,21 +5500,6 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
             reply_markup=_build_weight_products_keyboard(saved_products),
         )
         await callback.message.answer("✅ Продукт удалён")
-
-    if isinstance(target_date_str, str):
-        try:
-            target_date = date.fromisoformat(target_date_str)
-        except ValueError:
-            target_date = date.today()
-    else:
-        target_date = date.today()
-    await _render_day_meals_messages(
-        callback.message,
-        user_id,
-        target_date,
-        include_back=True,
-        changed_meal_type=changed_meal_type,
-    )
 
 
 @router.message(MealEntryStates.editing_meal_composition)

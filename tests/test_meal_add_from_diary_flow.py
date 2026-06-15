@@ -980,6 +980,41 @@ def test_meal_weight_done_returns_to_food_diary_for_edited_date():
     return_to_diary.assert_awaited_once_with(callback.message, "12345", target_date)
 
 
+def test_meal_weight_save_stays_in_product_editing_until_done():
+    callback = _build_callback("meal_wsave:0")
+    state = _DummyState()
+    state._data.update({
+        "meal_id": 42,
+        "saved_products": [{
+            "name": "Творог",
+            "grams": 100,
+            "kcal": 120,
+            "protein": 16,
+            "fat": 5,
+            "carbs": 3,
+            "_source_meal_id": 42,
+        }],
+        "weight_drafts": {"0": 150},
+        "target_date": "2026-06-15",
+    })
+    meal = SimpleNamespace(raw_query="Творог", meal_type=meals.MealType.BREAKFAST.value)
+
+    with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal), patch(
+        "handlers.meals.MealRepository.update_meal", return_value=True
+    ) as update_meal, patch(
+        "handlers.meals._render_day_meals_messages", new=AsyncMock()
+    ) as render_day:
+        asyncio.run(meals.meal_weight_save(callback, state))
+
+    update_meal.assert_called_once()
+    callback.answer.assert_awaited_once_with("✅ Вес продукта обновлён")
+    callback.message.edit_text.assert_awaited_once()
+    assert callback.message.edit_text.await_args.args[0] == "<b>✏️ Выбери продукт для редактирования:</b>"
+    render_day.assert_not_awaited()
+    state.clear.assert_not_awaited()
+    assert state._data["saved_products"][0]["grams"] == 150
+    assert state._data["weight_drafts"] == {}
+
 def test_format_label_result_header_bolds_label_and_escapes_product_name():
     assert meals._format_label_result_header("label", "Салат <Курочка>") == (
         "📋 <b>Анализ этикетки:</b> Салат &lt;Курочка&gt;\n"
