@@ -141,7 +141,7 @@ async def main():
 
     # Запускаем планировщик уведомлений только в активном инстансе
     logger.info("Запуск планировщика уведомлений...")
-    notification_scheduler = NotificationScheduler(bot)
+    notification_scheduler = NotificationScheduler(bot, storage=storage)
     scheduler_task = asyncio.create_task(notification_scheduler.start())
 
     try:

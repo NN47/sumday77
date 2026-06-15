@@ -112,6 +112,28 @@ class EveningAnalysisNotificationRepository:
             return state.remind_later_count
 
     @staticmethod
+    def postpone_reminder(user_id: str, target_date: date, due_at: datetime) -> None:
+        """Тихо переносит напоминание без увеличения счётчика повторов."""
+        user_id = str(user_id)
+        now = datetime.utcnow()
+        with get_db_session() as session:
+            state = (
+                session.query(EveningAnalysisNotificationState)
+                .filter(EveningAnalysisNotificationState.user_id == user_id)
+                .first()
+            )
+            if state is None:
+                state = EveningAnalysisNotificationState(user_id=user_id)
+                session.add(state)
+            if state.last_daily_analysis_date == target_date:
+                state.reminder_due_at = None
+                state.updated_at = now
+                return
+            state.remind_later_date = target_date
+            state.reminder_due_at = due_at
+            state.updated_at = now
+
+    @staticmethod
     def mark_reminder_sent(user_id: str, target_date: date) -> None:
         """Сбрасывает due_at после отправки повторного уведомления."""
         user_id = str(user_id)
