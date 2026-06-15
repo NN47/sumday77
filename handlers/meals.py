@@ -595,6 +595,7 @@ def _build_custom_product_value_keyboard(field: str, *, unit: str) -> InlineKeyb
         for delta_row in delta_rows
     ]
     rows.append([InlineKeyboardButton(text="✅ Сохранить", callback_data=f"custom_vsave:{field}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"custom_vback:{field}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -728,6 +729,18 @@ async def custom_product_value_change(callback: CallbackQuery, state: FSMContext
         reply_markup=_build_custom_product_value_keyboard(field, unit=config["unit"]),
         parse_mode="HTML",
     )
+
+
+@router.callback_query(lambda c: c.data.startswith("custom_vback:"))
+async def custom_product_value_back(callback: CallbackQuery, state: FSMContext):
+    """Возвращает на предыдущий шаг создания продукта из inline-редактора."""
+    _, field = callback.data.split(":", maxsplit=1)
+    if field not in CUSTOM_PRODUCT_FIELDS:
+        await callback.answer("Неизвестное поле", show_alert=True)
+        return
+    await state.update_data(custom_product_current_field=field)
+    await callback.answer()
+    await _go_to_previous_custom_product_step(callback.message, state)
 
 
 @router.callback_query(lambda c: c.data.startswith("custom_vsave:"))

@@ -212,6 +212,28 @@ def test_custom_product_text_value_is_saved_and_advances_to_next_field():
     text = message.answer.await_args.args[0]
     assert "💪 Введите белки продукта" in text
     assert "Текущее значение: <b>0 г</b>" in text
+    keyboard = message.answer.await_args.kwargs["reply_markup"]
+    assert [button.text for row in keyboard.inline_keyboard for button in row][-2:] == ["✅ Сохранить", "⬅️ Назад"]
+
+
+def test_custom_product_inline_back_returns_to_previous_value_step():
+    callback = _build_callback("custom_vback:protein")
+    state = _DummyState()
+    state._data.update(
+        {
+            "custom_product_current_field": "protein",
+            "custom_product": {"name": "Йогурт", "calories": 65},
+            "custom_product_draft_value": 0,
+        }
+    )
+
+    asyncio.run(meals.custom_product_value_back(callback, state))
+
+    callback.answer.assert_awaited_once()
+    state.set_state.assert_awaited_with(meals.MealEntryStates.custom_product_calories)
+    text = callback.message.answer.await_args.args[0]
+    assert "🔥 Введите калории продукта" in text
+    assert "Текущее значение: <b>65 ккал</b>" in text
 
 
 def test_custom_product_text_amount_save_uses_entered_per_100g_calories():
