@@ -133,6 +133,24 @@ class Supplement(Base):
     notifications_enabled = Column(Boolean, default=True, nullable=True)
 
 
+class SupplementNotificationState(Base):
+    """Состояние отложенного уведомления о приёме добавки."""
+    __tablename__ = "supplement_notification_states"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    supplement_id = Column(Integer, nullable=False, index=True)
+    scheduled_time = Column(String, nullable=False)
+    target_date = Column(Date, nullable=False)
+    reminder_due_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "supplement_id", name="uq_supplement_notification_user_supplement"),
+    )
+
+
 class SupplementEntry(Base):
     """Модель записи приёма добавки."""
     __tablename__ = "supplement_entries"

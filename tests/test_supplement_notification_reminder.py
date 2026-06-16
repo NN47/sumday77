@@ -1,6 +1,7 @@
 import asyncio
 import os
 from datetime import datetime as real_datetime
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -34,25 +35,61 @@ def test_supplement_notification_keyboard_contains_confirm_and_remind_later_butt
 
 def test_remind_later_callback_removes_keyboard_and_schedules_reminder():
     callback = _build_callback("sup_remind:7:21:30")
-    created_tasks = []
+    deleted = []
+    added = []
 
-    def fake_create_task(coro):
-        created_tasks.append(coro)
-        coro.close()
-        return SimpleNamespace()
+    class FakeQuery:
+        def __init__(self, result=None):
+            self.result = result
+
+        def filter(self, *args, **kwargs):
+            return self
+
+        def filter_by(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return self.result
+
+    class FakeSession:
+        def query(self, model):
+            if model is supplements.SupplementEntry.id:
+                return FakeQuery(None)
+            return FakeQuery(None)
+
+        def add(self, item):
+            added.append(item)
+
+        def delete(self, item):
+            deleted.append(item)
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            pass
+
+    @contextmanager
+    def fake_db_session():
+        yield FakeSession()
 
     with patch(
         "handlers.supplements.SupplementRepository.get_supplements",
         return_value=[{"id": 7, "name": "Магний", "notifications_enabled": True}],
-    ), patch("handlers.supplements.asyncio.create_task", side_effect=fake_create_task):
+    ), patch("handlers.supplements.get_db_session", fake_db_session):
         asyncio.run(supplements.remind_supplement_later_from_notification(callback))
 
     callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
-    callback.answer.assert_awaited_once_with("Напомню через 30 минут")
-    callback.message.answer.assert_awaited_once_with(
-        "⏰ Хорошо, напомню принять «Магний» через 30 минут."
-    )
-    assert len(created_tasks) == 1
+    callback.answer.assert_awaited_once_with("Хорошо, напомню позже.")
+    callback.message.answer.assert_awaited_once_with("Хорошо, напомню позже.")
+    assert len(added) == 1
+    assert added[0].user_id == "12345"
+    assert added[0].supplement_id == 7
+    assert added[0].scheduled_time == "21:30"
+    assert not deleted
 
 
 def test_supplement_amount_keyboard_has_requested_values_in_three_rows():

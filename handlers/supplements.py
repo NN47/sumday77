@@ -40,6 +40,8 @@ from utils.calendar_utils import (
     build_supplement_intake_date_calendar_keyboard,
 )
 from database.repositories import SupplementRepository
+from database.models import SupplementEntry, SupplementNotificationState
+from database.session import get_db_session
 from states.user_states import SupplementStates
 from utils.validators import parse_date
 from services.notification_scheduler import (
@@ -2299,25 +2301,54 @@ async def remind_supplement_later_from_notification(callback: CallbackQuery):
         await callback.answer("Добавка не найдена", show_alert=True)
         return
 
+    now = datetime.now(MSK_TZ)
+    target_date = now.date()
+    day_start = datetime.combine(target_date, datetime.min.time())
+    day_end = day_start + timedelta(days=1)
+    with get_db_session() as session:
+        already_taken = (
+            session.query(SupplementEntry.id)
+            .filter(SupplementEntry.user_id == user_id)
+            .filter(SupplementEntry.supplement_id == supplement_id)
+            .filter(SupplementEntry.timestamp >= day_start)
+            .filter(SupplementEntry.timestamp < day_end)
+            .first()
+            is not None
+        )
+        if already_taken:
+            await callback.answer("Приём уже отмечен")
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            return
+
+        deferred = session.query(SupplementNotificationState).filter_by(
+            user_id=user_id,
+            supplement_id=supplement_id,
+        ).first()
+        if deferred is None:
+            deferred = SupplementNotificationState(
+                user_id=user_id,
+                supplement_id=supplement_id,
+                scheduled_time=time_text,
+                target_date=target_date,
+                reminder_due_at=datetime.utcnow() + SUPPLEMENT_REMINDER_DELAY,
+            )
+            session.add(deferred)
+        else:
+            deferred.scheduled_time = time_text
+            deferred.target_date = target_date
+            deferred.reminder_due_at = datetime.utcnow() + SUPPLEMENT_REMINDER_DELAY
+            deferred.updated_at = datetime.utcnow()
+
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
 
-    asyncio.create_task(
-        send_supplement_reminder_later(
-            callback.message.bot,
-            user_id,
-            supplement_id,
-            time_text,
-        )
-    )
-
-    delay_minutes = int(SUPPLEMENT_REMINDER_DELAY.total_seconds() // 60)
-    await callback.answer(f"Напомню через {delay_minutes} минут")
-    await callback.message.answer(
-        f"⏰ Хорошо, напомню принять «{target['name']}» через {delay_minutes} минут."
-    )
+    await callback.answer("Хорошо, напомню позже.")
+    await callback.message.answer("Хорошо, напомню позже.")
 
 
 @router.callback_query(lambda c: c.data.startswith("sup_confirm:"))
