@@ -144,10 +144,11 @@ class ActivityAnalysisCopy2PromptTests(unittest.TestCase):
 
         captured = {}
 
-        async def fake_run_daily_activity_analysis(message, user_id, target_date=None):
+        async def fake_run_daily_activity_analysis(message, user_id, target_date=None, provider="gemini"):
             captured["message"] = message
             captured["user_id"] = user_id
             captured["target_date"] = target_date
+            captured["provider"] = provider
             return True
 
         message = SimpleNamespace(from_user=SimpleNamespace(id=123))
@@ -163,3 +164,4 @@ class ActivityAnalysisCopy2PromptTests(unittest.TestCase):
         self.assertIs(captured["message"], message)
         self.assertEqual(captured["user_id"], "123")
         self.assertIsNone(captured["target_date"])
+        self.assertEqual(captured["provider"], "deepseek")

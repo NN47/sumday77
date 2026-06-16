@@ -64,29 +64,35 @@ AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT = (
 )
 
 
-async def run_daily_activity_analysis(message: Message, user_id: str, target_date: date | None = None) -> bool:
-    """Запускает стандартный ИИ-анализ дня и отправляет результат пользователю."""
+async def run_daily_activity_analysis(
+    message: Message,
+    user_id: str,
+    target_date: date | None = None,
+    provider: str = "gemini",
+) -> bool:
+    """Запускает стандартный ИИ-анализ дня через выбранного провайдера и отправляет результат."""
     analysis_date = target_date or date.today()
+    logger.info("day_analysis_requested provider=%s user_id=%s", provider, user_id)
     EveningAnalysisNotificationRepository.mark_analysis_started(user_id, analysis_date)
     AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
     AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
     await message.answer("⏳ Подожди немного, бот анализирует твой день...")
     try:
-        analysis = await generate_activity_analysis(user_id, analysis_date, analysis_date, "за день")
+        analysis = await generate_day_analysis(user_id, analysis_date, provider)
         ActivityAnalysisRepository.create_entry(user_id, analysis, analysis_date, source="generated")
         AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
     except Exception as e:
         AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
-        if _is_gemini_temporarily_unavailable_error(e):
+        if _is_day_analysis_temporarily_unavailable_error(e, provider):
             push_menu_stack(message.bot, activity_analysis_menu)
             await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
             return False
         log_app_error(
-            source="gemini",
+            source=provider,
             error=e,
             user_id=user_id,
             context="daily_analysis",
-            extra={"handler": "run_daily_activity_analysis"},
+            extra={"handler": "run_daily_activity_analysis", "provider": provider},
         )
         await message.answer("⚠️ Не удалось сгенерировать анализ дня. Попробуй позже.")
         return False
@@ -139,6 +145,33 @@ def _is_deepseek_temporarily_unavailable_error(error: Exception) -> bool:
         or "503" in str(error)
         or "timeout" in str(error).lower()
     )
+
+
+def _is_day_analysis_temporarily_unavailable_error(error: Exception, provider: str) -> bool:
+    """Проверяет временную недоступность выбранного провайдера анализа дня."""
+    if provider == "gigachat":
+        return _is_gigachat_temporarily_unavailable_error(error)
+    if provider == "deepseek":
+        return _is_deepseek_temporarily_unavailable_error(error)
+    return _is_gemini_temporarily_unavailable_error(error)
+
+
+async def generate_day_analysis(user_id: str, target_date: date, provider: str) -> str:
+    """Генерирует анализ дня с едиными данными и промптом через выбранного провайдера."""
+    logger.info("day_analysis_call_provider=%s user_id=%s", provider, user_id)
+    try:
+        result = await generate_activity_analysis(
+            user_id,
+            target_date,
+            target_date,
+            "за день",
+            backend=provider,
+        )
+    except Exception as exc:
+        logger.error("day_analysis_failed provider=%s user_id=%s error=%s", provider, user_id, exc)
+        raise
+    logger.info("day_analysis_completed provider=%s user_id=%s", provider, user_id)
+    return result
 
 
 def _normalize_workout_type(exercise: str, variant: str | None = None) -> str:
@@ -1141,6 +1174,7 @@ async def generate_activity_analysis(
 
 
     async def _run_backend() -> str:
+        logger.info("day_analysis_call_provider=%s user_id=%s", backend, user_id)
         if backend == "gemini":
             if gemini_service is None:
                 raise GeminiServiceTemporaryUnavailableError("Gemini service is not initialized")
@@ -1380,7 +1414,7 @@ async def save_manual_activity_analysis(message: Message, state: FSMContext):
 async def analyze_activity_day(message: Message):
     """Анализ за день."""
     user_id = str(message.from_user.id)
-    await run_daily_activity_analysis(message, user_id)
+    await run_daily_activity_analysis(message, user_id, provider="gemini")
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith(f"{EVENING_ANALYSIS_START_PREFIX}:"))
@@ -1389,7 +1423,7 @@ async def start_evening_activity_analysis(callback: CallbackQuery):
     await callback.answer()
     user_id = str(callback.from_user.id)
     target_date = date.fromisoformat(callback.data.split(":", 1)[1])
-    await run_daily_activity_analysis(callback.message, user_id, target_date)
+    await run_daily_activity_analysis(callback.message, user_id, target_date, provider="gemini")
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith(f"{EVENING_ANALYSIS_REMIND_PREFIX}:"))
@@ -1414,14 +1448,14 @@ async def remind_evening_activity_analysis_later(callback: CallbackQuery):
 async def analyze_activity_day_gigachat(message: Message):
     """Копия стандартного анализа за день с тем же промптом, что у кнопки «📅 Сегодня»."""
     user_id = str(message.from_user.id)
-    await run_daily_activity_analysis(message, user_id)
+    await run_daily_activity_analysis(message, user_id, provider="gigachat")
 
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES)
 async def analyze_activity_day_copy_2(message: Message):
     """Копия стандартного анализа за день с тем же промптом, что у кнопки «📅 Сегодня»."""
     user_id = str(message.from_user.id)
-    await run_daily_activity_analysis(message, user_id)
+    await run_daily_activity_analysis(message, user_id, provider="deepseek")
 
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES)
