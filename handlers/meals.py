@@ -23,11 +23,11 @@ from utils.keyboards import (
     FINISH_MEAL_BUTTON_TEXT,
     LEGACY_FINISH_MEAL_BUTTON_TEXT,
     main_menu,
+    main_menu_button,
     kbju_menu,
     kbju_add_menu,
     kbju_meal_type_menu,
     kbju_after_meal_menu,
-    kbju_weight_input_menu,
     openrouter_confirm_menu,
     kbju_edit_type_menu,
     push_menu_stack,
@@ -209,6 +209,82 @@ def _format_label_weight_prompt(
         lines.append("❓ <b>Вес в упаковке не найден, сколько вы съели?</b>")
 
     lines.append("Можешь выбрать кнопку или ввести вес вручную.")
+    return "\n".join(lines)
+
+
+LABEL_STANDARD_GRAM_OPTIONS = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 100, 150, 200, 250, 300, 350, 500]
+LABEL_WEIGHT_ADJUSTMENTS = [1, 5, 10, 20, 50, 100]
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _build_label_weight_input_menu(package_weight: float | None = None) -> ReplyKeyboardMarkup:
+    """Строит меню выбора веса с весом упаковки отдельной первой кнопкой."""
+    options = list(LABEL_STANDARD_GRAM_OPTIONS)
+    package_weight_int = int(round(package_weight)) if package_weight and package_weight > 0 else None
+    keyboard: list[list[KeyboardButton]] = []
+    if package_weight_int and package_weight_int not in options:
+        keyboard.append([KeyboardButton(text=str(package_weight_int))])
+
+    for index in range(0, len(options), 4):
+        keyboard.append([KeyboardButton(text=str(value)) for value in options[index:index + 4]])
+
+    keyboard.append([KeyboardButton(text="⬅️ Назад"), main_menu_button])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def _build_label_weight_confirm_menu() -> ReplyKeyboardMarkup:
+    """Строит меню подтверждения веса с кнопками корректировки."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=f"+{step}") for step in LABEL_WEIGHT_ADJUSTMENTS],
+            [KeyboardButton(text=f"-{step}") for step in LABEL_WEIGHT_ADJUSTMENTS],
+            [KeyboardButton(text="✅ Сохранить"), KeyboardButton(text="⬅️ Назад")],
+            [main_menu_button],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def _calculate_label_totals(kbju_per_100g: dict | None, weight_grams: float) -> tuple[dict, dict]:
+    """Возвращает итоговые КБЖУ и значения на 100 г для выбранного веса."""
+    kbju_per_100g = kbju_per_100g or {}
+    per_100g = {
+        "kcal": _safe_float(kbju_per_100g.get("kcal")),
+        "protein": _safe_float(kbju_per_100g.get("protein")),
+        "fat": _safe_float(kbju_per_100g.get("fat")),
+        "carbs": _safe_float(kbju_per_100g.get("carbs")),
+    }
+    multiplier = weight_grams / 100.0
+    totals = {
+        "calories": per_100g["kcal"] * multiplier,
+        "protein": per_100g["protein"] * multiplier,
+        "fat": per_100g["fat"] * multiplier,
+        "carbs": per_100g["carbs"] * multiplier,
+    }
+    return totals, per_100g
+
+
+def _format_label_weight_confirmation_text(data: dict, weight_grams: float) -> str:
+    """Форматирует экран подтверждения выбранного веса и пересчитанных КБЖУ."""
+    totals, _ = _calculate_label_totals(data.get("kbju_per_100g"), weight_grams)
+    product_name = html.escape(data.get("product_name") or "Продукт")
+    lines = [
+        f"📦 <b>Продукт:</b> {product_name}",
+        f"✅ <b>Вы выбрали:</b> {weight_grams:.0f} г",
+        "",
+        "<b>Итоговые КБЖУ:</b>",
+        _format_kbju_summary_block(totals),
+        "",
+        "Можешь скорректировать вес кнопками ниже или нажать <b>✅ Сохранить</b>.",
+    ]
     return "\n".join(lines)
 
 
@@ -3510,15 +3586,17 @@ async def _handle_label_photo_analysis(
     }
     if meal_source:
         update_payload["meal_source"] = meal_source
-    await state.update_data(**update_payload)
-
-    push_menu_stack(message.bot, kbju_add_menu)
 
     prompt_package_weight = None
     if found_weight and package_weight is not None:
         weight = safe_float(package_weight)
         if weight > 0:
             prompt_package_weight = weight
+            update_payload["package_weight"] = weight
+
+    await state.update_data(**update_payload)
+    weight_input_menu = _build_label_weight_input_menu(prompt_package_weight)
+    push_menu_stack(message.bot, weight_input_menu)
 
     await message.answer(
         _format_label_weight_prompt(
@@ -3529,7 +3607,7 @@ async def _handle_label_photo_analysis(
             carbs_100g=carbs_100g,
             package_weight=prompt_package_weight,
         ),
-        reply_markup=kbju_weight_input_menu,
+        reply_markup=weight_input_menu,
         parse_mode="HTML",
     )
 
@@ -3687,6 +3765,7 @@ async def handle_barcode_photo(message: Message, state: FSMContext):
         product_name=product_name,
         barcode=barcode,
         entry_date=entry_date.isoformat(),
+        package_weight=safe_float(weight) if weight else None,
     )
     
     # Формируем сообщение с информацией о продукте
@@ -3711,13 +3790,15 @@ async def handle_barcode_photo(message: Message, state: FSMContext):
         text_parts.append(f"\n❓ Сколько грамм вы съели?")
     text_parts.append("\nМожно выбрать кнопку или ввести вес вручную.")
     
-    push_menu_stack(message.bot, kbju_weight_input_menu)
-    await message.answer("".join(text_parts), reply_markup=kbju_weight_input_menu, parse_mode="HTML")
+    prompt_package_weight = safe_float(weight) if weight else None
+    weight_input_menu = _build_label_weight_input_menu(prompt_package_weight if prompt_package_weight > 0 else None)
+    push_menu_stack(message.bot, weight_input_menu)
+    await message.answer("".join(text_parts), reply_markup=weight_input_menu, parse_mode="HTML")
 
 
 @router.message(MealEntryStates.waiting_for_weight_input)
 async def handle_weight_input(message: Message, state: FSMContext):
-    """Обрабатывает ввод веса для этикетки или штрих-кода."""
+    """Обрабатывает выбор/ввод веса и открывает подтверждение без сохранения."""
     text = (message.text or "").strip()
     if await _reroute_add_method_button_if_needed(message, state, text):
         return
@@ -3726,10 +3807,6 @@ async def handle_weight_input(message: Message, state: FSMContext):
         await go_back(message, state)
         return
 
-    user_id = str(message.from_user.id)
-    data = await state.get_data()
-    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    
     try:
         weight_grams = float(text.replace(",", "."))
         if weight_grams <= 0:
@@ -3737,115 +3814,116 @@ async def handle_weight_input(message: Message, state: FSMContext):
     except (ValueError, AttributeError):
         await message.answer("Вес должен быть больше нуля. Введи правильное число (например: 50 или 100):")
         return
-    
+
+    await state.update_data(selected_label_weight=weight_grams)
+    await state.set_state(MealEntryStates.confirming_label_weight)
+    await message.answer(
+        _format_label_weight_confirmation_text(await state.get_data(), weight_grams),
+        reply_markup=_build_label_weight_confirm_menu(),
+        parse_mode="HTML",
+    )
+
+
+@router.message(MealEntryStates.confirming_label_weight)
+async def handle_label_weight_confirmation(message: Message, state: FSMContext):
+    """Подтверждает, корректирует или сохраняет продукт после анализа этикетки."""
+    text = (message.text or "").strip()
+    if await _reroute_add_method_button_if_needed(message, state, text):
+        return
+
+    data = await state.get_data()
+    current_weight = max(1.0, _safe_float(data.get("selected_label_weight"), 1.0))
+
+    if text == "⬅️ Назад":
+        package_weight = _safe_float(data.get("package_weight")) or None
+        weight_input_menu = _build_label_weight_input_menu(package_weight)
+        await state.set_state(MealEntryStates.waiting_for_weight_input)
+        await message.answer(
+            _format_label_weight_prompt(
+                product_name=data.get("product_name", "Продукт"),
+                kcal_100g=_safe_float((data.get("kbju_per_100g") or {}).get("kcal")),
+                protein_100g=_safe_float((data.get("kbju_per_100g") or {}).get("protein")),
+                fat_100g=_safe_float((data.get("kbju_per_100g") or {}).get("fat")),
+                carbs_100g=_safe_float((data.get("kbju_per_100g") or {}).get("carbs")),
+                package_weight=package_weight,
+            ),
+            reply_markup=weight_input_menu,
+            parse_mode="HTML",
+        )
+        return
+
+    if re.fullmatch(r"[+-](1|5|10|20|50|100)", text):
+        current_weight = max(1.0, current_weight + float(text))
+        await state.update_data(selected_label_weight=current_weight)
+        await message.answer(
+            _format_label_weight_confirmation_text(data, current_weight),
+            reply_markup=_build_label_weight_confirm_menu(),
+            parse_mode="HTML",
+        )
+        return
+
+    if text != "✅ Сохранить":
+        await message.answer("Скорректируй вес кнопками или нажми ✅ Сохранить / ⬅️ Назад.")
+        return
+
+    user_id = str(message.from_user.id)
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
     if entry_date_str:
-        if isinstance(entry_date_str, str):
-            try:
-                entry_date = date.fromisoformat(entry_date_str)
-            except ValueError:
-                parsed = parse_date(entry_date_str)
-                entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
-        else:
-            entry_date = date.today()
+        try:
+            entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
+        except ValueError:
+            parsed = parse_date(entry_date_str)
+            entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
     else:
         entry_date = date.today()
-    
-    # Безопасное преобразование значений
-    def safe_float(value) -> float:
-        try:
-            if value is None:
-                return 0.0
-            return float(value)
-        except (TypeError, ValueError):
-            return 0.0
-    
-    # Пересчитываем пропорционально указанному весу
-    multiplier = weight_grams / 100.0
-    
-    # Определяем источник (этикетка или штрих-код)
+
+    weight_grams = current_weight
     kbju_per_100g = data.get("kbju_per_100g")
     product_name = data.get("product_name", "Продукт")
     barcode = data.get("barcode")
     meal_source = data.get("meal_source")
-    
-    if kbju_per_100g:
-        # Этикетка или штрих-код (оба используют kbju_per_100g)
-        kcal_100g = safe_float(kbju_per_100g.get("kcal"))
-        protein_100g = safe_float(kbju_per_100g.get("protein"))
-        fat_100g = safe_float(kbju_per_100g.get("fat"))
-        carbs_100g = safe_float(kbju_per_100g.get("carbs"))
-        
-        totals_for_db = {
-            "calories": kcal_100g * multiplier,
-            "protein": protein_100g * multiplier,
-            "fat": fat_100g * multiplier,
-            "carbs": carbs_100g * multiplier,
-        }
-        
-        # Определяем источник по наличию barcode
-        if meal_source == "ocr_openrouter_test":
-            lines = [_format_label_result_header("ocr_openrouter_test", product_name)]
-            raw_query = f"[ocr_openrouter_test] {product_name}"
-        elif meal_source == "openai":
-            lines = [_format_label_result_header("label", product_name)]
-            raw_query = f"[Этикетка OpenAI: {product_name}]"
-        elif barcode:
-            lines = [_format_label_result_header("barcode", product_name)]
-            raw_query = f"[Штрих-код: {barcode}] {product_name}"
-        else:
-            lines = [_format_label_result_header("label", product_name)]
-            raw_query = f"[Этикетка: {product_name}]"
-    else:
-        # Старый формат (для обратной совместимости)
-        ratio = weight_grams / 100.0
-        totals_for_db = {
-            "calories": safe_float(data.get("kcal_per_100g", 0)) * ratio,
-            "protein": safe_float(data.get("protein_per_100g", 0)) * ratio,
-            "fat": safe_float(data.get("fat_per_100g", 0)) * ratio,
-            "carbs": safe_float(data.get("carbs_per_100g", 0)) * ratio,
-        }
-        product_name = data.get("product_name", "Продукт")
-        barcode = data.get("barcode", "")
+    totals_for_db, per_100g = _calculate_label_totals(kbju_per_100g, weight_grams)
+
+    if meal_source == "ocr_openrouter_test":
+        lines = [_format_label_result_header("ocr_openrouter_test", product_name)]
+        raw_query = f"[ocr_openrouter_test] {product_name}"
+    elif meal_source == "openai":
+        lines = [_format_label_result_header("label", product_name)]
+        raw_query = f"[Этикетка OpenAI: {product_name}]"
+    elif barcode:
         lines = [_format_label_result_header("barcode", product_name)]
         raw_query = f"[Штрих-код: {barcode}] {product_name}"
-    
+    else:
+        lines = [_format_label_result_header("label", product_name)]
+        raw_query = f"[Этикетка: {product_name}]"
+
     lines.append(f"📦 <b>Вес:</b> {weight_grams:.0f} г\n")
     lines.append("<b>КБЖУ:</b>")
     lines.append(_format_kbju_summary_block(totals_for_db))
     if meal_source == "ocr_openrouter_test":
         lines.append("Источник: OCR + OpenRouter (тест)")
 
-    products_json = None
-    if kbju_per_100g:
-        kcal_100g = safe_float(kbju_per_100g.get("kcal"))
-        protein_100g = safe_float(kbju_per_100g.get("protein"))
-        fat_100g = safe_float(kbju_per_100g.get("fat"))
-        carbs_100g = safe_float(kbju_per_100g.get("carbs"))
+    products_json = json.dumps([
+        {
+            "name": product_name,
+            "grams": weight_grams,
+            "kcal": totals_for_db["calories"],
+            "protein": totals_for_db["protein"],
+            "fat": totals_for_db["fat"],
+            "carbs": totals_for_db["carbs"],
+            "calories": totals_for_db["calories"],
+            "protein_g": totals_for_db["protein"],
+            "fat_total_g": totals_for_db["fat"],
+            "carbohydrates_total_g": totals_for_db["carbs"],
+            "calories_per_100g": per_100g["kcal"],
+            "protein_per_100g": per_100g["protein"],
+            "fat_per_100g": per_100g["fat"],
+            "carbs_per_100g": per_100g["carbs"],
+            "source": meal_source or ("barcode" if barcode else "label"),
+        }
+    ])
 
-        products_json = json.dumps(
-            [
-                {
-                    "name": product_name,
-                    "grams": weight_grams,
-                    "kcal": totals_for_db["calories"],
-                    "protein": totals_for_db["protein"],
-                    "fat": totals_for_db["fat"],
-                    "carbs": totals_for_db["carbs"],
-                    "calories": totals_for_db["calories"],
-                    "protein_g": totals_for_db["protein"],
-                    "fat_total_g": totals_for_db["fat"],
-                    "carbohydrates_total_g": totals_for_db["carbs"],
-                    "calories_per_100g": kcal_100g,
-                    "protein_per_100g": protein_100g,
-                    "fat_per_100g": fat_100g,
-                    "carbs_per_100g": carbs_100g,
-                    "source": meal_source or ("barcode" if barcode else "label"),
-                }
-            ]
-        )
-    
-    # Сохраняем в БД
     saved_meal = MealRepository.save_meal(
         user_id=user_id,
         raw_query=raw_query,
@@ -3857,12 +3935,11 @@ async def handle_weight_input(message: Message, state: FSMContext):
         products_json=products_json,
         meal_type=meal_type,
     )
-    
-    # Сохраняем ID последнего приёма для редактирования
+
     if not hasattr(message.bot, "last_meal_ids"):
         message.bot.last_meal_ids = {}
     message.bot.last_meal_ids[user_id] = saved_meal.id
-    
+
     await _keep_meal_entry_open_after_save(
         message,
         state,
@@ -3872,7 +3949,6 @@ async def handle_weight_input(message: Message, state: FSMContext):
         intro_lines=lines,
         parse_mode="HTML",
     )
-
 
 @router.message(lambda m: m.text == "📊 Дневной отчёт")
 async def calories_today_results(message: Message):
