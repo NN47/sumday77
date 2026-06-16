@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot, Dispatcher
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from database.session import get_db_session
-from database.models import ActivityAnalysisEntry, User, Supplement, KbjuSettings, EveningAnalysisNotificationState
+from database.models import ActivityAnalysisEntry, User, Supplement, SupplementEntry, SupplementNotificationState, KbjuSettings, EveningAnalysisNotificationState
 from database.repositories.evening_analysis_notification_repository import EveningAnalysisNotificationRepository
 from services.error_logging_service import log_app_error
 
@@ -24,6 +24,8 @@ EVENING_ANALYSIS_REMINDER_DELAY = timedelta(minutes=30)
 EVENING_ANALYSIS_BUSY_RESCHEDULE_MIN_DELAY = timedelta(minutes=10)
 EVENING_ANALYSIS_BUSY_RESCHEDULE_MAX_DELAY = timedelta(minutes=15)
 EVENING_ANALYSIS_RECENT_ACTIVITY_WINDOW = timedelta(minutes=5)
+SUPPLEMENT_BUSY_RESCHEDULE_MIN_DELAY = timedelta(minutes=10)
+SUPPLEMENT_BUSY_RESCHEDULE_MAX_DELAY = timedelta(minutes=15)
 EVENING_ANALYSIS_REMINDER_CUTOFF_TIME = time(2, 0)
 EVENING_ANALYSIS_MAX_REMINDERS = 7
 EVENING_ANALYSIS_START_PREFIX = "evening_analysis_start"
@@ -161,9 +163,16 @@ class NotificationScheduler:
 
     def _get_busy_reschedule_due_at(self) -> datetime:
         """Возвращает UTC-время переноса напоминания на 10–15 минут."""
+        return self._get_random_due_at(
+            EVENING_ANALYSIS_BUSY_RESCHEDULE_MIN_DELAY,
+            EVENING_ANALYSIS_BUSY_RESCHEDULE_MAX_DELAY,
+        )
+
+    def _get_random_due_at(self, min_delay: timedelta, max_delay: timedelta) -> datetime:
+        """Возвращает UTC-время переноса на случайную задержку в заданном диапазоне."""
         delay_seconds = random.randint(
-            int(EVENING_ANALYSIS_BUSY_RESCHEDULE_MIN_DELAY.total_seconds()),
-            int(EVENING_ANALYSIS_BUSY_RESCHEDULE_MAX_DELAY.total_seconds()),
+            int(min_delay.total_seconds()),
+            int(max_delay.total_seconds()),
         )
         return datetime.utcnow() + timedelta(seconds=delay_seconds)
 
@@ -382,6 +391,55 @@ class NotificationScheduler:
                 logger.error("Ошибка в цикле вечерних уведомлений анализа дня: %s", e, exc_info=True)
                 await asyncio.sleep(60)
     
+
+    def _has_supplement_entry(
+        self,
+        session,
+        user_id: str,
+        supplement_id: int,
+        target_date,
+    ) -> bool:
+        """Проверяет, отмечен ли приём добавки за выбранный день."""
+        day_start = datetime.combine(target_date, time.min)
+        day_end = datetime.combine(target_date + timedelta(days=1), time.min)
+        return (
+            session.query(SupplementEntry.id)
+            .filter(SupplementEntry.user_id == str(user_id))
+            .filter(SupplementEntry.supplement_id == supplement_id)
+            .filter(SupplementEntry.timestamp >= day_start)
+            .filter(SupplementEntry.timestamp < day_end)
+            .first()
+            is not None
+        )
+
+    async def get_supplement_reminder_block_reason(
+        self,
+        user_id: str,
+        *,
+        last_seen_at=None,
+    ) -> str | None:
+        """Возвращает причину блокировки напоминания о добавке или None, если можно отправлять."""
+        if last_seen_at and datetime.utcnow() - last_seen_at < EVENING_ANALYSIS_RECENT_ACTIVITY_WINDOW:
+            return "recent_activity"
+
+        if self.dispatcher is not None:
+            try:
+                fsm_context = self.dispatcher.fsm.get_context(
+                    bot=self.bot,
+                    chat_id=int(user_id),
+                    user_id=int(user_id),
+                )
+                if await fsm_context.get_state():
+                    return "active_fsm"
+            except Exception as e:
+                logger.warning(
+                    "Не удалось проверить FSM-состояние для напоминания о добавке: user_id=%s error=%s",
+                    user_id,
+                    e,
+                )
+
+        return None
+
     def _get_weekday_name(self, weekday: int) -> str:
         """Преобразует номер дня недели (0=Понедельник) в русское сокращение."""
         weekday_names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
@@ -468,9 +526,11 @@ class NotificationScheduler:
         """Проверяет добавки и отправляет уведомления, если наступило время приёма."""
         try:
             now = datetime.now(MSK_TZ)
+            now_utc = datetime.utcnow()
             current_time_str = now.strftime("%H:%M")
             current_weekday = self._get_weekday_name(now.weekday())
             today_date = now.date()
+            pending_notifications: list[tuple[str, int, str, str, bool, int | None, str | None]] = []
             
             # Сбрасываем кэш отправленных уведомлений в начале нового дня
             if self._last_check_date is None or self._last_check_date != today_date:
@@ -478,6 +538,45 @@ class NotificationScheduler:
                 self._last_check_date = today_date
             
             with get_db_session() as session:
+                # Сначала обрабатываем отложенные напоминания: если добавка уже принята,
+                # удаляем отложенное состояние; если пользователь занят — переносим.
+                deferred_states = (
+                    session.query(SupplementNotificationState)
+                    .filter(SupplementNotificationState.reminder_due_at <= now_utc)
+                    .all()
+                )
+                for state in deferred_states:
+                    supplement = (
+                        session.query(Supplement)
+                        .filter(Supplement.id == state.supplement_id)
+                        .filter(Supplement.user_id == state.user_id)
+                        .first()
+                    )
+                    if not supplement or not supplement.notifications_enabled:
+                        session.delete(state)
+                        continue
+
+                    if self._has_supplement_entry(session, state.user_id, state.supplement_id, state.target_date):
+                        session.delete(state)
+                        continue
+
+                    user = session.query(User).filter(User.user_id == state.user_id).first()
+                    block_reason = await self.get_supplement_reminder_block_reason(
+                        state.user_id,
+                        last_seen_at=getattr(user, "last_seen_at", None),
+                    )
+                    if block_reason in {"active_fsm", "recent_activity"}:
+                        state.reminder_due_at = self._get_random_due_at(
+                            SUPPLEMENT_BUSY_RESCHEDULE_MIN_DELAY,
+                            SUPPLEMENT_BUSY_RESCHEDULE_MAX_DELAY,
+                        )
+                        state.updated_at = datetime.utcnow()
+                        continue
+
+                    pending_notifications.append(
+                        (state.user_id, state.supplement_id, supplement.name, state.scheduled_time, True, state.id, None)
+                    )
+
                 # Получаем все добавки с включенными уведомлениями только у пользователей,
                 # завершивших обязательный онбординг.
                 supplements = session.query(Supplement).filter(
@@ -489,51 +588,51 @@ class NotificationScheduler:
                 
                 for supplement in supplements:
                     try:
-                        # Парсим дни и время
                         days = json.loads(supplement.days_json or "[]")
                         times = json.loads(supplement.times_json or "[]")
-                        
-                        # Проверяем, нужно ли отправлять уведомление
-                        if not days or not times:
+                        if not days or not times or current_weekday not in days or current_time_str not in times:
                             continue
                         
-                        # Проверяем день недели
-                        if current_weekday not in days:
-                            continue
-                        
-                        # Проверяем время (с точностью до минуты)
-                        if current_time_str not in times:
-                            continue
-                        
-                        # Создаём уникальный ключ для уведомления
                         notification_key = f"{supplement.user_id}_{supplement.id}_{current_time_str}_{today_date}"
-                        
-                        # Проверяем, не отправляли ли уже это уведомление сегодня
                         if notification_key in self.sent_notifications_today:
                             continue
-                        
-                        # Отправляем уведомление
-                        message = (
-                            "🔔 Время принять добавку!\n\n"
-                            f"💊 {supplement.name}\n"
-                            f"⏰ {current_time_str}\n\n"
-                            "Нажми «✅ Подтвердить прием», когда примешь добавку, "
-                            "или «⏰ Напомнить позже»."
-                        )
-                        await self.send_notification(
+                        if self._has_supplement_entry(session, supplement.user_id, supplement.id, today_date):
+                            self.sent_notifications_today.add(notification_key)
+                            existing_state = session.query(SupplementNotificationState).filter_by(
+                                user_id=supplement.user_id,
+                                supplement_id=supplement.id,
+                            ).first()
+                            if existing_state:
+                                session.delete(existing_state)
+                            continue
+
+                        existing_deferred = session.query(SupplementNotificationState).filter_by(
+                            user_id=supplement.user_id,
+                            supplement_id=supplement.id,
+                        ).first()
+                        if existing_deferred:
+                            continue
+
+                        user = session.query(User).filter(User.user_id == supplement.user_id).first()
+                        block_reason = await self.get_supplement_reminder_block_reason(
                             supplement.user_id,
-                            message,
-                            reply_markup=build_supplement_notification_keyboard(
-                                supplement.id,
-                                current_time_str,
-                            ),
+                            last_seen_at=getattr(user, "last_seen_at", None),
                         )
-                        
-                        # Помечаем уведомление как отправленное
-                        self.sent_notifications_today.add(notification_key)
-                        logger.info(
-                            f"Отправлено уведомление о добавке {supplement.name} "
-                            f"пользователю {supplement.user_id} в {current_time_str}"
+                        if block_reason in {"active_fsm", "recent_activity"}:
+                            session.add(SupplementNotificationState(
+                                user_id=supplement.user_id,
+                                supplement_id=supplement.id,
+                                scheduled_time=current_time_str,
+                                target_date=today_date,
+                                reminder_due_at=self._get_random_due_at(
+                                    SUPPLEMENT_BUSY_RESCHEDULE_MIN_DELAY,
+                                    SUPPLEMENT_BUSY_RESCHEDULE_MAX_DELAY,
+                                ),
+                            ))
+                            continue
+
+                        pending_notifications.append(
+                            (supplement.user_id, supplement.id, supplement.name, current_time_str, False, None, notification_key)
                         )
                     except Exception as e:
                         logger.error(
@@ -541,6 +640,43 @@ class NotificationScheduler:
                             f"для пользователя {supplement.user_id}: {e}",
                             exc_info=True
                         )
+
+            if pending_notifications:
+                results = await asyncio.gather(
+                    *(
+                        self.send_notification(
+                            user_id,
+                            (
+                                ("🔔 Напоминаю принять добавку!\n\n" if is_reminder else "🔔 Время принять добавку!\n\n")
+                                + f"💊 {name}\n"
+                                + f"⏰ {time_text}\n\n"
+                                + "Нажми «✅ Подтвердить прием», когда примешь добавку, "
+                                + "или «⏰ Напомнить позже»."
+                            ),
+                            reply_markup=build_supplement_notification_keyboard(supplement_id, time_text),
+                        )
+                        for user_id, supplement_id, name, time_text, is_reminder, _state_id, _notification_key in pending_notifications
+                    ),
+                    return_exceptions=True,
+                )
+                successful_state_ids = []
+                successful_notification_keys = []
+                for notification, result in zip(pending_notifications, results):
+                    _user_id, _supplement_id, _name, _time_text, _is_reminder, state_id, notification_key = notification
+                    if result is True:
+                        if state_id is not None:
+                            successful_state_ids.append(state_id)
+                        if notification_key is not None:
+                            successful_notification_keys.append(notification_key)
+                    else:
+                        logger.warning("Уведомление о добавке не доставлено, повторим позже")
+                with get_db_session() as session:
+                    if successful_state_ids:
+                        session.query(SupplementNotificationState).filter(
+                            SupplementNotificationState.id.in_(successful_state_ids)
+                        ).delete(synchronize_session=False)
+                    for key in successful_notification_keys:
+                        self.sent_notifications_today.add(key)
         except Exception as e:
             logger.error(f"Ошибка при проверке уведомлений о добавках: {e}", exc_info=True)
     

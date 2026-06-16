@@ -4,7 +4,7 @@ import logging
 from datetime import date, datetime
 from typing import Optional, List, Dict
 from database.session import get_db_session
-from database.models import Supplement, SupplementEntry
+from database.models import Supplement, SupplementEntry, SupplementNotificationState
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,9 @@ class SupplementRepository:
                 amount=amount,
             )
             session.add(entry)
+            session.query(SupplementNotificationState).filter_by(
+                user_id=user_id, supplement_id=supplement_id
+            ).delete()
             session.commit()
             session.refresh(entry)
             return entry.id
