@@ -18,6 +18,7 @@ class MealEntryStates(StatesGroup):
     waiting_for_openai_label_photo = State()  # Фото этикетки через OpenAI
     waiting_for_barcode_photo = State()  # Фото штрих-кода
     waiting_for_weight_input = State()  # Вес продукта (для этикетки)
+    confirming_label_weight = State()  # Подтверждение/корректировка веса после этикетки
     choosing_edit_type = State()  # Выбор типа редактирования
     editing_meal_weight = State()  # Редактирование веса продукта
     editing_meal_weight_manual_input = State()  # Ручной ввод веса для выбранного продукта
