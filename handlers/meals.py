@@ -485,9 +485,7 @@ def _search_recent_items(items: list[RecentMealItem], query: str) -> list[Recent
 
 
 def _build_recent_meals_keyboard(recent_meals: list[RecentMealItem], meal_type: str, page: int, has_prev: bool, has_next: bool) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text="🔎 Поиск продукта", callback_data=f"recent_search_start:{meal_type}")]
-    ]
+    rows: list[list[InlineKeyboardButton]] = []
     for offset, item in enumerate(recent_meals, start=1):
         title = _truncate_recent_name(item.title)
         number = (page - 1) * RECENT_MEALS_PAGE_SIZE + offset
@@ -508,6 +506,8 @@ def _build_recent_meals_keyboard(recent_meals: list[RecentMealItem], meal_type: 
         nav_row.append(InlineKeyboardButton(text="➡️ Показать ещё", callback_data=f"recent_meal_page:{meal_type}:{page+1}"))
     if nav_row:
         rows.append(nav_row)
+
+    rows.append([InlineKeyboardButton(text="🔎 Поиск продукта", callback_data=f"recent_search_start:{meal_type}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
