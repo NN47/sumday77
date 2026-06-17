@@ -254,16 +254,21 @@ def _build_label_weight_confirm_menu() -> ReplyKeyboardMarkup:
 PHOTO_WEIGHT_ADJUSTMENTS = LABEL_WEIGHT_ADJUSTMENTS
 
 
-def _build_photo_analysis_confirm_menu() -> ReplyKeyboardMarkup:
+def _build_photo_analysis_confirm_menu() -> InlineKeyboardMarkup:
     """Строит меню подтверждения анализа еды по фото с корректировкой веса."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=f"+{step}") for step in PHOTO_WEIGHT_ADJUSTMENTS],
-            [KeyboardButton(text=f"-{step}") for step in PHOTO_WEIGHT_ADJUSTMENTS],
-            [KeyboardButton(text="✅ Сохранить")],
-            [KeyboardButton(text="❌ Отмена")],
-        ],
-        resize_keyboard=True,
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=f"+{step}", callback_data=f"photo_wchg:{step}")
+                for step in PHOTO_WEIGHT_ADJUSTMENTS
+            ],
+            [
+                InlineKeyboardButton(text=f"-{step}", callback_data=f"photo_wchg:-{step}")
+                for step in PHOTO_WEIGHT_ADJUSTMENTS
+            ],
+            [InlineKeyboardButton(text="✅ Сохранить", callback_data="photo_save")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="photo_cancel")],
+        ]
     )
 
 
@@ -3595,6 +3600,115 @@ async def handle_openai_food_non_photo(message: Message, state: FSMContext):
         await go_back(message, state)
         return
     await message.answer("Пожалуйста, отправь фото еды для OpenAI-анализа.")
+
+
+async def _cancel_photo_analysis_confirmation(message: Message, state: FSMContext, data: dict):
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date = data.get("entry_date") or date.today().isoformat()
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(
+        entry_date=entry_date,
+        meal_type=meal_type,
+        photo_analysis_items=None,
+        photo_analysis_raw_query=None,
+        photo_analysis_provider=None,
+    )
+    await message.answer("❌ Анализ фото отменён. Ничего не сохранено.", reply_markup=kbju_add_menu)
+
+
+async def _save_photo_analysis_confirmation(message: Message, state: FSMContext, user_id: str, data: dict):
+    items = data.get("photo_analysis_items") or []
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date_str = data.get("entry_date")
+    try:
+        entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
+    except ValueError:
+        parsed = parse_date(entry_date_str)
+        entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
+
+    totals_for_db = _collect_photo_totals(items)
+    raw_query = data.get("photo_analysis_raw_query") or "[Анализ по фото]"
+    saved_items = []
+    for item in items:
+        saved_items.append(
+            {
+                **item,
+                "calories": _safe_float(item.get("kcal")),
+                "protein_g": _safe_float(item.get("protein")),
+                "fat_total_g": _safe_float(item.get("fat")),
+                "carbohydrates_total_g": _safe_float(item.get("carbs")),
+                "source": item.get("source") or data.get("photo_analysis_provider") or "food_photo",
+            }
+        )
+
+    saved_meal = MealRepository.save_meal(
+        user_id=user_id,
+        raw_query=raw_query,
+        calories=totals_for_db["calories"],
+        protein=totals_for_db["protein"],
+        fat=totals_for_db["fat"],
+        carbs=totals_for_db["carbs"],
+        entry_date=entry_date,
+        products_json=json.dumps(saved_items),
+        meal_type=meal_type,
+    )
+
+    if not hasattr(message.bot, "last_meal_ids"):
+        message.bot.last_meal_ids = {}
+    message.bot.last_meal_ids[user_id] = saved_meal.id
+
+    await state.update_data(photo_analysis_items=None, photo_analysis_raw_query=None, photo_analysis_provider=None)
+    await _keep_meal_entry_open_after_save(
+        message,
+        state,
+        user_id=user_id,
+        entry_date=entry_date,
+        meal_type=meal_type,
+        intro_lines=[_format_photo_saved_confirmation(meal_type, items, totals_for_db)],
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("photo_wchg:"))
+async def photo_analysis_weight_change(callback: CallbackQuery, state: FSMContext):
+    """Корректирует вес анализа фото через inline-кнопки."""
+    data = await state.get_data()
+    items = data.get("photo_analysis_items") or []
+    if not items:
+        await callback.answer("Черновик анализа фото не найден", show_alert=True)
+        return
+
+    delta = float(callback.data.split(":", 1)[1])
+    current_weight = sum(_safe_float(item.get("grams")) for item in items)
+    items = _scale_photo_items(items, max(1.0, current_weight + delta))
+    await state.update_data(photo_analysis_items=items)
+    await callback.message.edit_text(
+        _format_photo_analysis_confirmation_text(items),
+        reply_markup=_build_photo_analysis_confirm_menu(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == "photo_cancel")
+async def photo_analysis_cancel(callback: CallbackQuery, state: FSMContext):
+    """Отменяет сохранение анализа фото через inline-кнопку."""
+    data = await state.get_data()
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _cancel_photo_analysis_confirmation(callback.message, state, data)
+
+
+@router.callback_query(lambda c: c.data == "photo_save")
+async def photo_analysis_save(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет анализ фото через inline-кнопку."""
+    data = await state.get_data()
+    if not data.get("photo_analysis_items"):
+        await callback.answer("Черновик анализа фото не найден", show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _save_photo_analysis_confirmation(callback.message, state, str(callback.from_user.id), data)
 
 
 @router.message(MealEntryStates.confirming_photo_analysis)

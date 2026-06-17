@@ -20,7 +20,7 @@ class _DummyState:
 
 
 def _build_message():
-    return SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock(), bot=SimpleNamespace())
+    return SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock(), edit_reply_markup=AsyncMock(), bot=SimpleNamespace())
 
 
 def _build_callback(callback_data: str):
@@ -30,6 +30,36 @@ def _build_callback(callback_data: str):
     callback.message = _build_message()
     callback.answer = AsyncMock()
     return callback
+
+
+def test_photo_analysis_confirm_menu_uses_inline_buttons_with_cancel_separate_bottom():
+    keyboard = meals._build_photo_analysis_confirm_menu()
+
+    rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
+    callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
+
+    assert rows[0] == ["+1", "+5", "+10", "+20", "+50", "+100"]
+    assert rows[1] == ["-1", "-5", "-10", "-20", "-50", "-100"]
+    assert rows[2] == ["✅ Сохранить"]
+    assert rows[3] == ["❌ Отмена"]
+    assert callbacks[0] == [
+        "photo_wchg:1",
+        "photo_wchg:5",
+        "photo_wchg:10",
+        "photo_wchg:20",
+        "photo_wchg:50",
+        "photo_wchg:100",
+    ]
+    assert callbacks[1] == [
+        "photo_wchg:-1",
+        "photo_wchg:-5",
+        "photo_wchg:-10",
+        "photo_wchg:-20",
+        "photo_wchg:-50",
+        "photo_wchg:-100",
+    ]
+    assert callbacks[2] == ["photo_save"]
+    assert callbacks[3] == ["photo_cancel"]
 
 
 def test_show_input_methods_sends_add_menu():
