@@ -67,6 +67,7 @@ def test_label_weight_confirmation_menu_contains_adjustments_save_and_back() -> 
     assert rows[0] == ["+1", "+5", "+10", "+20", "+50", "+100"]
     assert rows[1] == ["-1", "-5", "-10", "-20", "-50", "-100"]
     assert rows[2] == ["✅ Сохранить", "⬅️ Назад"]
+    assert len(rows) == 3
 
 
 def test_format_label_weight_confirmation_text_recalculates_kbju() -> None:

@@ -243,7 +243,6 @@ def _build_label_weight_confirm_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=f"+{step}") for step in LABEL_WEIGHT_ADJUSTMENTS],
             [KeyboardButton(text=f"-{step}") for step in LABEL_WEIGHT_ADJUSTMENTS],
             [KeyboardButton(text="✅ Сохранить"), KeyboardButton(text="⬅️ Назад")],
-            [main_menu_button],
         ],
         resize_keyboard=True,
     )
