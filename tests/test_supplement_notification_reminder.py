@@ -102,9 +102,11 @@ def test_supplement_amount_keyboard_has_requested_values_in_three_rows():
         ["0,25", "0,5", "0,75", "1", "1,25"],
         ["1,5", "1,75", "2", "2,25", "2,5"],
         ["2,75", "3", "3,5", "4", "5"],
+        ["📅 Выбрать другой день на календаре"],
     ]
     assert callbacks[0][0] == "sup_amount:0.25"
     assert callbacks[2][-1] == "sup_amount:5"
+    assert callbacks[3][0] == "sup_amount_date:open"
 
 
 def test_confirm_notification_prompt_includes_amount_inline_keyboard():
@@ -118,13 +120,16 @@ def test_confirm_notification_prompt_includes_amount_inline_keyboard():
         asyncio.run(supplements.confirm_supplement_intake_from_notification(callback, state))
 
     callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
-    answer_kwargs = callback.message.answer.await_args.kwargs
-    assert answer_kwargs["reply_markup"].inline_keyboard[0][0].text == "0,25"
-    assert answer_kwargs["parse_mode"] == "HTML"
-    assert callback.message.answer.await_args.args[0] == (
+    assert callback.message.answer.await_count == 2
+    prompt_args, prompt_kwargs = callback.message.answer.await_args_list[0]
+    assert prompt_kwargs["reply_markup"].keyboard[0][0].text == "⬅️ Назад"
+    assert prompt_kwargs["parse_mode"] == "HTML"
+    assert prompt_args[0] == (
         "<b>✅ Зафиксировал время приёма «Магний» в 21:30.</b>\n"
         "Выбери кнопкой или укажи количество вручную:"
     )
+    amount_kwargs = callback.message.answer.await_args_list[1].kwargs
+    assert amount_kwargs["reply_markup"].inline_keyboard[0][0].text == "0,25"
 
 
 def test_supplement_amount_inline_button_saves_selected_amount():
@@ -185,10 +190,13 @@ def test_manual_supplement_selection_prompts_amount_without_time_step():
     assert update_kwargs["supplement_name"] == "Магний"
     assert update_kwargs["entry_date"] == "2026-06-13"
     assert update_kwargs["timestamp"] == "2026-06-13T22:45:00"
-    answer_kwargs = message.answer.await_args.kwargs
-    assert answer_kwargs["reply_markup"].inline_keyboard[0][0].text == "0,25"
-    assert answer_kwargs["parse_mode"] == "HTML"
-    assert message.answer.await_args.args[0] == (
+    assert message.answer.await_count == 2
+    prompt_args, prompt_kwargs = message.answer.await_args_list[0]
+    assert prompt_kwargs["reply_markup"].keyboard[0][0].text == "⬅️ Назад"
+    assert prompt_kwargs["parse_mode"] == "HTML"
+    assert prompt_args[0] == (
         "<b>✅ Зафиксировал время приёма «Магний» в 22:45.</b>\n"
         "Выбери кнопкой или укажи количество вручную:"
     )
+    amount_kwargs = message.answer.await_args_list[1].kwargs
+    assert amount_kwargs["reply_markup"].inline_keyboard[0][0].text == "0,25"

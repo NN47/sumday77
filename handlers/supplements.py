@@ -15,6 +15,7 @@ from utils.keyboards import (
     MAIN_MENU_BUTTON_ALIASES,
     MAIN_MENU_BUTTON_TEXT,
     main_menu_button,
+    calendar_back_menu,
     push_menu_stack,
     training_date_menu,
 )
@@ -56,6 +57,7 @@ MSK_TZ = ZoneInfo("Europe/Moscow")
 router = Router()
 
 SUPPLEMENT_AMOUNT_PREFIX = "sup_amount"
+SUPPLEMENT_AMOUNT_DATE_PREFIX = "sup_amount_date"
 SUPPLEMENT_AMOUNT_OPTIONS = (
     0.25, 0.5, 0.75, 1, 1.25,
     1.5, 1.75, 2, 2.25, 2.5,
@@ -82,6 +84,12 @@ def build_supplement_amount_inline_keyboard() -> InlineKeyboardMarkup:
             )
             for amount in SUPPLEMENT_AMOUNT_OPTIONS[index:index + row_size]
         ])
+    rows.append([
+        InlineKeyboardButton(
+            text="📅 Выбрать другой день на календаре",
+            callback_data=f"{SUPPLEMENT_AMOUNT_DATE_PREFIX}:open",
+        )
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -331,8 +339,12 @@ async def send_supplement_amount_prompt(
         f"{prefix}<b>✅ Зафиксировал время приёма «{safe_supplement_name}» "
         f"в {timestamp.strftime('%H:%M')}.</b>\n"
         "Выбери кнопкой или укажи количество вручную:",
-        reply_markup=build_supplement_amount_inline_keyboard(),
+        reply_markup=calendar_back_menu,
         parse_mode="HTML",
+    )
+    await message.answer(
+        "Быстрый выбор количества:",
+        reply_markup=build_supplement_amount_inline_keyboard(),
     )
 
 
@@ -607,6 +619,34 @@ async def handle_history_amount(message: Message, state: FSMContext):
         return
 
     await save_supplement_amount(message, state, amount)
+
+
+@router.callback_query(lambda c: c.data == f"{SUPPLEMENT_AMOUNT_DATE_PREFIX}:open")
+async def open_supplement_amount_date_calendar(callback: CallbackQuery, state: FSMContext):
+    """Открывает календарь выбора даты из шага выбора количества добавки."""
+    await callback.answer()
+    data = await state.get_data()
+    entry_date_str = data.get("entry_date", date.today().isoformat())
+    try:
+        selected_date = (
+            date.fromisoformat(entry_date_str)
+            if isinstance(entry_date_str, str)
+            else date.today()
+        )
+    except ValueError:
+        selected_date = date.today()
+
+    await state.update_data(selecting_amount_date=True)
+    await show_calendar_back_button(callback.message)
+    await callback.message.answer(
+        "Выбери день для отметки приёма добавки:",
+        reply_markup=build_supplement_intake_date_calendar_keyboard(
+            str(callback.from_user.id),
+            selected_date.year,
+            selected_date.month,
+            data.get("supplement_id"),
+        ),
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith(f"{SUPPLEMENT_AMOUNT_PREFIX}:"))
@@ -2057,13 +2097,15 @@ async def close_supplement_calendar(callback: CallbackQuery):
 
 
 @router.callback_query(lambda c: c.data.startswith("supintakecal_nav:"))
-async def navigate_supplement_intake_date_calendar(callback: CallbackQuery):
+async def navigate_supplement_intake_date_calendar(callback: CallbackQuery, state: FSMContext):
     """Навигация по календарю выбора даты для отметки приёма добавки."""
     await callback.answer()
     parts = callback.data.split(":")
     year, month = map(int, parts[1].split("-"))
     user_id = str(callback.from_user.id)
-    keyboard = build_supplement_intake_date_calendar_keyboard(user_id, year, month)
+    data = await state.get_data()
+    supplement_id = data.get("supplement_id") if data.get("selecting_amount_date") else None
+    keyboard = build_supplement_intake_date_calendar_keyboard(user_id, year, month, supplement_id)
     await callback.message.edit_reply_markup(reply_markup=keyboard)
 
 
@@ -2079,6 +2121,34 @@ async def select_supplement_intake_date(callback: CallbackQuery, state: FSMConte
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
+
+    data = await state.get_data()
+    if data.get("selecting_amount_date"):
+        timestamp = None
+        timestamp_raw = data.get("timestamp")
+        if isinstance(timestamp_raw, str):
+            try:
+                current_timestamp = datetime.fromisoformat(timestamp_raw)
+                timestamp = datetime.combine(target_date, current_timestamp.time())
+            except (ValueError, TypeError):
+                timestamp = None
+        if timestamp is None:
+            timestamp = datetime.combine(target_date, datetime.now().time().replace(second=0, microsecond=0))
+
+        supplement_name = data.get("supplement_name", "добавки")
+        await state.update_data(
+            entry_date=target_date.isoformat(),
+            timestamp=timestamp.isoformat(),
+            selecting_amount_date=False,
+        )
+        await state.set_state(SupplementStates.entering_history_amount)
+        await send_supplement_amount_prompt(
+            callback.message,
+            supplement_name,
+            timestamp,
+            prefix=f"✅ Дата изменена на {target_date.strftime('%d.%m.%Y')}.\n",
+        )
+        return
 
     await state.set_state(SupplementStates.entering_history_time)
     await send_supplement_history_time_prompt(

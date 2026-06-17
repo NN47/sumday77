@@ -154,12 +154,14 @@ class SupplementRepository:
         return result
     
     @staticmethod
-    def get_history_days(user_id: str, year: int, month: int) -> set:
+    def get_history_days(user_id: str, year: int, month: int, supplement_id: Optional[int] = None) -> set:
         """Получает дни месяца, в которые были записи приёма добавок."""
         supplements = SupplementRepository.get_supplements(user_id)
         days = set()
         
         for sup in supplements:
+            if supplement_id is not None and sup.get("id") != supplement_id:
+                continue
             for entry in sup.get("history", []):
                 timestamp = entry["timestamp"]
                 if isinstance(timestamp, datetime):

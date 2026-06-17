@@ -172,6 +172,11 @@ def get_month_supplement_days(user_id: str, year: int, month: int) -> set[int]:
     return SupplementRepository.get_history_days(user_id, year, month)
 
 
+def get_month_supplement_days_for_item(user_id: str, year: int, month: int, supplement_id: int | None) -> set[int]:
+    """Получает дни месяца, в которые были приёмы конкретной добавки."""
+    return SupplementRepository.get_history_days(user_id, year, month, supplement_id=supplement_id)
+
+
 def build_supplement_calendar_keyboard(user_id: str, year: int, month: int) -> InlineKeyboardMarkup:
     """Строит клавиатуру календаря добавок."""
     return build_calendar_keyboard(
@@ -184,7 +189,12 @@ def build_supplement_calendar_keyboard(user_id: str, year: int, month: int) -> I
     )
 
 
-def build_supplement_intake_date_calendar_keyboard(user_id: str, year: int, month: int) -> InlineKeyboardMarkup:
+def build_supplement_intake_date_calendar_keyboard(
+    user_id: str,
+    year: int,
+    month: int,
+    supplement_id: int | None = None,
+) -> InlineKeyboardMarkup:
     """Строит календарь выбора даты для отметки приёма добавки."""
     return build_calendar_keyboard(
         user_id=user_id,
@@ -192,7 +202,11 @@ def build_supplement_intake_date_calendar_keyboard(user_id: str, year: int, mont
         month=month,
         callback_prefix="supintakecal",
         marker="💊",
-        get_days_func=get_month_supplement_days,
+        get_days_func=(
+            (lambda uid, y, m: get_month_supplement_days_for_item(uid, y, m, supplement_id))
+            if supplement_id is not None
+            else get_month_supplement_days
+        ),
     )
 
 
