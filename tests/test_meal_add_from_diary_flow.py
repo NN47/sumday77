@@ -639,8 +639,8 @@ def test_recent_meals_keyboard_has_search_button():
 
     keyboard = meals._build_recent_meals_keyboard([item], meal_type="snack", page=1, has_prev=False, has_next=False)
 
-    assert keyboard.inline_keyboard[0][0].text == "🔎 Поиск продукта"
-    assert keyboard.inline_keyboard[0][0].callback_data == "recent_search_start:snack"
+    assert keyboard.inline_keyboard[-1][0].text == "🔎 Поиск продукта"
+    assert keyboard.inline_keyboard[-1][0].callback_data == "recent_search_start:snack"
 
 
 def test_search_recent_items_matches_any_part_case_insensitive():
@@ -746,10 +746,11 @@ def test_recent_meals_keyboard_uses_full_emoji_numbers_on_later_pages():
         items, meal_type="snack", page=2, has_prev=True, has_next=True
     )
 
-    assert keyboard.inline_keyboard[1][0].text.startswith("9️⃣ ")
-    assert keyboard.inline_keyboard[2][0].text.startswith("🔟 ")
-    assert keyboard.inline_keyboard[3][0].text.startswith("1️⃣1️⃣ ")
-    assert keyboard.inline_keyboard[4][0].text.startswith("1️⃣2️⃣ ")
+    assert keyboard.inline_keyboard[0][0].text.startswith("9️⃣ ")
+    assert keyboard.inline_keyboard[1][0].text.startswith("🔟 ")
+    assert keyboard.inline_keyboard[2][0].text.startswith("1️⃣1️⃣ ")
+    assert keyboard.inline_keyboard[3][0].text.startswith("1️⃣2️⃣ ")
+    assert keyboard.inline_keyboard[-1][0].text == "🔎 Поиск продукта"
 
 
 def test_recent_search_results_keyboard_marks_pick_origin_as_search():
