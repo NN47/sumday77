@@ -4,7 +4,7 @@ import logging
 from datetime import date
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from config import MONTH_NAMES
-from utils.keyboards import calendar_back_menu
+from utils.keyboards import calendar_back_menu, push_menu_stack
 from database.repositories import (
     WorkoutRepository,
     MealRepository,
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 async def show_calendar_back_button(message: Message) -> None:
     """Показывает нижнюю клавиатуру календаря только с кнопкой «Назад»."""
+    push_menu_stack(message.bot, calendar_back_menu)
     await message.answer(
         "⬇️ Для выхода из календаря используй кнопку «⬅️ Назад» ниже.",
         reply_markup=calendar_back_menu,
