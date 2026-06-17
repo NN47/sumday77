@@ -36,20 +36,15 @@ def test_day_actions_keyboard_keeps_calendar_back_button_by_default():
     assert "⬅️ Назад к календарю активности" in texts
 
 
-def test_training_button_opens_today_workouts_without_calendar_back():
+def test_legacy_training_button_opens_activity_picker():
     message = SimpleNamespace(from_user=SimpleNamespace(id=12345))
     state = SimpleNamespace(clear=AsyncMock())
 
-    with patch("handlers.workouts.show_day_workouts", new=AsyncMock()) as show_day_workouts:
+    with patch("handlers.workouts.start_exercise_selection", new=AsyncMock()) as start_selection:
         asyncio.run(workouts.add_training_entry(message, state))
 
     state.clear.assert_awaited_once()
-    show_day_workouts.assert_awaited_once_with(
-        message,
-        "12345",
-        date.today(),
-        include_calendar_back=False,
-    )
+    start_selection.assert_awaited_once_with(message, state, date.today())
 
 
 def test_add_another_exercise_still_opens_exercise_picker():

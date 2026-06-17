@@ -207,9 +207,9 @@ quick_actions_inline = InlineKeyboardMarkup(
 # Меню тренировок
 training_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="👣 Шаги"), KeyboardButton(text="💪 Тренировка")],
+        [KeyboardButton(text="➕ Добавить активность")],
         [KeyboardButton(text="📅 Календарь активности")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+        [main_menu_button],
     ],
     resize_keyboard=True,
 )
@@ -349,12 +349,14 @@ frequent_exercises = [
 
 exercise_picker_menu = ReplyKeyboardMarkup(
     keyboard=[
+        [KeyboardButton(text="👣 Шаги")],
         [KeyboardButton(text="Отжимания"), KeyboardButton(text="Подтягивания")],
         [KeyboardButton(text="Приседания"), KeyboardButton(text="Планка")],
         [KeyboardButton(text="Бег"), KeyboardButton(text="Йога")],
-        [KeyboardButton(text="🕘 Недавние"), KeyboardButton(text="🔎 Поиск упражнения")],
+        [KeyboardButton(text="🕒 Недавние"), KeyboardButton(text="🔎 Поиск упражнения")],
         [KeyboardButton(text="📂 Все упражнения")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+        [KeyboardButton(text="◀️ Назад")],
+        [main_menu_button],
     ],
     resize_keyboard=True,
 )
