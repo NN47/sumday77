@@ -164,10 +164,6 @@ def _format_current_meal_after_save_message(meal_type: str, current_meal_items: 
     else:
         lines.append(f"Пока в {display_meal_type(meal_type).lower()} нет сохранённых продуктов.")
 
-    lines.extend([
-        "",
-        "⸻",
-    ])
     return "\n".join(lines)
 
 def _format_label_result_header(source: str, product_name: str) -> str:

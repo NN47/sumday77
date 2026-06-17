@@ -143,6 +143,7 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_add_menu():
     assert "📅 <b>Дата:</b> 08.04.2026" in answer_text
     assert "🍳 <b>Завтрак • 5 ккал</b>" in answer_text
     assert "• <b>Чёрный кофе</b> (250 г)" in answer_text
+    assert not answer_text.endswith("\n⸻")
     assert "➕ Добавь следующий продукт" not in answer_text
     assert "✅ Когда приём пищи заполнен" not in answer_text
     keyboard = message.answer.await_args_list[-2].kwargs["reply_markup"]
@@ -1201,6 +1202,7 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     assert "✅ <b>Продукт сохранён.</b>" in analysis_text
     assert "🍱 <b>Уже в этом приёме пищи</b>" in answer_text
     assert "🍲 <b>Обед • 330 ккал</b>" in answer_text
+    assert not answer_text.endswith("\n⸻")
     assert "➕ Добавь следующий продукт" not in answer_text
     assert "✅ Когда приём пищи заполнен" not in answer_text
     assert message.answer.await_args_list[-3].kwargs["parse_mode"] == "HTML"
