@@ -26,6 +26,7 @@ from utils.keyboards import (
     main_menu_button,
     kbju_menu,
     kbju_add_menu,
+    kbju_add_method_back_menu,
     kbju_meal_type_menu,
     kbju_after_meal_menu,
     openrouter_confirm_menu,
@@ -2380,7 +2381,7 @@ async def kbju_add_via_ai(message: Message, state: FSMContext):
     )
     
     push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
+    await message.answer(text, reply_markup=kbju_add_method_back_menu, parse_mode="HTML")
 
 
 @router.message(lambda m: m.text == "🧪 Ввести текст через OpenRouter")
@@ -3079,7 +3080,7 @@ async def kbju_add_via_photo(message: Message, state: FSMContext):
     )
     
     push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu)
+    await message.answer(text, reply_markup=kbju_add_method_back_menu)
 
 
 @router.message(lambda m: m.text == "🧪 Анализ еды OpenAI")
@@ -3098,7 +3099,7 @@ async def kbju_add_via_photo_openai(message: Message, state: FSMContext):
     )
 
     push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu)
+    await message.answer(text, reply_markup=kbju_add_method_back_menu)
 
 
 @router.message(MealEntryStates.waiting_for_food_input)
@@ -3307,7 +3308,7 @@ async def kbju_add_via_label(message: Message, state: FSMContext):
     )
     
     push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
+    await message.answer(text, reply_markup=kbju_add_method_back_menu, parse_mode="HTML")
 
 
 @router.message(lambda m: m.text == "🧪 Анализ этикетки OpenAI")
@@ -3327,7 +3328,7 @@ async def kbju_add_via_label_openai(message: Message, state: FSMContext):
     )
 
     push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu, parse_mode="HTML")
+    await message.answer(text, reply_markup=kbju_add_method_back_menu, parse_mode="HTML")
 
 
 @router.message(lambda m: m.text == "📷 Скан штрих-кода")

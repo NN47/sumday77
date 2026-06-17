@@ -5,6 +5,7 @@ from utils.keyboards import (
     KBJU_ADD_MEAL_BUTTON_ALIASES,
     KBJU_ADD_MEAL_BUTTON_TEXT,
     kbju_add_menu,
+    kbju_add_method_back_menu,
     kbju_menu,
 )
 from utils.meal_formatters import build_meals_actions_keyboard
@@ -40,6 +41,14 @@ def test_kbju_add_menu_exposes_primary_input_and_custom_product_buttons():
     assert "🧪 Анализ еды OpenAI" not in texts
     assert "🧪 Анализ этикетки OpenAI" not in texts
 
+
+
+def test_kbju_add_method_back_menu_only_shows_back_button():
+    texts = _reply_keyboard_texts(kbju_add_method_back_menu)
+
+    assert texts == ["⬅️ Назад"]
+    assert "🔄 Главное меню" not in texts
+    assert FINISH_MEAL_BUTTON_TEXT not in texts
 
 
 def test_kbju_add_meal_button_aliases_keep_legacy_text():
