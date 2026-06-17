@@ -95,3 +95,21 @@ def test_selecting_intake_calendar_day_updates_entry_date_and_prompts_time():
     text = callback.message.answer.await_args.args[0]
     assert "✅ Дата изменена." in text
     assert "📅 Дата: 27.05.2026" in text
+
+
+def test_amount_date_button_opens_intake_calendar_with_current_supplement_marks():
+    callback = _build_callback("sup_amount_date:open")
+    state = _DummyState({"entry_date": "2026-05-28", "supplement_id": 7})
+
+    with patch(
+        "utils.calendar_utils.SupplementRepository.get_history_days", return_value={27}
+    ) as get_history_days:
+        asyncio.run(supplements.open_supplement_amount_date_calendar(callback, state))
+
+    get_history_days.assert_called_with("12345", 2026, 5, supplement_id=7)
+    assert state._data["selecting_amount_date"] is True
+    assert callback.message.answer.await_count == 2
+    assert callback.message.answer.await_args_list[0].kwargs["reply_markup"].keyboard[0][0].text == "⬅️ Назад"
+    keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"]
+    marked_buttons = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert "27💊" in marked_buttons
