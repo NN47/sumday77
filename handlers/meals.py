@@ -250,6 +250,124 @@ def _build_label_weight_confirm_menu() -> ReplyKeyboardMarkup:
     )
 
 
+
+
+PHOTO_WEIGHT_ADJUSTMENTS = LABEL_WEIGHT_ADJUSTMENTS
+
+
+def _build_photo_analysis_confirm_menu() -> ReplyKeyboardMarkup:
+    """Строит меню подтверждения анализа еды по фото с корректировкой веса."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=f"+{step}") for step in PHOTO_WEIGHT_ADJUSTMENTS],
+            [KeyboardButton(text=f"-{step}") for step in PHOTO_WEIGHT_ADJUSTMENTS],
+            [KeyboardButton(text="✅ Сохранить")],
+            [KeyboardButton(text="❌ Отмена")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def _normalize_photo_analysis_items(items: list | None, total: dict | None) -> list[dict]:
+    """Нормализует продукты из ответа vision-модели к единому виду для черновика."""
+    normalized: list[dict] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        grams = max(0.0, _safe_float(item.get("grams") or item.get("weight") or item.get("amount_g")))
+        normalized.append(
+            {
+                "name": str(item.get("name") or item.get("title") or "Продукт"),
+                "grams": grams,
+                "kcal": _safe_float(item.get("kcal") or item.get("calories")),
+                "protein": _safe_float(item.get("protein") or item.get("protein_g")),
+                "fat": _safe_float(item.get("fat") or item.get("fat_total_g")),
+                "carbs": _safe_float(item.get("carbs") or item.get("carbohydrates_total_g")),
+                "source": item.get("source") or "food_photo",
+            }
+        )
+
+    if not normalized and total:
+        normalized.append(
+            {
+                "name": "Блюдо по фото",
+                "grams": _safe_float(total.get("grams") or total.get("weight") or total.get("amount_g")),
+                "kcal": _safe_float(total.get("kcal") or total.get("calories")),
+                "protein": _safe_float(total.get("protein")),
+                "fat": _safe_float(total.get("fat")),
+                "carbs": _safe_float(total.get("carbs")),
+                "source": "food_photo",
+            }
+        )
+    return normalized
+
+
+def _collect_photo_totals(items: list[dict]) -> dict:
+    return {
+        "calories": sum(_safe_float(item.get("kcal") or item.get("calories")) for item in items),
+        "protein": sum(_safe_float(item.get("protein") or item.get("protein_g")) for item in items),
+        "fat": sum(_safe_float(item.get("fat") or item.get("fat_total_g")) for item in items),
+        "carbs": sum(_safe_float(item.get("carbs") or item.get("carbohydrates_total_g")) for item in items),
+    }
+
+
+def _scale_photo_items(items: list[dict], new_total_weight: float) -> list[dict]:
+    """Пропорционально пересчитывает вес и КБЖУ всех блюд в черновике."""
+    current_total_weight = sum(_safe_float(item.get("grams")) for item in items)
+    if current_total_weight <= 0:
+        return items
+    factor = max(1.0, new_total_weight) / current_total_weight
+    scaled: list[dict] = []
+    for item in items:
+        updated = dict(item)
+        updated["grams"] = max(1.0, _safe_float(item.get("grams")) * factor)
+        updated["kcal"] = _safe_float(item.get("kcal") or item.get("calories")) * factor
+        updated["protein"] = _safe_float(item.get("protein") or item.get("protein_g")) * factor
+        updated["fat"] = _safe_float(item.get("fat") or item.get("fat_total_g")) * factor
+        updated["carbs"] = _safe_float(item.get("carbs") or item.get("carbohydrates_total_g")) * factor
+        scaled.append(updated)
+    return scaled
+
+
+def _format_photo_analysis_confirmation_text(items: list[dict]) -> str:
+    """Форматирует экран анализа фото до сохранения в дневник."""
+    total_weight = sum(_safe_float(item.get("grams")) for item in items)
+    totals = _collect_photo_totals(items)
+    lines = ["📸 <b>Анализ фото завершён</b>", "", "🍽 <b>Обнаружено:</b>"]
+    for item in items:
+        lines.append(f"• {html.escape(str(item.get('name') or 'Продукт'))} ({_safe_float(item.get('grams')):.0f} г)")
+    lines.extend(
+        [
+            "",
+            "📦 <b>Предполагаемый вес:</b>",
+            f"{total_weight:.0f} г",
+            "",
+            "📊 <b>Итоговые КБЖУ:</b>",
+            _format_kbju_summary_block(totals),
+            "",
+            "Можете скорректировать вес кнопками ниже или нажать <b>✅ Сохранить</b>.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _format_photo_saved_confirmation(meal_type: str, items: list[dict], totals: dict) -> str:
+    """Форматирует короткое подтверждение сохранения анализа фото."""
+    total_weight = sum(_safe_float(item.get("grams")) for item in items)
+    title = ", ".join(str(item.get("name") or "Продукт") for item in items[:3]) or "Продукт"
+    if len(items) > 3:
+        title += f" и ещё {len(items) - 3}"
+    return "\n".join(
+        [
+            f"✅ <b>Добавлено в {display_meal_type(meal_type).lower()}</b>",
+            "",
+            f"🍽 <b>{html.escape(title)}</b> ({total_weight:.0f} г)",
+            "",
+            _format_kbju_summary_block(totals),
+        ]
+    )
+
+
 def _calculate_label_totals(kbju_per_100g: dict | None, weight_grams: float) -> tuple[dict, dict]:
     """Возвращает итоговые КБЖУ и значения на 100 г для выбранного веса."""
     kbju_per_100g = kbju_per_100g or {}
@@ -3420,49 +3538,25 @@ async def _handle_food_photo_analysis(
         )
         return
 
-    items = kbju_data.get("items", [])
-    total = kbju_data.get("total", {})
+    items = _normalize_photo_analysis_items(kbju_data.get("items", []), kbju_data.get("total", {}))
+    if not items:
+        await message.answer(
+            "⚠️ Не получилось определить продукты на фото.\n"
+            "Попробуй сделать фото получше или используй другой способ."
+        )
+        return
 
-    def safe_float(value) -> float:
-        try:
-            if value is None:
-                return 0.0
-            return float(value)
-        except (TypeError, ValueError):
-            return 0.0
-
-    totals_for_db = {
-        "calories": safe_float(total.get("kcal")),
-        "protein": safe_float(total.get("protein")),
-        "fat": safe_float(total.get("fat")),
-        "carbs": safe_float(total.get("carbs")),
-    }
-    analysis_title = "📷 Анализ фото еды (ИИ)"
-    lines = [_format_ai_food_analysis_message(analysis_title, items, totals_for_db)]
-
-    saved_meal = MealRepository.save_meal(
-        user_id=user_id,
-        raw_query=raw_query,
-        calories=totals_for_db["calories"],
-        protein=totals_for_db["protein"],
-        fat=totals_for_db["fat"],
-        carbs=totals_for_db["carbs"],
-        entry_date=entry_date,
-        products_json=json.dumps(items),
+    await state.set_state(MealEntryStates.confirming_photo_analysis)
+    await state.update_data(
+        photo_analysis_items=items,
+        photo_analysis_raw_query=raw_query,
+        photo_analysis_provider=final_provider,
+        entry_date=entry_date.isoformat(),
         meal_type=meal_type,
     )
-
-    if not hasattr(message.bot, "last_meal_ids"):
-        message.bot.last_meal_ids = {}
-    message.bot.last_meal_ids[user_id] = saved_meal.id
-
-    await _keep_meal_entry_open_after_save(
-        message,
-        state,
-        user_id=user_id,
-        entry_date=entry_date,
-        meal_type=meal_type,
-        intro_lines=lines,
+    await message.answer(
+        _format_photo_analysis_confirmation_text(items),
+        reply_markup=_build_photo_analysis_confirm_menu(),
         parse_mode="HTML",
     )
 
@@ -3502,6 +3596,103 @@ async def handle_openai_food_non_photo(message: Message, state: FSMContext):
         await go_back(message, state)
         return
     await message.answer("Пожалуйста, отправь фото еды для OpenAI-анализа.")
+
+
+@router.message(MealEntryStates.confirming_photo_analysis)
+async def handle_photo_analysis_confirmation(message: Message, state: FSMContext):
+    """Подтверждает, корректирует или отменяет сохранение еды после анализа фото."""
+    text = (message.text or "").strip()
+    if await _reroute_add_method_button_if_needed(message, state, text):
+        return
+
+    data = await state.get_data()
+    items = data.get("photo_analysis_items") or []
+    if not items:
+        await state.set_state(MealEntryStates.choosing_meal_type)
+        await state.update_data(photo_analysis_items=None, photo_analysis_raw_query=None, photo_analysis_provider=None)
+        await message.answer("Черновик анализа фото не найден. Можно попробовать ещё раз.", reply_markup=kbju_add_menu)
+        return
+
+    if text == "❌ Отмена":
+        meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+        entry_date = data.get("entry_date") or date.today().isoformat()
+        await state.set_state(MealEntryStates.choosing_meal_type)
+        await state.update_data(
+            entry_date=entry_date,
+            meal_type=meal_type,
+            photo_analysis_items=None,
+            photo_analysis_raw_query=None,
+            photo_analysis_provider=None,
+        )
+        await message.answer("❌ Анализ фото отменён. Ничего не сохранено.", reply_markup=kbju_add_menu)
+        return
+
+    if re.fullmatch(r"[+-](1|5|10|20|50|100)", text):
+        current_weight = sum(_safe_float(item.get("grams")) for item in items)
+        new_weight = max(1.0, current_weight + float(text))
+        items = _scale_photo_items(items, new_weight)
+        await state.update_data(photo_analysis_items=items)
+        await message.answer(
+            _format_photo_analysis_confirmation_text(items),
+            reply_markup=_build_photo_analysis_confirm_menu(),
+            parse_mode="HTML",
+        )
+        return
+
+    if text != "✅ Сохранить":
+        await message.answer("Скорректируй вес кнопками, нажми ✅ Сохранить или ❌ Отмена.")
+        return
+
+    user_id = str(message.from_user.id)
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date_str = data.get("entry_date")
+    try:
+        entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
+    except ValueError:
+        parsed = parse_date(entry_date_str)
+        entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
+
+    totals_for_db = _collect_photo_totals(items)
+    raw_query = data.get("photo_analysis_raw_query") or "[Анализ по фото]"
+    saved_items = []
+    for item in items:
+        saved_items.append(
+            {
+                **item,
+                "calories": _safe_float(item.get("kcal")),
+                "protein_g": _safe_float(item.get("protein")),
+                "fat_total_g": _safe_float(item.get("fat")),
+                "carbohydrates_total_g": _safe_float(item.get("carbs")),
+                "source": item.get("source") or data.get("photo_analysis_provider") or "food_photo",
+            }
+        )
+
+    saved_meal = MealRepository.save_meal(
+        user_id=user_id,
+        raw_query=raw_query,
+        calories=totals_for_db["calories"],
+        protein=totals_for_db["protein"],
+        fat=totals_for_db["fat"],
+        carbs=totals_for_db["carbs"],
+        entry_date=entry_date,
+        products_json=json.dumps(saved_items),
+        meal_type=meal_type,
+    )
+
+    if not hasattr(message.bot, "last_meal_ids"):
+        message.bot.last_meal_ids = {}
+    message.bot.last_meal_ids[user_id] = saved_meal.id
+
+    await state.update_data(photo_analysis_items=None, photo_analysis_raw_query=None, photo_analysis_provider=None)
+    await _keep_meal_entry_open_after_save(
+        message,
+        state,
+        user_id=user_id,
+        entry_date=entry_date,
+        meal_type=meal_type,
+        intro_lines=[_format_photo_saved_confirmation(meal_type, items, totals_for_db)],
+        parse_mode="HTML",
+    )
 
 
 async def _handle_label_photo_analysis(
