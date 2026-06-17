@@ -24,6 +24,12 @@ def test_kbju_menu_hides_duplicate_daily_report_button():
     assert "📆 Календарь КБЖУ" in texts
 
 
+def test_kbju_menu_shows_calendar_and_goal_buttons_on_one_row():
+    rows = [[button.text for button in row] for row in kbju_menu.keyboard]
+
+    assert ["📆 Календарь КБЖУ", "🎯 Цель / Норма КБЖУ"] in rows
+
+
 def test_kbju_add_menu_exposes_primary_input_and_custom_product_buttons():
     texts = _reply_keyboard_texts(kbju_add_menu)
 
