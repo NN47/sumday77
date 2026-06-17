@@ -644,7 +644,7 @@ kbju_add_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="📷 Анализ еды по фото")],
         [KeyboardButton(text="📋 Анализ этикетки")],
         [KeyboardButton(text="🧺 Мой продукт")],
-        [KeyboardButton(text=FINISH_MEAL_BUTTON_TEXT), main_menu_button],
+        [KeyboardButton(text=FINISH_MEAL_BUTTON_TEXT)],
     ],
     resize_keyboard=True,
 )
