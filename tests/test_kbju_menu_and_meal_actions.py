@@ -33,13 +33,13 @@ def test_kbju_add_menu_exposes_primary_input_and_custom_product_buttons():
         "📋 Анализ этикетки",
         "🧺 Мой продукт",
         FINISH_MEAL_BUTTON_TEXT,
-        "🔄 Главное меню",
     ]
     assert "🧪 Ввести текст через OpenRouter" not in texts
     assert "🤖 Ввести приём пищи через DeepSeek" not in texts
     assert "🧠 Ввести текст через GigaChat" not in texts
     assert "🧪 Анализ еды OpenAI" not in texts
     assert "🧪 Анализ этикетки OpenAI" not in texts
+    assert "🔄 Главное меню" not in texts
 
 
 
