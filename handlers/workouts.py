@@ -83,6 +83,46 @@ def _entry_date_from_state_data(data: dict) -> date:
     return date.today()
 
 
+def _format_today_activity_overview(user_id: str) -> str:
+    """Форматирует краткую сводку главного экрана активности за сегодня."""
+    workouts = WorkoutRepository.get_workouts_for_day(user_id, date.today())
+    steps = 0
+    steps_kcal = 0.0
+    workouts_count = 0
+    workouts_kcal = 0.0
+
+    for workout in workouts:
+        exercise = _normalize_exercise_name(workout.exercise)
+        calories = workout.calories or calculate_workout_calories(
+            user_id, workout.exercise, workout.variant, workout.count
+        )
+        if exercise == "Шаги" or "шаг" in (workout.variant or "").lower():
+            steps += int(workout.count or 0)
+            steps_kcal += calories
+            continue
+        workouts_count += 1
+        workouts_kcal += calories
+
+    total_kcal = steps_kcal + workouts_kcal
+    steps_text = f"{steps:,}".replace(",", " ")
+    return (
+        f"👣 Шаги: {steps_text} (~{steps_kcal:.0f} ккал)\n"
+        f"💪 Тренировки: {workouts_count} записей (~{workouts_kcal:.0f} ккал)\n"
+        f"🔥 Сожжено за день: ~{total_kcal:.0f} ккал"
+    )
+
+
+async def _send_activity_main_screen(message: Message, user_id: str):
+    """Отправляет главный экран раздела активности."""
+    workouts_text = _format_today_activity_overview(user_id)
+    push_menu_stack(message.bot, training_menu)
+    await message.answer(
+        f"🚴 Активность за сегодня\n\n{workouts_text}\n\nВыберите действие:",
+        reply_markup=training_menu,
+        parse_mode="HTML",
+    )
+
+
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
     """Сбрасывает состояние пользователя."""
     # TODO: Заменить на FSM clear
@@ -97,16 +137,7 @@ async def show_training_menu(message: Message, state: FSMContext):
     AnalyticsRepository.track_event(user_id, "open_activity", section="activity")
     await state.clear()  # Очищаем FSM состояние
     
-    # Показываем прогресс тренировок
-    from utils.progress_formatters import format_today_workouts_block
-    workouts_text = format_today_workouts_block(user_id, include_date=False, include_exercise_details=True)
-    
-    push_menu_stack(message.bot, training_menu)
-    await message.answer(
-        f"🚴 Активность\n\n{workouts_text}\n\nВыбери действие:",
-        reply_markup=training_menu,
-        parse_mode="HTML",
-    )
+    await _send_activity_main_screen(message, user_id)
 
 
 @router.message(lambda m: m.text == "🏋️ Сегодня тренировка")
@@ -160,20 +191,34 @@ async def start_exercise_selection(
     await state.update_data(entry_date=entry_date.isoformat())
     await state.set_state(WorkoutStates.choosing_exercise)
     push_menu_stack(message.bot, exercise_picker_menu)
+    if entry_date == date.today():
+        text = "Выбери активность:"
+    else:
+        text = f"📅 Дата: {entry_date.strftime('%d.%m.%Y')}\n\nВыбери активность:"
     await message.answer(
-        f"📅 Дата: {entry_date.strftime('%d.%m.%Y')}\n\nВыбери упражнение:",
+        text,
         reply_markup=exercise_picker_menu,
     )
 
 
-@router.message(lambda m: m.text == "💪 Тренировка")
-async def add_training_entry(message: Message, state: FSMContext):
-    """Показывает тренировки за сегодня и быстрые действия для них."""
+@router.message(lambda m: m.text == "➕ Добавить активность")
+async def add_activity_entry(message: Message, state: FSMContext):
+    """Открывает единое меню добавления шагов и упражнений."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened today's workout details")
+    logger.info(f"User {user_id} opened add activity menu")
 
     await state.clear()
-    await show_day_workouts(message, user_id, date.today(), include_calendar_back=False)
+    await start_exercise_selection(message, state, date.today())
+
+
+@router.message(lambda m: m.text == "💪 Тренировка")
+async def add_training_entry(message: Message, state: FSMContext):
+    """Поддерживает устаревшую кнопку тренировки через меню выбора активности."""
+    user_id = str(message.from_user.id)
+    logger.info(f"User {user_id} opened legacy workout activity menu")
+
+    await state.clear()
+    await start_exercise_selection(message, state, date.today())
 
 
 @router.message(lambda m: m.text == "➕ Добавить другое упражнение")
@@ -429,21 +474,19 @@ async def choose_exercise(message: Message, state: FSMContext):
     exercise = message.text
     data = await state.get_data()
 
-    if exercise == "⬅️ Назад":
+    if exercise in {"⬅️ Назад", "◀️ Назад"}:
         # После просмотра полного списка упражнений по кнопке
         # "📂 Все упражнения" возвращаем пользователя сразу в меню тренировок.
         if data.get("exercise_list_mode") == "all":
             await state.clear()
-            push_menu_stack(message.bot, training_menu)
-            await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
+            await _send_activity_main_screen(message, str(message.from_user.id))
             return
 
         await state.clear()
-        push_menu_stack(message.bot, training_menu)
-        await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
+        await _send_activity_main_screen(message, str(message.from_user.id))
         return
 
-    if exercise in {"🕘 Недавние", "📂 Все упражнения"}:
+    if exercise in {"🕘 Недавние", "🕒 Недавние", "📂 Все упражнения"}:
         user_id = str(message.from_user.id)
         workouts = WorkoutRepository.get_workouts_for_period(user_id, date.today() - timedelta(days=30), date.today())
         recent = []
@@ -472,6 +515,11 @@ async def choose_exercise(message: Message, state: FSMContext):
         return
 
     known_exercises = set(bodyweight_exercises + weighted_exercises + frequent_exercises) | {"Бег", "Силовая тренировка", "Велосипед", "Шаги"}
+    if exercise in MAIN_MENU_BUTTON_ALIASES:
+        from handlers.common import go_main_menu
+        await go_main_menu(message, state)
+        return
+
     if exercise not in known_exercises:
         await message.answer("Выбери упражнение из меню")
         return
@@ -556,7 +604,7 @@ async def handle_steps_input(message: Message, state: FSMContext):
         else:
             await state.set_state(WorkoutStates.choosing_exercise)
             push_menu_stack(message.bot, exercise_picker_menu)
-            await message.answer("Выбери упражнение:", reply_markup=exercise_picker_menu)
+            await message.answer("Выбери активность:", reply_markup=exercise_picker_menu)
         return
 
     try:
@@ -648,7 +696,7 @@ async def handle_duration_input(message: Message, state: FSMContext):
     if message.text == "⬅️ Назад":
         await state.set_state(WorkoutStates.choosing_exercise)
         push_menu_stack(message.bot, exercise_picker_menu)
-        await message.answer("Выбери упражнение:", reply_markup=exercise_picker_menu)
+        await message.answer("Выбери активность:", reply_markup=exercise_picker_menu)
         return
     if message.text in MAIN_MENU_BUTTON_ALIASES:
         from handlers.common import go_main_menu
@@ -692,7 +740,7 @@ async def choose_grip_type(message: Message, state: FSMContext):
         if grip_type == "⬅️ Назад":
             await state.set_state(WorkoutStates.choosing_exercise)
             push_menu_stack(message.bot, exercise_picker_menu)
-            await message.answer("Выбери упражнение:", reply_markup=exercise_picker_menu)
+            await message.answer("Выбери активность:", reply_markup=exercise_picker_menu)
         else:
             from handlers.common import go_main_menu
             await go_main_menu(message, state)
@@ -725,7 +773,7 @@ async def handle_custom_exercise(message: Message, state: FSMContext):
         if message.text == "⬅️ Назад":
             await state.set_state(WorkoutStates.choosing_exercise)
             push_menu_stack(message.bot, exercise_picker_menu)
-            await message.answer("Выбери упражнение:", reply_markup=exercise_picker_menu)
+            await message.answer("Выбери активность:", reply_markup=exercise_picker_menu)
         else:
             from handlers.common import go_main_menu
             await go_main_menu(message, state)
