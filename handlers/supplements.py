@@ -2045,6 +2045,7 @@ async def show_supplement_calendar_menu(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     logger.info(f"User {user_id} opened supplement calendar")
     await state.clear()  # Очищаем состояние при открытии календаря
+    push_menu_stack(message.bot, calendar_back_menu)
     await show_calendar_back_button(message)
     await show_supplement_calendar(message, user_id)
 

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("API_TOKEN", "test-token")
 
 from handlers import supplements
-from utils.supplement_keyboards import supplement_history_time_menu
+from utils.supplement_keyboards import supplement_history_time_menu, supplements_main_menu
 
 
 class _DummyState:
@@ -113,3 +113,19 @@ def test_amount_date_button_opens_intake_calendar_with_current_supplement_marks(
     keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"]
     marked_buttons = [button.text for row in keyboard.inline_keyboard for button in row]
     assert "27💊" in marked_buttons
+
+
+def test_opening_supplement_calendar_pushes_back_keyboard_to_menu_stack():
+    message = _build_message("📅 Календарь добавок")
+    state = AsyncMock()
+    previous_menu = supplements_main_menu(has_items=True)
+    message.bot.menu_stack = [previous_menu]
+
+    with patch("handlers.supplements.show_supplement_calendar", new=AsyncMock()) as show_calendar:
+        asyncio.run(supplements.show_supplement_calendar_menu(message, state))
+
+    state.clear.assert_awaited_once()
+    assert message.bot.menu_stack[-2] is previous_menu
+    assert message.bot.menu_stack[-1] is supplements.calendar_back_menu
+    message.answer.assert_awaited_once()
+    show_calendar.assert_awaited_once_with(message, "12345")
