@@ -255,7 +255,7 @@ PHOTO_WEIGHT_ADJUSTMENTS = LABEL_WEIGHT_ADJUSTMENTS
 
 
 def _build_photo_analysis_confirm_menu() -> InlineKeyboardMarkup:
-    """Строит меню подтверждения анализа еды по фото с корректировкой веса."""
+    """Строит inline-меню подтверждения анализа еды по фото с корректировкой веса."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -267,8 +267,31 @@ def _build_photo_analysis_confirm_menu() -> InlineKeyboardMarkup:
                 for step in PHOTO_WEIGHT_ADJUSTMENTS
             ],
             [InlineKeyboardButton(text="✅ Сохранить", callback_data="photo_save")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="photo_cancel")],
         ]
+    )
+
+
+def _build_photo_analysis_cancel_menu() -> ReplyKeyboardMarkup:
+    """Строит обычную нижнюю клавиатуру отмены анализа фото."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="❌ Отмена")]],
+        resize_keyboard=True,
+    )
+
+
+async def _send_photo_analysis_confirmation(message: Message, items: list[dict]) -> None:
+    """Показывает результат анализа с inline-кнопками и обычной кнопкой отмены снизу."""
+    cancel_menu = _build_photo_analysis_cancel_menu()
+    push_menu_stack(message.bot, cancel_menu)
+    await message.answer(
+        "Если нужно отменить сохранение, нажми <b>❌ Отмена</b> внизу.",
+        reply_markup=cancel_menu,
+        parse_mode="HTML",
+    )
+    await message.answer(
+        _format_photo_analysis_confirmation_text(items),
+        reply_markup=_build_photo_analysis_confirm_menu(),
+        parse_mode="HTML",
     )
 
 
@@ -3558,11 +3581,7 @@ async def _handle_food_photo_analysis(
         entry_date=entry_date.isoformat(),
         meal_type=meal_type,
     )
-    await message.answer(
-        _format_photo_analysis_confirmation_text(items),
-        reply_markup=_build_photo_analysis_confirm_menu(),
-        parse_mode="HTML",
-    )
+    await _send_photo_analysis_confirmation(message, items)
 
 
 @router.message(MealEntryStates.waiting_for_photo, F.photo)
@@ -3745,11 +3764,7 @@ async def handle_photo_analysis_confirmation(message: Message, state: FSMContext
         new_weight = max(1.0, current_weight + float(text))
         items = _scale_photo_items(items, new_weight)
         await state.update_data(photo_analysis_items=items)
-        await message.answer(
-            _format_photo_analysis_confirmation_text(items),
-            reply_markup=_build_photo_analysis_confirm_menu(),
-            parse_mode="HTML",
-        )
+        await _send_photo_analysis_confirmation(message, items)
         return
 
     if text != "✅ Сохранить":
