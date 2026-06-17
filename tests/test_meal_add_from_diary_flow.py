@@ -519,6 +519,8 @@ def test_ai_text_intro_bolds_first_two_sentences():
     ) in text
     assert "Можно писать как удобно:" in text
     assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
+    reply_markup = message.answer.await_args.kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in reply_markup.keyboard] == [["⬅️ Назад"]]
 
 
 def test_label_intro_message_bolds_title_and_send_paragraph():
@@ -538,6 +540,8 @@ def test_label_intro_message_bolds_title_and_send_paragraph():
         "и я найду КБЖУ в тексте! 📸</b>"
     ) in text
     assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
+    reply_markup = message.answer.await_args.kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in reply_markup.keyboard] == [["⬅️ Назад"]]
 
 
 def test_expand_recent_meals_splits_multi_product_entries():
