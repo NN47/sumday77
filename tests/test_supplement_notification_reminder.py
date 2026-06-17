@@ -103,10 +103,12 @@ def test_supplement_amount_keyboard_has_requested_values_in_three_rows():
         ["1,5", "1,75", "2", "2,25", "2,5"],
         ["2,75", "3", "3,5", "4", "5"],
         ["📅 Выбрать другой день на календаре"],
+        ["🕒 Изменить время приёма"],
     ]
     assert callbacks[0][0] == "sup_amount:0.25"
     assert callbacks[2][-1] == "sup_amount:5"
     assert callbacks[3][0] == "sup_amount_date:open"
+    assert callbacks[4][0] == "sup_amount_time:open"
 
 
 def test_confirm_notification_prompt_includes_amount_inline_keyboard():

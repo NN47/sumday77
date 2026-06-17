@@ -58,6 +58,7 @@ router = Router()
 
 SUPPLEMENT_AMOUNT_PREFIX = "sup_amount"
 SUPPLEMENT_AMOUNT_DATE_PREFIX = "sup_amount_date"
+SUPPLEMENT_AMOUNT_TIME_PREFIX = "sup_amount_time"
 SUPPLEMENT_AMOUNT_OPTIONS = (
     0.25, 0.5, 0.75, 1, 1.25,
     1.5, 1.75, 2, 2.25, 2.5,
@@ -88,6 +89,12 @@ def build_supplement_amount_inline_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(
             text="📅 Выбрать другой день на календаре",
             callback_data=f"{SUPPLEMENT_AMOUNT_DATE_PREFIX}:open",
+        )
+    ])
+    rows.append([
+        InlineKeyboardButton(
+            text="🕒 Изменить время приёма",
+            callback_data=f"{SUPPLEMENT_AMOUNT_TIME_PREFIX}:open",
         )
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -646,6 +653,34 @@ async def open_supplement_amount_date_calendar(callback: CallbackQuery, state: F
             selected_date.month,
             data.get("supplement_id"),
         ),
+    )
+
+
+@router.callback_query(lambda c: c.data == f"{SUPPLEMENT_AMOUNT_TIME_PREFIX}:open")
+async def open_supplement_amount_time_input(callback: CallbackQuery, state: FSMContext):
+    """Возвращает пользователя с шага количества к изменению времени приёма."""
+    await callback.answer()
+    data = await state.get_data()
+    entry_date_str = data.get("entry_date", date.today().isoformat())
+    try:
+        target_date = (
+            date.fromisoformat(entry_date_str)
+            if isinstance(entry_date_str, str)
+            else date.today()
+        )
+    except ValueError:
+        target_date = date.today()
+
+    await state.update_data(selecting_amount_date=False)
+    await state.set_state(SupplementStates.entering_history_time)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await send_supplement_history_time_prompt(
+        callback.message,
+        target_date,
+        prefix="🕒 Измени время приёма.\n",
     )
 
 

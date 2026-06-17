@@ -113,3 +113,19 @@ def test_amount_date_button_opens_intake_calendar_with_current_supplement_marks(
     keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"]
     marked_buttons = [button.text for row in keyboard.inline_keyboard for button in row]
     assert "27💊" in marked_buttons
+
+
+def test_amount_time_button_returns_to_history_time_prompt():
+    callback = _build_callback("sup_amount_time:open")
+    state = _DummyState({"entry_date": "2026-05-28", "timestamp": "2026-05-28T21:30:00"})
+
+    with patch("handlers.supplements.push_menu_stack"):
+        asyncio.run(supplements.open_supplement_amount_time_input(callback, state))
+
+    callback.answer.assert_awaited_once()
+    state.set_state.assert_awaited_once_with(supplements.SupplementStates.entering_history_time)
+    callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
+    callback.message.answer.assert_awaited_once()
+    text = callback.message.answer.await_args.args[0]
+    assert "🕒 Измени время приёма." in text
+    assert "📅 Дата: 28.05.2026" in text
