@@ -1564,6 +1564,7 @@ async def _show_recent_meals_page(
     page: int,
     *,
     user_id: str | None = None,
+    edit_message: bool = False,
 ) -> bool:
     user_id = user_id or str(message.from_user.id)
     source_meals = MealRepository.get_recent_unique_meals(user_id, limit=64)
@@ -1577,11 +1578,12 @@ async def _show_recent_meals_page(
     has_prev = page > 1
     has_next = page < total_pages
     await state.update_data(recent_meals_page=page, meal_type=meal_type)
-    await message.answer(
-        _format_recent_meals_text(page_items, page),
-        reply_markup=_build_recent_meals_keyboard(page_items, meal_type, page, has_prev, has_next),
-        parse_mode="HTML",
-    )
+    text = _format_recent_meals_text(page_items, page)
+    reply_markup = _build_recent_meals_keyboard(page_items, meal_type, page, has_prev, has_next)
+    if edit_message:
+        await message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
+    else:
+        await message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
     return True
 
 
@@ -1633,6 +1635,7 @@ async def _show_recent_search_results(
     meal_type: str,
     query: str,
     page: int = 1,
+    edit_message: bool = False,
 ) -> None:
     all_items = _get_all_recent_items_for_search(user_id)
     matched_items = _search_recent_items(all_items, query)
@@ -1651,17 +1654,18 @@ async def _show_recent_search_results(
     start = (page - 1) * RECENT_MEALS_PAGE_SIZE
     page_items = matched_items[start : start + RECENT_MEALS_PAGE_SIZE]
     await state.update_data(recent_search_page=page)
-    await message.answer(
-        _format_recent_search_results_text(query, page_items, page),
-        reply_markup=_build_recent_search_results_keyboard(
-            page_items,
-            meal_type,
-            page,
-            has_prev=page > 1,
-            has_next=page < total_pages,
-        ),
-        parse_mode="HTML",
+    text = _format_recent_search_results_text(query, page_items, page)
+    reply_markup = _build_recent_search_results_keyboard(
+        page_items,
+        meal_type,
+        page,
+        has_prev=page > 1,
+        has_next=page < total_pages,
     )
+    if edit_message:
+        await message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
+    else:
+        await message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
 
 
 def _render_recent_meal_confirm_text(meal_type: str, meal, amount_g: int = 100) -> str:
@@ -1943,6 +1947,7 @@ async def recent_search_page(callback: CallbackQuery, state: FSMContext):
         meal_type=meal_type,
         query=query,
         page=int(page_str),
+        edit_message=True,
     )
 
 
@@ -1958,6 +1963,7 @@ async def recent_search_back(callback: CallbackQuery, state: FSMContext):
         meal_type=meal_type,
         page=int(data.get("recent_meals_page") or 1),
         user_id=str(callback.from_user.id),
+        edit_message=True,
     )
 
 
@@ -2014,6 +2020,7 @@ async def recent_meal_back(callback: CallbackQuery, state: FSMContext):
                 meal_type=meal_type,
                 query=query,
                 page=int(data.get("recent_search_page") or page_str),
+                edit_message=True,
             )
             return
 
@@ -2032,6 +2039,7 @@ async def recent_meal_back(callback: CallbackQuery, state: FSMContext):
         meal_type=meal_type,
         page=int(page_str),
         user_id=str(callback.from_user.id),
+        edit_message=True,
     )
 
 
@@ -2045,6 +2053,7 @@ async def recent_meal_page(callback: CallbackQuery, state: FSMContext):
         meal_type=meal_type,
         page=int(page_str),
         user_id=str(callback.from_user.id),
+        edit_message=True,
     )
 
 
@@ -2631,7 +2640,7 @@ async def custom_product_page(callback: CallbackQuery, state: FSMContext):
     start = (page - 1) * RECENT_MEALS_PAGE_SIZE
     page_items = products[start : start + RECENT_MEALS_PAGE_SIZE]
     await state.update_data(recent_meals_page=page, meal_type=meal_type, in_my_product_menu=True)
-    await callback.message.answer(
+    await callback.message.edit_text(
         _format_recent_meals_text(page_items, page, title="🧺 <b>Мои продукты"),
         reply_markup=_build_custom_products_keyboard(
             page_items,
