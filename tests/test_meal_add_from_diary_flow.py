@@ -902,6 +902,7 @@ def test_recent_meal_back_returns_to_search_results_when_product_opened_from_sea
         meal_type="dinner",
         query="Марин",
         page=2,
+        edit_message=True,
     )
     show_recent.assert_not_awaited()
 
@@ -922,6 +923,7 @@ def test_recent_meal_back_returns_to_recent_list_for_regular_recent_pick():
         meal_type="dinner",
         page=3,
         user_id="12345",
+        edit_message=True,
     )
     show_search.assert_not_awaited()
 
@@ -1252,3 +1254,49 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     ]
     assert message.answer.await_args_list[-2].kwargs["parse_mode"] == "HTML"
     assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_add_menu
+
+
+def test_recent_meal_page_edits_existing_message_instead_of_sending_new_one():
+    callback = _build_callback("recent_meal_page:dinner:2")
+    state = _DummyState()
+    meals_history = [
+        SimpleNamespace(
+            id=i,
+            raw_query=f"Продукт {i}",
+            description=None,
+            products_json=(
+                f'[{ {"name": f"Продукт {i}", "grams": 100, "kcal": 50, "protein": 1, "fat": 2, "carbs": 3} }]'
+                .replace("'", '"')
+            ),
+            calories=50,
+            protein=1,
+            fat=2,
+            carbs=3,
+        )
+        for i in range(1, 10)
+    ]
+
+    with patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=meals_history):
+        asyncio.run(meals.recent_meal_page(callback, state))
+
+    callback.answer.assert_awaited_once()
+    callback.message.answer.assert_not_awaited()
+    callback.message.edit_text.assert_awaited_once()
+    assert "страница 2" in callback.message.edit_text.await_args.args[0]
+
+
+def test_custom_product_page_edits_existing_message_instead_of_sending_new_one():
+    callback = _build_callback("custom_product_page:snack:2")
+    state = _DummyState()
+    items = [
+        meals.RecentMealItem(i, 0, f"Мой продукт {i}", 100, 50, 1, 2, 3)
+        for i in range(1, 10)
+    ]
+
+    with patch("handlers.meals._get_custom_product_items", return_value=items):
+        asyncio.run(meals.custom_product_page(callback, state))
+
+    callback.answer.assert_awaited_once()
+    callback.message.answer.assert_not_awaited()
+    callback.message.edit_text.assert_awaited_once()
+    assert "страница 2" in callback.message.edit_text.await_args.args[0]
