@@ -4,7 +4,7 @@ from datetime import date, timedelta, datetime
 from typing import Optional
 from aiogram import Router, F
 from aiogram.filters import StateFilter
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
     MAIN_MENU_BUTTON_ALIASES,
@@ -123,6 +123,51 @@ async def _send_activity_main_screen(message: Message, user_id: str):
     )
 
 
+
+def _get_recent_exercises(user_id: str, limit: int = 8) -> list[str]:
+    """Возвращает уникальные недавно добавленные активности пользователя."""
+    workouts = WorkoutRepository.get_workouts_for_period(
+        user_id,
+        date.today() - timedelta(days=30),
+        date.today(),
+    )
+    recent: list[str] = []
+    seen: set[str] = set()
+    for workout in reversed(workouts):
+        name = _normalize_exercise_name(workout.exercise).strip()
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        recent.append(name)
+        if len(recent) >= limit:
+            break
+    return recent
+
+
+def _build_recent_exercises_keyboard(recent_exercises: list[str]) -> InlineKeyboardMarkup:
+    """Строит inline-кнопки для быстрого выбора недавней активности."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for index, exercise in enumerate(recent_exercises):
+        rows.append([InlineKeyboardButton(text=exercise, callback_data=f"wrk_recent_pick:{index}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _show_recent_exercises_hint(message: Message, state: FSMContext, user_id: str) -> bool:
+    """Показывает недавние активности отдельным сообщением над основным меню."""
+    recent_exercises = _get_recent_exercises(user_id)
+    if not recent_exercises:
+        await state.update_data(recent_exercises=[])
+        return False
+
+    await state.update_data(recent_exercises=recent_exercises)
+    await message.answer(
+        "🕘 <b>Недавно добавленные активности</b>",
+        reply_markup=_build_recent_exercises_keyboard(recent_exercises),
+        parse_mode="HTML",
+    )
+    return True
+
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
     """Сбрасывает состояние пользователя."""
     # TODO: Заменить на FSM clear
@@ -190,14 +235,17 @@ async def start_exercise_selection(
     entry_date = target_date or date.today()
     await state.update_data(entry_date=entry_date.isoformat())
     await state.set_state(WorkoutStates.choosing_exercise)
+    recent_shown = await _show_recent_exercises_hint(message, state, str(message.from_user.id))
     push_menu_stack(message.bot, exercise_picker_menu)
+    prompt = "<b>Выбери из кнопок ниже или из недавних сверху ☝️</b>" if recent_shown else "Выбери активность:"
     if entry_date == date.today():
-        text = "Выбери активность:"
+        text = prompt
     else:
-        text = f"📅 Дата: {entry_date.strftime('%d.%m.%Y')}\n\nВыбери активность:"
+        text = f"📅 Дата: {entry_date.strftime('%d.%m.%Y')}\n\n{prompt}"
     await message.answer(
         text,
         reply_markup=exercise_picker_menu,
+        parse_mode="HTML",
     )
 
 
@@ -324,6 +372,66 @@ async def show_day_workouts(
             include_calendar_back=include_calendar_back,
         ),
     )
+
+
+async def _continue_with_selected_exercise(message: Message, state: FSMContext, exercise: str) -> None:
+    """Продолжает сценарий ввода после выбора активности из меню или недавних."""
+    exercise = _normalize_exercise_name(exercise)
+    await state.update_data(exercise=exercise, category="bodyweight")
+
+    if exercise == "Другое":
+        await state.set_state(WorkoutStates.entering_custom_exercise)
+        await message.answer(
+            "🆕 Создай своё упражнение: напиши название, и я сохраню его в список для будущих тренировок."
+        )
+        return
+
+    if exercise == "Подтягивания":
+        await state.set_state(WorkoutStates.choosing_grip_type)
+        push_menu_stack(message.bot, grip_type_menu)
+        await message.answer("Каким хватом выполнял подтягивания?", reply_markup=grip_type_menu)
+        return
+
+    input_type = _exercise_input_type(exercise)
+    if input_type == "steps":
+        await state.update_data(back_target="exercise_picker")
+        await state.set_state(WorkoutStates.entering_steps)
+        push_menu_stack(message.bot, steps_menu)
+        await message.answer("Введи количество шагов за сегодня:", reply_markup=steps_menu)
+        return
+    if input_type == "duration":
+        await state.update_data(variant="Минуты", back_target="exercise_picker")
+        await state.set_state(WorkoutStates.entering_duration)
+        selected_duration_menu = plank_duration_menu if exercise == "Планка" else duration_menu
+        push_menu_stack(message.bot, selected_duration_menu)
+        await message.answer(
+            f"Введи длительность для {exercise} в минутах или выбери предложенное время:",
+            reply_markup=selected_duration_menu,
+        )
+        return
+
+    await state.update_data(variant="reps", back_target="exercise_picker")
+    await state.set_state(WorkoutStates.entering_count)
+    push_menu_stack(message.bot, count_menu)
+    await message.answer("Выбери количество повторений:", reply_markup=count_menu)
+
+
+@router.callback_query(lambda c: c.data.startswith("wrk_recent_pick:"))
+async def pick_recent_exercise(callback: CallbackQuery, state: FSMContext):
+    """Выбирает активность из верхнего inline-блока недавних."""
+    await callback.answer()
+    data = await state.get_data()
+    recent_exercises = data.get("recent_exercises") or []
+    try:
+        index = int(callback.data.split(":", maxsplit=1)[1])
+    except (ValueError, IndexError, AttributeError):
+        await callback.message.answer("❌ Не удалось выбрать активность. Попробуй открыть добавление заново.")
+        return
+    if index < 0 or index >= len(recent_exercises):
+        await callback.message.answer("❌ Эта недавняя активность уже недоступна. Открой добавление заново.")
+        return
+
+    await _continue_with_selected_exercise(callback.message, state, recent_exercises[index])
 
 
 @router.callback_query(lambda c: c.data.startswith("cal_nav:"))
@@ -524,46 +632,7 @@ async def choose_exercise(message: Message, state: FSMContext):
         await message.answer("Выбери упражнение из меню")
         return
 
-    exercise = _normalize_exercise_name(exercise)
-    await state.update_data(exercise=exercise, category="bodyweight")
-    
-    # Обрабатываем "Другое"
-    if exercise == "Другое":
-        await state.set_state(WorkoutStates.entering_custom_exercise)
-        await message.answer(
-            "🆕 Создай своё упражнение: напиши название, и я сохраню его в список для будущих тренировок."
-        )
-        return
-    
-    # Особый случай: подтягивания - спрашиваем тип хвата
-    if exercise == "Подтягивания":
-        await state.set_state(WorkoutStates.choosing_grip_type)
-        push_menu_stack(message.bot, grip_type_menu)
-        await message.answer("Каким хватом выполнял подтягивания?", reply_markup=grip_type_menu)
-        return
-    
-    input_type = _exercise_input_type(exercise)
-    if input_type == "steps":
-        await state.update_data(back_target="exercise_picker")
-        await state.set_state(WorkoutStates.entering_steps)
-        push_menu_stack(message.bot, steps_menu)
-        await message.answer("Введи количество шагов за сегодня:", reply_markup=steps_menu)
-        return
-    if input_type == "duration":
-        await state.update_data(variant="Минуты", back_target="exercise_picker")
-        await state.set_state(WorkoutStates.entering_duration)
-        selected_duration_menu = plank_duration_menu if exercise == "Планка" else duration_menu
-        push_menu_stack(message.bot, selected_duration_menu)
-        await message.answer(
-            f"Введи длительность для {exercise} в минутах или выбери предложенное время:",
-            reply_markup=selected_duration_menu,
-        )
-        return
-
-    await state.update_data(variant="reps", back_target="exercise_picker")
-    await state.set_state(WorkoutStates.entering_count)
-    push_menu_stack(message.bot, count_menu)
-    await message.answer("Выбери количество повторений:", reply_markup=count_menu)
+    await _continue_with_selected_exercise(message, state, exercise)
 
 
 @router.message(WorkoutStates.searching_exercise)
