@@ -254,19 +254,53 @@ def _build_label_weight_confirm_menu() -> ReplyKeyboardMarkup:
 PHOTO_WEIGHT_ADJUSTMENTS = LABEL_WEIGHT_ADJUSTMENTS
 
 
-def _build_photo_analysis_confirm_menu() -> InlineKeyboardMarkup:
-    """Строит inline-меню подтверждения анализа еды по фото с корректировкой веса."""
+_NUMBER_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+
+def _number_emoji(index: int) -> str:
+    return _NUMBER_EMOJIS[index] if 0 <= index < len(_NUMBER_EMOJIS) else f"{index + 1}."
+
+
+def _short_product_button_name(name: str) -> str:
+    clean = str(name or "Продукт").strip()
+    return clean[:32]
+
+
+def _build_photo_analysis_confirm_menu(items: list[dict] | None = None) -> InlineKeyboardMarkup:
+    """Строит inline-меню подтверждения анализа еды по фото."""
+    items = items or []
+    rows: list[list[InlineKeyboardButton]] = []
+    if len(items) <= 1:
+        rows.append([InlineKeyboardButton(text="✏️ Изменить вес", callback_data="photo_edit:0")])
+    else:
+        for idx, item in enumerate(items):
+            name = _short_product_button_name(item.get("name") or "Продукт")
+            rows.append([InlineKeyboardButton(text=f"✏️ {name}", callback_data=f"photo_edit:{idx}")])
+    rows.append([InlineKeyboardButton(text="✅ Сохранить", callback_data="photo_save")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _build_photo_weight_editor_menu(product_idx: int) -> InlineKeyboardMarkup:
+    """Строит inline-меню редактирования веса одного продукта из анализа фото."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text=f"+{step}", callback_data=f"photo_wchg:{step}")
-                for step in PHOTO_WEIGHT_ADJUSTMENTS
+                InlineKeyboardButton(text=f"+{step} г", callback_data=f"photo_wchg:{product_idx}:{step}")
+                for step in PHOTO_WEIGHT_ADJUSTMENTS[:3]
             ],
             [
-                InlineKeyboardButton(text=f"-{step}", callback_data=f"photo_wchg:-{step}")
-                for step in PHOTO_WEIGHT_ADJUSTMENTS
+                InlineKeyboardButton(text=f"+{step} г", callback_data=f"photo_wchg:{product_idx}:{step}")
+                for step in PHOTO_WEIGHT_ADJUSTMENTS[3:]
             ],
-            [InlineKeyboardButton(text="✅ Сохранить", callback_data="photo_save")],
+            [
+                InlineKeyboardButton(text=f"-{step} г", callback_data=f"photo_wchg:{product_idx}:-{step}")
+                for step in PHOTO_WEIGHT_ADJUSTMENTS[:3]
+            ],
+            [
+                InlineKeyboardButton(text=f"-{step} г", callback_data=f"photo_wchg:{product_idx}:-{step}")
+                for step in PHOTO_WEIGHT_ADJUSTMENTS[3:]
+            ],
+            [InlineKeyboardButton(text="✅ Готово", callback_data="photo_done")],
         ]
     )
 
@@ -283,16 +317,9 @@ async def _send_photo_analysis_confirmation(message: Message, items: list[dict])
     """Показывает результат анализа с inline-кнопками и обычной кнопкой отмены снизу."""
     cancel_menu = _build_photo_analysis_cancel_menu()
     push_menu_stack(message.bot, cancel_menu)
-    await message.answer(
-        "Если нужно отменить сохранение, нажми <b>❌ Отмена</b> внизу.",
-        reply_markup=cancel_menu,
-        parse_mode="HTML",
-    )
-    await message.answer(
-        _format_photo_analysis_confirmation_text(items),
-        reply_markup=_build_photo_analysis_confirm_menu(),
-        parse_mode="HTML",
-    )
+    text = _format_photo_analysis_confirmation_text(items)
+    confirmation_message = await message.answer(text, reply_markup=cancel_menu, parse_mode="HTML")
+    await confirmation_message.edit_reply_markup(reply_markup=_build_photo_analysis_confirm_menu(items))
 
 
 def _normalize_photo_analysis_items(items: list | None, total: dict | None) -> list[dict]:
@@ -338,61 +365,96 @@ def _collect_photo_totals(items: list[dict]) -> dict:
     }
 
 
+def _scale_photo_item(item: dict, new_weight: float) -> dict:
+    """Пересчитывает КБЖУ одного продукта пропорционально новому весу."""
+    current_weight = _safe_float(item.get("grams"))
+    if current_weight <= 0:
+        current_weight = max(1.0, new_weight)
+    factor = max(1.0, new_weight) / current_weight
+    updated = dict(item)
+    updated["grams"] = max(1.0, new_weight)
+    updated["kcal"] = _safe_float(item.get("kcal") or item.get("calories")) * factor
+    updated["protein"] = _safe_float(item.get("protein") or item.get("protein_g")) * factor
+    updated["fat"] = _safe_float(item.get("fat") or item.get("fat_total_g")) * factor
+    updated["carbs"] = _safe_float(item.get("carbs") or item.get("carbohydrates_total_g")) * factor
+    return updated
+
+
 def _scale_photo_items(items: list[dict], new_total_weight: float) -> list[dict]:
-    """Пропорционально пересчитывает вес и КБЖУ всех блюд в черновике."""
+    """Пропорционально пересчитывает вес и КБЖУ всех блюд в черновике (legacy helper)."""
     current_total_weight = sum(_safe_float(item.get("grams")) for item in items)
     if current_total_weight <= 0:
         return items
     factor = max(1.0, new_total_weight) / current_total_weight
-    scaled: list[dict] = []
-    for item in items:
-        updated = dict(item)
-        updated["grams"] = max(1.0, _safe_float(item.get("grams")) * factor)
-        updated["kcal"] = _safe_float(item.get("kcal") or item.get("calories")) * factor
-        updated["protein"] = _safe_float(item.get("protein") or item.get("protein_g")) * factor
-        updated["fat"] = _safe_float(item.get("fat") or item.get("fat_total_g")) * factor
-        updated["carbs"] = _safe_float(item.get("carbs") or item.get("carbohydrates_total_g")) * factor
-        scaled.append(updated)
-    return scaled
+    return [_scale_photo_item(item, _safe_float(item.get("grams")) * factor) for item in items]
+
+
+def _format_photo_item_block(item: dict, index: int | None = None) -> str:
+    prefix = f"{_number_emoji(index)} " if index is not None else ""
+    return "\n".join(
+        [
+            f"{prefix}{html.escape(str(item.get('name') or 'Продукт'))} — {_safe_float(item.get('grams')):.0f} г",
+            f"🔥 {_safe_float(item.get('kcal') or item.get('calories')):.0f} ккал",
+            f"💪 Б: {_safe_float(item.get('protein') or item.get('protein_g')):.1f} г",
+            f"🥑 Ж: {_safe_float(item.get('fat') or item.get('fat_total_g')):.1f} г",
+            f"🍩 У: {_safe_float(item.get('carbs') or item.get('carbohydrates_total_g')):.1f} г",
+        ]
+    )
 
 
 def _format_photo_analysis_confirmation_text(items: list[dict]) -> str:
-    """Форматирует экран анализа фото до сохранения в дневник."""
+    """Форматирует общий экран анализа фото до сохранения в дневник."""
     total_weight = sum(_safe_float(item.get("grams")) for item in items)
     totals = _collect_photo_totals(items)
-    lines = ["📸 <b>Анализ фото завершён</b>", "", "🍽 <b>Обнаружено:</b>"]
-    for item in items:
-        lines.append(f"• {html.escape(str(item.get('name') or 'Продукт'))} ({_safe_float(item.get('grams')):.0f} г)")
-    lines.extend(
+    lines = ["📸 <b>Анализ фото завершён</b>", "", "🍽 <b>Обнаружено:</b>", ""]
+    for idx, item in enumerate(items):
+        lines.append(_format_photo_item_block(item, idx))
+        lines.append("")
+    if len(items) > 1:
+        lines.extend(
+            [
+                "📊 <b>Итого:</b>",
+                f"📦 Общий вес: {total_weight:.0f} г",
+                f"🔥 Калории: {totals['calories']:.0f} ккал",
+                f"💪 Белки: {totals['protein']:.1f} г",
+                f"🥑 Жиры: {totals['fat']:.1f} г",
+                f"🍩 Углеводы: {totals['carbs']:.1f} г",
+                "",
+                "Выберите продукт для редактирования или нажмите <b>✅ Сохранить</b>.",
+            ]
+        )
+    else:
+        lines.append("Проверьте результат перед сохранением.")
+    return "\n".join(lines).rstrip()
+
+
+def _format_photo_weight_editor_text(item: dict) -> str:
+    """Форматирует экран редактирования веса одного продукта."""
+    return "\n".join(
         [
+            "✏️ <b>Редактирование веса</b>",
             "",
-            "📦 <b>Предполагаемый вес:</b>",
-            f"{total_weight:.0f} г",
+            f"🍽 {html.escape(str(item.get('name') or 'Продукт'))}",
+            f"📦 Вес: {_safe_float(item.get('grams')):.0f} г",
             "",
-            "📊 <b>Итоговые КБЖУ:</b>",
-            _format_kbju_summary_block(totals),
-            "",
-            "Можете скорректировать вес кнопками ниже или нажать <b>✅ Сохранить</b>.",
+            f"🔥 {_safe_float(item.get('kcal') or item.get('calories')):.0f} ккал",
+            f"💪 Б: {_safe_float(item.get('protein') or item.get('protein_g')):.1f} г",
+            f"🥑 Ж: {_safe_float(item.get('fat') or item.get('fat_total_g')):.1f} г",
+            f"🍩 У: {_safe_float(item.get('carbs') or item.get('carbohydrates_total_g')):.1f} г",
         ]
     )
-    return "\n".join(lines)
 
 
 def _format_photo_saved_confirmation(meal_type: str, items: list[dict], totals: dict) -> str:
     """Форматирует короткое подтверждение сохранения анализа фото."""
-    total_weight = sum(_safe_float(item.get("grams")) for item in items)
-    title = ", ".join(str(item.get("name") or "Продукт") for item in items[:3]) or "Продукт"
-    if len(items) > 3:
-        title += f" и ещё {len(items) - 3}"
-    return "\n".join(
-        [
-            f"✅ <b>Добавлено в {display_meal_type(meal_type).lower()}</b>",
-            "",
-            f"🍽 <b>{html.escape(title)}</b> ({total_weight:.0f} г)",
-            "",
-            _format_kbju_summary_block(totals),
-        ]
-    )
+    lines = [
+        f"✅ <b>Добавлено в {display_meal_type(meal_type).lower()}</b>",
+        "",
+    ]
+    for item in items:
+        lines.append(f"• {html.escape(str(item.get('name') or 'Продукт'))} — {_safe_float(item.get('grams')):.0f} г")
+    lines.extend(["", f"🔥 <b>Итого:</b> {totals['calories']:.0f} ккал"])
+    return "\n".join(lines)
 
 
 def _calculate_label_totals(kbju_per_100g: dict | None, weight_grams: float) -> tuple[dict, dict]:
@@ -3640,8 +3702,9 @@ async def _cancel_photo_analysis_confirmation(message: Message, state: FSMContex
         photo_analysis_items=None,
         photo_analysis_raw_query=None,
         photo_analysis_provider=None,
+        photo_analysis_editing_idx=None,
     )
-    await message.answer("❌ Анализ фото отменён. Ничего не сохранено.", reply_markup=kbju_add_menu)
+    await message.answer("❌ Добавление еды отменено.", reply_markup=kbju_add_menu)
 
 
 async def _save_photo_analysis_confirmation(message: Message, state: FSMContext, user_id: str, data: dict):
@@ -3685,7 +3748,12 @@ async def _save_photo_analysis_confirmation(message: Message, state: FSMContext,
         message.bot.last_meal_ids = {}
     message.bot.last_meal_ids[user_id] = saved_meal.id
 
-    await state.update_data(photo_analysis_items=None, photo_analysis_raw_query=None, photo_analysis_provider=None)
+    await state.update_data(
+        photo_analysis_items=None,
+        photo_analysis_raw_query=None,
+        photo_analysis_provider=None,
+        photo_analysis_editing_idx=None,
+    )
     await _keep_meal_entry_open_after_save(
         message,
         state,
@@ -3697,22 +3765,79 @@ async def _save_photo_analysis_confirmation(message: Message, state: FSMContext,
     )
 
 
+@router.callback_query(lambda c: c.data.startswith("photo_edit:"))
+async def photo_analysis_edit_product(callback: CallbackQuery, state: FSMContext):
+    """Открывает редактирование веса конкретного продукта из анализа фото."""
+    data = await state.get_data()
+    items = data.get("photo_analysis_items") or []
+    try:
+        product_idx = int(callback.data.split(":", 1)[1])
+    except (TypeError, ValueError, IndexError):
+        await callback.answer("Не удалось открыть продукт", show_alert=True)
+        return
+    if product_idx < 0 or product_idx >= len(items):
+        await callback.answer("Продукт не найден", show_alert=True)
+        return
+
+    await state.update_data(photo_analysis_editing_idx=product_idx)
+    await callback.message.edit_text(
+        _format_photo_weight_editor_text(items[product_idx]),
+        reply_markup=_build_photo_weight_editor_menu(product_idx),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
 @router.callback_query(lambda c: c.data.startswith("photo_wchg:"))
 async def photo_analysis_weight_change(callback: CallbackQuery, state: FSMContext):
-    """Корректирует вес анализа фото через inline-кнопки."""
+    """Корректирует вес выбранного продукта через inline-кнопки."""
     data = await state.get_data()
     items = data.get("photo_analysis_items") or []
     if not items:
         await callback.answer("Черновик анализа фото не найден", show_alert=True)
         return
 
-    delta = float(callback.data.split(":", 1)[1])
-    current_weight = sum(_safe_float(item.get("grams")) for item in items)
-    items = _scale_photo_items(items, max(1.0, current_weight + delta))
-    await state.update_data(photo_analysis_items=items)
+    parts = callback.data.split(":")
+    if len(parts) == 2:
+        # Backward-compatible path for old callback payloads: edit first product only.
+        product_idx = int(data.get("photo_analysis_editing_idx") or 0)
+        delta = float(parts[1])
+    else:
+        try:
+            product_idx = int(parts[1])
+            delta = float(parts[2])
+        except (TypeError, ValueError, IndexError):
+            await callback.answer("Не удалось изменить вес", show_alert=True)
+            return
+
+    if product_idx < 0 or product_idx >= len(items):
+        await callback.answer("Продукт не найден", show_alert=True)
+        return
+
+    new_weight = max(1.0, _safe_float(items[product_idx].get("grams")) + delta)
+    updated_items = [dict(item) for item in items]
+    updated_items[product_idx] = _scale_photo_item(updated_items[product_idx], new_weight)
+    await state.update_data(photo_analysis_items=updated_items, photo_analysis_editing_idx=product_idx)
+    await callback.message.edit_text(
+        _format_photo_weight_editor_text(updated_items[product_idx]),
+        reply_markup=_build_photo_weight_editor_menu(product_idx),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == "photo_done")
+async def photo_analysis_weight_done(callback: CallbackQuery, state: FSMContext):
+    """Возвращает с редактора веса на общий экран анализа фото."""
+    data = await state.get_data()
+    items = data.get("photo_analysis_items") or []
+    if not items:
+        await callback.answer("Черновик анализа фото не найден", show_alert=True)
+        return
+    await state.update_data(photo_analysis_editing_idx=None)
     await callback.message.edit_text(
         _format_photo_analysis_confirmation_text(items),
-        reply_markup=_build_photo_analysis_confirm_menu(),
+        reply_markup=_build_photo_analysis_confirm_menu(items),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -3720,7 +3845,7 @@ async def photo_analysis_weight_change(callback: CallbackQuery, state: FSMContex
 
 @router.callback_query(lambda c: c.data == "photo_cancel")
 async def photo_analysis_cancel(callback: CallbackQuery, state: FSMContext):
-    """Отменяет сохранение анализа фото через inline-кнопку."""
+    """Legacy: отменяет сохранение анализа фото через inline-кнопку."""
     data = await state.get_data()
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
@@ -3750,86 +3875,24 @@ async def handle_photo_analysis_confirmation(message: Message, state: FSMContext
     items = data.get("photo_analysis_items") or []
     if not items:
         await state.set_state(MealEntryStates.choosing_meal_type)
-        await state.update_data(photo_analysis_items=None, photo_analysis_raw_query=None, photo_analysis_provider=None)
+        await state.update_data(
+            photo_analysis_items=None,
+            photo_analysis_raw_query=None,
+            photo_analysis_provider=None,
+            photo_analysis_editing_idx=None,
+        )
         await message.answer("Черновик анализа фото не найден. Можно попробовать ещё раз.", reply_markup=kbju_add_menu)
         return
 
     if text == "❌ Отмена":
-        meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-        entry_date = data.get("entry_date") or date.today().isoformat()
-        await state.set_state(MealEntryStates.choosing_meal_type)
-        await state.update_data(
-            entry_date=entry_date,
-            meal_type=meal_type,
-            photo_analysis_items=None,
-            photo_analysis_raw_query=None,
-            photo_analysis_provider=None,
-        )
-        await message.answer("❌ Анализ фото отменён. Ничего не сохранено.", reply_markup=kbju_add_menu)
+        await _cancel_photo_analysis_confirmation(message, state, data)
         return
 
-    if re.fullmatch(r"[+-](1|5|10|20|50|100)", text):
-        current_weight = sum(_safe_float(item.get("grams")) for item in items)
-        new_weight = max(1.0, current_weight + float(text))
-        items = _scale_photo_items(items, new_weight)
-        await state.update_data(photo_analysis_items=items)
-        await _send_photo_analysis_confirmation(message, items)
-        return
-
-    if text != "✅ Сохранить":
-        await message.answer("Скорректируй вес кнопками, нажми ✅ Сохранить или ❌ Отмена.")
-        return
-
-    user_id = str(message.from_user.id)
-    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    entry_date_str = data.get("entry_date")
-    try:
-        entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
-    except ValueError:
-        parsed = parse_date(entry_date_str)
-        entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
-
-    totals_for_db = _collect_photo_totals(items)
-    raw_query = data.get("photo_analysis_raw_query") or "[Анализ по фото]"
-    saved_items = []
-    for item in items:
-        saved_items.append(
-            {
-                **item,
-                "calories": _safe_float(item.get("kcal")),
-                "protein_g": _safe_float(item.get("protein")),
-                "fat_total_g": _safe_float(item.get("fat")),
-                "carbohydrates_total_g": _safe_float(item.get("carbs")),
-                "source": item.get("source") or data.get("photo_analysis_provider") or "food_photo",
-            }
-        )
-
-    saved_meal = MealRepository.save_meal(
-        user_id=user_id,
-        raw_query=raw_query,
-        calories=totals_for_db["calories"],
-        protein=totals_for_db["protein"],
-        fat=totals_for_db["fat"],
-        carbs=totals_for_db["carbs"],
-        entry_date=entry_date,
-        products_json=json.dumps(saved_items),
-        meal_type=meal_type,
+    await message.answer(
+        "Используйте inline-кнопки под результатом: выберите продукт для редактирования "
+        "или нажмите ✅ Сохранить. Для отмены нажмите ❌ Отмена внизу."
     )
-
-    if not hasattr(message.bot, "last_meal_ids"):
-        message.bot.last_meal_ids = {}
-    message.bot.last_meal_ids[user_id] = saved_meal.id
-
-    await state.update_data(photo_analysis_items=None, photo_analysis_raw_query=None, photo_analysis_provider=None)
-    await _keep_meal_entry_open_after_save(
-        message,
-        state,
-        user_id=user_id,
-        entry_date=entry_date,
-        meal_type=meal_type,
-        intro_lines=[_format_photo_saved_confirmation(meal_type, items, totals_for_db)],
-        parse_mode="HTML",
-    )
+    return
 
 
 async def _handle_label_photo_analysis(

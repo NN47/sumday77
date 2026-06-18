@@ -32,32 +32,39 @@ def _build_callback(callback_data: str):
     return callback
 
 
-def test_photo_analysis_confirm_menu_uses_inline_buttons_without_cancel():
-    keyboard = meals._build_photo_analysis_confirm_menu()
+def test_photo_analysis_confirm_menu_uses_single_product_edit_and_save_buttons():
+    keyboard = meals._build_photo_analysis_confirm_menu([{"name": "Пицца 4 сыра"}])
 
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
     callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
 
-    assert rows[0] == ["+1", "+5", "+10", "+20", "+50", "+100"]
-    assert rows[1] == ["-1", "-5", "-10", "-20", "-50", "-100"]
-    assert rows[2] == ["✅ Сохранить"]
-    assert callbacks[0] == [
-        "photo_wchg:1",
-        "photo_wchg:5",
-        "photo_wchg:10",
-        "photo_wchg:20",
-        "photo_wchg:50",
-        "photo_wchg:100",
-    ]
-    assert callbacks[1] == [
-        "photo_wchg:-1",
-        "photo_wchg:-5",
-        "photo_wchg:-10",
-        "photo_wchg:-20",
-        "photo_wchg:-50",
-        "photo_wchg:-100",
-    ]
-    assert callbacks[2] == ["photo_save"]
+    assert rows == [["✏️ Изменить вес"], ["✅ Сохранить"]]
+    assert callbacks == [["photo_edit:0"], ["photo_save"]]
+
+
+def test_photo_analysis_confirm_menu_uses_product_edit_buttons_for_multiple_items():
+    keyboard = meals._build_photo_analysis_confirm_menu([{"name": "Кусочек медовика"}, {"name": "Кофе с молоком"}])
+
+    rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
+    callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
+
+    assert rows == [["✏️ Кусочек медовика"], ["✏️ Кофе с молоком"], ["✅ Сохранить"]]
+    assert callbacks == [["photo_edit:0"], ["photo_edit:1"], ["photo_save"]]
+
+
+def test_photo_weight_editor_menu_edits_specific_product_without_cancel():
+    keyboard = meals._build_photo_weight_editor_menu(1)
+
+    rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
+    callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
+
+    assert rows[0] == ["+1 г", "+5 г", "+10 г"]
+    assert rows[1] == ["+20 г", "+50 г", "+100 г"]
+    assert rows[2] == ["-1 г", "-5 г", "-10 г"]
+    assert rows[3] == ["-20 г", "-50 г", "-100 г"]
+    assert rows[4] == ["✅ Готово"]
+    assert callbacks[0] == ["photo_wchg:1:1", "photo_wchg:1:5", "photo_wchg:1:10"]
+    assert callbacks[4] == ["photo_done"]
 
 
 def test_photo_analysis_cancel_menu_is_regular_bottom_keyboard():
