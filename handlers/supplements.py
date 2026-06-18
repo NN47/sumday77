@@ -601,8 +601,12 @@ async def save_supplement_amount(
 
         await state.clear()
         push_menu_stack(message.bot, supplements_main_menu(has_items=True))
+        if amount == int(amount):
+            amount_str = str(int(amount))
+        else:
+            amount_str = str(amount)
         await message.answer(
-            f"✅ Записал приём {supplement_name} ({amount}) на {timestamp.strftime('%d.%m.%Y %H:%M')}.",
+            f"✅ Записал приём {supplement_name} ({amount_str}) на {timestamp.strftime('%d.%m.%Y %H:%M')}.",
             reply_markup=supplements_main_menu(has_items=True),
         )
     else:

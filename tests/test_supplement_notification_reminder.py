@@ -159,7 +159,35 @@ def test_supplement_amount_inline_button_saves_selected_amount():
     assert save_entry.call_args.args[3] == 1.25
     callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
     callback.message.answer.assert_awaited_once()
+    assert callback.message.answer.await_args.args[0] == (
+        "✅ Записал приём Магний (1.25) на 06.06.2026 21:30."
+    )
     state.clear.assert_awaited_once()
+
+
+def test_supplement_amount_inline_button_formats_integer_without_decimal_part():
+    callback = _build_callback("sup_amount:2")
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={
+            "supplement_id": 7,
+            "supplement_name": "Магний",
+            "timestamp": "2026-06-18T21:30:00",
+            "entry_date": "2026-06-18",
+            "from_calendar": False,
+        }),
+        clear=AsyncMock(),
+    )
+
+    with patch(
+        "handlers.supplements.SupplementRepository.save_entry",
+        return_value=42,
+    ), patch("handlers.supplements.push_menu_stack"):
+        asyncio.run(supplements.handle_history_amount_button(callback, state))
+
+    callback.message.answer.assert_awaited_once()
+    assert callback.message.answer.await_args.args[0] == (
+        "✅ Записал приём Магний (2) на 18.06.2026 21:30."
+    )
 
 
 def test_manual_supplement_selection_prompts_amount_without_time_step():
