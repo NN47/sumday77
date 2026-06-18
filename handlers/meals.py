@@ -270,13 +270,10 @@ def _build_photo_analysis_confirm_menu(items: list[dict] | None = None) -> Inlin
     """Строит inline-меню подтверждения анализа еды по фото."""
     items = items or []
     rows: list[list[InlineKeyboardButton]] = []
-    if len(items) <= 1:
-        rows.append([InlineKeyboardButton(text="✏️ Изменить вес", callback_data="photo_edit:0")])
-    else:
-        for idx, item in enumerate(items):
-            name = _short_product_button_name(item.get("name") or "Продукт")
-            rows.append([InlineKeyboardButton(text=f"✏️ {name}", callback_data=f"photo_edit:{idx}")])
-    rows.append([InlineKeyboardButton(text="✅ Сохранить", callback_data="photo_save")])
+    for idx, item in enumerate(items):
+        name = _short_product_button_name(item.get("name") or "Продукт")
+        rows.append([InlineKeyboardButton(text=f"✏️ {name}", callback_data=f"edit_photo_food_item:{idx}")])
+    rows.append([InlineKeyboardButton(text="✅ Сохранить", callback_data="save_photo_food_analysis")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -317,9 +314,18 @@ async def _send_photo_analysis_confirmation(message: Message, items: list[dict])
     """Показывает результат анализа с inline-кнопками и обычной кнопкой отмены снизу."""
     cancel_menu = _build_photo_analysis_cancel_menu()
     push_menu_stack(message.bot, cancel_menu)
-    text = _format_photo_analysis_confirmation_text(items)
-    confirmation_message = await message.answer(text, reply_markup=cancel_menu, parse_mode="HTML")
-    await confirmation_message.edit_reply_markup(reply_markup=_build_photo_analysis_confirm_menu(items))
+
+    # Telegram-сообщение может иметь только один reply_markup: либо inline-клавиатуру,
+    # либо нижнюю ReplyKeyboard. Поэтому результат анализа отправляем отдельным
+    # сообщением с InlineKeyboardMarkup, а нижнюю кнопку отмены включаем следующим
+    # коротким сообщением с ReplyKeyboardMarkup. Так inline-кнопки остаются под
+    # результатом и ❌ Отмена не переносится в inline-клавиатуру.
+    await message.answer(
+        _format_photo_analysis_confirmation_text(items),
+        reply_markup=_build_photo_analysis_confirm_menu(items),
+        parse_mode="HTML",
+    )
+    await message.answer("Для отмены нажмите ❌ Отмена внизу.", reply_markup=cancel_menu)
 
 
 def _normalize_photo_analysis_items(items: list | None, total: dict | None) -> list[dict]:
@@ -3765,7 +3771,7 @@ async def _save_photo_analysis_confirmation(message: Message, state: FSMContext,
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("photo_edit:"))
+@router.callback_query(lambda c: c.data.startswith("edit_photo_food_item:") or c.data.startswith("photo_edit:"))
 async def photo_analysis_edit_product(callback: CallbackQuery, state: FSMContext):
     """Открывает редактирование веса конкретного продукта из анализа фото."""
     data = await state.get_data()
@@ -3852,7 +3858,7 @@ async def photo_analysis_cancel(callback: CallbackQuery, state: FSMContext):
     await _cancel_photo_analysis_confirmation(callback.message, state, data)
 
 
-@router.callback_query(lambda c: c.data == "photo_save")
+@router.callback_query(lambda c: c.data == "save_photo_food_analysis" or c.data == "photo_save")
 async def photo_analysis_save(callback: CallbackQuery, state: FSMContext):
     """Сохраняет анализ фото через inline-кнопку."""
     data = await state.get_data()

@@ -38,8 +38,8 @@ def test_photo_analysis_confirm_menu_uses_single_product_edit_and_save_buttons()
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
     callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
 
-    assert rows == [["✏️ Изменить вес"], ["✅ Сохранить"]]
-    assert callbacks == [["photo_edit:0"], ["photo_save"]]
+    assert rows == [["✏️ Пицца 4 сыра"], ["✅ Сохранить"]]
+    assert callbacks == [["edit_photo_food_item:0"], ["save_photo_food_analysis"]]
 
 
 def test_photo_analysis_confirm_menu_uses_product_edit_buttons_for_multiple_items():
@@ -49,7 +49,7 @@ def test_photo_analysis_confirm_menu_uses_product_edit_buttons_for_multiple_item
     callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
 
     assert rows == [["✏️ Кусочек медовика"], ["✏️ Кофе с молоком"], ["✅ Сохранить"]]
-    assert callbacks == [["photo_edit:0"], ["photo_edit:1"], ["photo_save"]]
+    assert callbacks == [["edit_photo_food_item:0"], ["edit_photo_food_item:1"], ["save_photo_food_analysis"]]
 
 
 def test_photo_weight_editor_menu_edits_specific_product_without_cancel():
@@ -65,6 +65,22 @@ def test_photo_weight_editor_menu_edits_specific_product_without_cancel():
     assert rows[4] == ["✅ Готово"]
     assert callbacks[0] == ["photo_wchg:1:1", "photo_wchg:1:5", "photo_wchg:1:10"]
     assert callbacks[4] == ["photo_done"]
+
+
+def test_send_photo_analysis_confirmation_attaches_inline_and_keeps_cancel_reply_keyboard():
+    message = _build_message()
+    items = [{"name": "Йогурт манго", "grams": 120, "kcal": 90}]
+
+    with patch("handlers.meals.push_menu_stack") as push_stack:
+        asyncio.run(meals._send_photo_analysis_confirmation(message, items))
+
+    push_stack.assert_called_once()
+    assert message.answer.await_count == 2
+    result_call = message.answer.await_args_list[0]
+    cancel_call = message.answer.await_args_list[1]
+    assert result_call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "edit_photo_food_item:0"
+    assert result_call.kwargs["reply_markup"].inline_keyboard[-1][0].callback_data == "save_photo_food_analysis"
+    assert [[button.text for button in row] for row in cancel_call.kwargs["reply_markup"].keyboard] == [["❌ Отмена"]]
 
 
 def test_photo_analysis_cancel_menu_is_regular_bottom_keyboard():
