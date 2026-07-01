@@ -8,6 +8,8 @@ from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
     MAIN_MENU_BUTTON_ALIASES,
     MAIN_MENU_BUTTON_TEXT,
+    calendar_back_menu,
+    kbju_menu,
     main_menu,
     push_menu_stack,
     quick_actions_inline,
@@ -146,10 +148,20 @@ async def go_back(message: Message, state: FSMContext):
     stack = getattr(message.bot, "menu_stack", [])
     
     if len(stack) > 1:
+        current_menu = stack[-1]
         # Убираем текущее меню из стека
         stack.pop()
         prev_menu = stack[-1]  # Берем предыдущее меню
         message.bot.menu_stack = stack
+
+        if current_menu is calendar_back_menu and prev_menu is kbju_menu:
+            # Из календаря КБЖУ нужно возвращать полноценный экран дневника,
+            # а не только нижнюю reply-клавиатуру раздела.
+            from handlers.meals import send_today_results
+
+            await send_today_results(message, str(message.from_user.id))
+            return
+
         push_menu_stack(message.bot, prev_menu)
         await message.answer("⬅️ Назад", reply_markup=prev_menu)
     else:
