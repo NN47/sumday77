@@ -47,3 +47,26 @@ def test_selecting_non_today_opens_selected_day():
         str(callback.from_user.id),
         date.fromisoformat(other_day),
     )
+
+
+def test_back_from_kbju_calendar_renders_today_report():
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from handlers import common
+    from utils.keyboards import calendar_back_menu, kbju_menu, main_menu
+
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=12345),
+        bot=SimpleNamespace(menu_stack=[main_menu, kbju_menu, calendar_back_menu]),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(clear=AsyncMock())
+
+    with patch("handlers.meals.send_today_results", new=AsyncMock()) as send_today:
+        asyncio.run(common.go_back(message, state))
+
+    send_today.assert_awaited_once_with(message, "12345")
+    message.answer.assert_not_awaited()
+    assert message.bot.menu_stack == [main_menu, kbju_menu]
