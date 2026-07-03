@@ -3117,6 +3117,7 @@ async def _handle_provider_food_input(
         meal_type=meal_type,
         intro_lines=lines,
         parse_mode="HTML",
+        show_recent_before_intro=False,
     )
 
 
@@ -3129,6 +3130,7 @@ async def _keep_meal_entry_open_after_save(
     meal_type: str,
     intro_lines: list[str] | None = None,
     parse_mode: str | None = None,
+    show_recent_before_intro: bool = True,
 ) -> None:
     """Оставляет пользователя внутри выбранного приёма пищи после сохранения продукта."""
     normalized_meal_type = normalize_meal_type(meal_type, fallback=MealType.SNACK.value)
@@ -3145,13 +3147,14 @@ async def _keep_meal_entry_open_after_save(
         if normalize_meal_type(getattr(meal, "meal_type", None)) == normalized_meal_type
     ]
 
-    await _show_recent_meals_page(
-        message,
-        state,
-        meal_type=normalized_meal_type,
-        page=1,
-        user_id=user_id,
-    )
+    if show_recent_before_intro:
+        await _show_recent_meals_page(
+            message,
+            state,
+            meal_type=normalized_meal_type,
+            page=1,
+            user_id=user_id,
+        )
 
     if intro_lines:
         await message.answer(
@@ -3172,14 +3175,22 @@ async def _keep_meal_entry_open_after_save(
         reply_markup=_build_meal_entry_post_save_keyboard(normalized_meal_type, entry_date),
         parse_mode="HTML",
     )
-    await message.answer(
-        "Можешь выбрать один из недавно добавленных продуктов выше ☝️ "
-        "или воспользоваться одним из этих вариантов:\n\n"
-        "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
-        "• 📷 Анализ еды по фото\n"
-        "• 📋 Анализ этикетки",
-        reply_markup=kbju_add_menu,
-    )
+    if show_recent_before_intro:
+        next_action_text = (
+            "Можешь выбрать один из недавно добавленных продуктов выше ☝️ "
+            "или воспользоваться одним из этих вариантов:\n\n"
+            "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
+            "• 📷 Анализ еды по фото\n"
+            "• 📋 Анализ этикетки"
+        )
+    else:
+        next_action_text = (
+            "Можешь воспользоваться одним из этих вариантов:\n\n"
+            "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
+            "• 📷 Анализ еды по фото\n"
+            "• 📋 Анализ этикетки"
+        )
+    await message.answer(next_action_text, reply_markup=kbju_add_menu)
 
 @router.message(MealEntryStates.waiting_for_openrouter_food_input)
 async def handle_openrouter_food_input(message: Message, state: FSMContext):

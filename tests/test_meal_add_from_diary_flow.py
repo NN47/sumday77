@@ -1243,12 +1243,14 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
             ],
         ), \
         patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]), \
+        patch("handlers.meals._show_recent_meals_page", new=AsyncMock()) as show_recent_meals, \
         patch("handlers.meals.push_menu_stack"):
         caplog.set_level("INFO", logger="handlers.meals")
         asyncio.run(meals.handle_ai_food_input(message, state))
 
     deepseek_analyze.assert_called_once_with("200 г курицы")
     gemini_task.assert_not_called()
+    show_recent_meals.assert_not_awaited()
     save_meal.assert_called_once()
     assert save_meal.call_args.kwargs["calories"] == 330
     assert save_meal.call_args.kwargs["meal_type"] == meals.MealType.LUNCH.value
@@ -1276,6 +1278,7 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
         [f"edit_meal:lunch:{date.today().isoformat()}"]
     ]
     assert message.answer.await_args_list[-2].kwargs["parse_mode"] == "HTML"
+    assert "недавно добавленных продуктов выше" not in message.answer.await_args_list[-1].args[0]
     assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_add_menu
 
 
