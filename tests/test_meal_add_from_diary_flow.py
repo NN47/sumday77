@@ -1326,3 +1326,31 @@ def test_custom_product_page_edits_existing_message_instead_of_sending_new_one()
     callback.message.answer.assert_not_awaited()
     callback.message.edit_text.assert_awaited_once()
     assert "страница 2" in callback.message.edit_text.await_args.args[0]
+
+
+def test_label_waiting_accepts_meal_type_button_without_photo_error():
+    message = _build_message()
+    message.text = "🍳 Завтрак"
+    state = _DummyState()
+
+    asyncio.run(meals.handle_label_non_photo(message, state))
+
+    assert state._data["meal_type"] == meals.MealType.BREAKFAST.value
+    answer_text = message.answer.await_args.args[0]
+    assert "Выбрано: 🍳 Завтрак" in answer_text
+    assert "Теперь отправь фото" in answer_text
+    assert "Пожалуйста, отправь фото этикетки" not in answer_text
+
+
+def test_openai_label_waiting_accepts_meal_type_button_without_photo_error():
+    message = _build_message()
+    message.text = "🍲 Обед"
+    state = _DummyState()
+
+    asyncio.run(meals.handle_openai_label_non_photo(message, state))
+
+    assert state._data["meal_type"] == meals.MealType.LUNCH.value
+    answer_text = message.answer.await_args.args[0]
+    assert "Выбрано: 🍲 Обед" in answer_text
+    assert "Теперь отправь фото" in answer_text
+    assert "Пожалуйста, отправь фото этикетки" not in answer_text
