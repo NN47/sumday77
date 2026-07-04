@@ -3180,6 +3180,10 @@ async def _keep_meal_entry_open_after_save(
         reply_markup=_build_meal_entry_post_save_keyboard(normalized_meal_type, entry_date),
         parse_mode="HTML",
     )
+    await message.answer(
+        "Можешь добавить ещё продукт в этот приём пищи или завершить его.",
+        reply_markup=kbju_add_menu,
+    )
 
 @router.message(MealEntryStates.waiting_for_openrouter_food_input)
 async def handle_openrouter_food_input(message: Message, state: FSMContext):
