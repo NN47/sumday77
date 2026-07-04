@@ -311,21 +311,12 @@ def _build_photo_analysis_cancel_menu() -> ReplyKeyboardMarkup:
 
 
 async def _send_photo_analysis_confirmation(message: Message, items: list[dict]) -> None:
-    """Показывает результат анализа с inline-кнопками и обычной кнопкой отмены снизу."""
-    cancel_menu = _build_photo_analysis_cancel_menu()
-    push_menu_stack(message.bot, cancel_menu)
-
-    # Telegram-сообщение может иметь только один reply_markup: либо inline-клавиатуру,
-    # либо нижнюю ReplyKeyboard. Поэтому результат анализа отправляем отдельным
-    # сообщением с InlineKeyboardMarkup, а нижнюю кнопку отмены включаем следующим
-    # коротким сообщением с ReplyKeyboardMarkup. Так inline-кнопки остаются под
-    # результатом и ❌ Отмена не переносится в inline-клавиатуру.
+    """Показывает результат анализа с inline-кнопками без дополнительной подсказки внизу."""
     await message.answer(
         _format_photo_analysis_confirmation_text(items),
         reply_markup=_build_photo_analysis_confirm_menu(items),
         parse_mode="HTML",
     )
-    await message.answer("Для отмены нажмите ❌ Отмена внизу.", reply_markup=cancel_menu)
 
 
 def _normalize_photo_analysis_items(items: list | None, total: dict | None) -> list[dict]:
@@ -3144,7 +3135,7 @@ async def _keep_meal_entry_open_after_save(
     meal_type: str,
     intro_lines: list[str] | None = None,
     parse_mode: str | None = None,
-    show_recent_before_intro: bool = True,
+    show_recent_before_intro: bool = False,
 ) -> None:
     """Оставляет пользователя внутри выбранного приёма пищи после сохранения продукта."""
     normalized_meal_type = normalize_meal_type(meal_type, fallback=MealType.SNACK.value)
@@ -3189,22 +3180,6 @@ async def _keep_meal_entry_open_after_save(
         reply_markup=_build_meal_entry_post_save_keyboard(normalized_meal_type, entry_date),
         parse_mode="HTML",
     )
-    if show_recent_before_intro:
-        next_action_text = (
-            "Можешь выбрать один из недавно добавленных продуктов выше ☝️ "
-            "или воспользоваться одним из этих вариантов:\n\n"
-            "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
-            "• 📷 Анализ еды по фото\n"
-            "• 📋 Анализ этикетки"
-        )
-    else:
-        next_action_text = (
-            "Можешь воспользоваться одним из этих вариантов:\n\n"
-            "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
-            "• 📷 Анализ еды по фото\n"
-            "• 📋 Анализ этикетки"
-        )
-    await message.answer(next_action_text, reply_markup=kbju_add_menu)
 
 @router.message(MealEntryStates.waiting_for_openrouter_food_input)
 async def handle_openrouter_food_input(message: Message, state: FSMContext):
@@ -3921,7 +3896,7 @@ async def handle_photo_analysis_confirmation(message: Message, state: FSMContext
 
     await message.answer(
         "Используйте inline-кнопки под результатом: выберите продукт для редактирования "
-        "или нажмите ✅ Сохранить. Для отмены нажмите ❌ Отмена внизу."
+        "или нажмите ✅ Сохранить."
     )
     return
 
