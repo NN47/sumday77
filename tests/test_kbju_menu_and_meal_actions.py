@@ -1,5 +1,14 @@
+import asyncio
+import os
 from datetime import date
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
+os.environ.setdefault("API_TOKEN", "test-token")
+
+from handlers import meals
+from states.user_states import MealEntryStates
+from utils.meal_types import MealType
 from utils.keyboards import (
     FINISH_MEAL_BUTTON_TEXT,
     KBJU_ADD_MEAL_BUTTON_ALIASES,
@@ -77,3 +86,52 @@ def test_meal_actions_keyboard_uses_supported_callback_prefixes():
     assert "add_meal:breakfast:2026-04-08" in callback_data
     assert "edit_meal:breakfast:2026-04-08" in callback_data
     assert "clear_meal:breakfast:2026-04-08" in callback_data
+
+
+class DummyState:
+    def __init__(self):
+        self.data = {"meal_type": MealType.LUNCH.value}
+        self.state = MealEntryStates.waiting_for_ai_food_input
+
+    async def get_data(self):
+        return dict(self.data)
+
+    async def update_data(self, **kwargs):
+        self.data.update(kwargs)
+
+    async def set_state(self, state):
+        self.state = state
+
+
+class DummyMessage:
+    def __init__(self, text="⬅️ Назад"):
+        self.text = text
+        self.from_user = SimpleNamespace(id=12345)
+        self.bot = SimpleNamespace()
+        self.answers = []
+
+    async def answer(self, text, reply_markup=None, parse_mode=None):
+        self.answers.append((text, reply_markup, parse_mode))
+
+
+def test_ai_text_back_returns_to_add_methods_without_running_analyzer():
+    message = DummyMessage()
+    state = DummyState()
+    analyzer = AsyncMock(return_value='{"total": {}}')
+
+    with patch("handlers.meals._show_input_methods", new=AsyncMock()) as show_input_methods:
+        asyncio.run(
+            meals._handle_provider_food_input(
+                message,
+                state,
+                provider_name="DeepSeek",
+                provider_title="📝 AI-анализ приёма пищи",
+                analyzer=analyzer,
+            )
+        )
+
+    analyzer.assert_not_called()
+    show_input_methods.assert_awaited_once_with(message, state, user_id="12345")
+    assert state.state == MealEntryStates.choosing_meal_type
+    assert state.data["meal_type"] == MealType.LUNCH.value
+    assert state.data["pending_add_method"] is None

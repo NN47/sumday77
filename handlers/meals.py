@@ -1117,6 +1117,15 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
     await _return_to_food_diary(message, str(message.from_user.id), target_date)
 
 
+async def _return_to_add_methods_from_method_input(message: Message, state: FSMContext) -> None:
+    """Возвращает из выбранного способа ввода к меню способов добавления без анализа текста."""
+    data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(meal_type=meal_type, pending_add_method=None)
+    await _show_input_methods(message, state, user_id=str(message.from_user.id))
+
+
 async def _select_meal_type_button_if_needed(message: Message, state: FSMContext, text: str) -> bool:
     """Обрабатывает кнопки выбора приёма пищи вне основного шага выбора."""
     if text not in MEAL_TYPE_BUTTONS:
@@ -3049,6 +3058,9 @@ async def _handle_provider_food_input(
     user_text = (message.text or "").strip()
     if await _reroute_add_method_button_if_needed(message, state, user_text):
         return
+    if user_text in BACK_BUTTON_TEXTS:
+        await _return_to_add_methods_from_method_input(message, state)
+        return
     if not user_text:
         await message.answer("Напиши, пожалуйста, что ты съел(а) 🙏")
         return
@@ -3333,6 +3345,9 @@ async def handle_food_input(message: Message, state: FSMContext):
     """Обрабатывает ввод текста для CalorieNinjas."""
     user_text = (message.text or "").strip()
     if await _reroute_add_method_button_if_needed(message, state, user_text):
+        return
+    if user_text in BACK_BUTTON_TEXTS:
+        await _return_to_add_methods_from_method_input(message, state)
         return
     if not user_text:
         await message.answer("Напиши, пожалуйста, что ты съел(а) 🙏")
@@ -3695,9 +3710,8 @@ async def handle_openai_food_photo(message: Message, state: FSMContext):
 @router.message(MealEntryStates.waiting_for_openai_food_photo)
 async def handle_openai_food_non_photo(message: Message, state: FSMContext):
     """Просит прислать именно фото для OpenAI-анализа еды."""
-    if message.text in BACK_BUTTON_TEXTS:
-        from handlers.common import go_back
-        await go_back(message, state)
+    if (message.text or "").strip() in BACK_BUTTON_TEXTS:
+        await _return_to_add_methods_from_method_input(message, state)
         return
     await message.answer("Пожалуйста, отправь фото еды для OpenAI-анализа.")
 
@@ -4032,9 +4046,7 @@ async def handle_label_non_photo(message: Message, state: FSMContext):
     if await _reroute_add_method_button_if_needed(message, state, text):
         return
     if text in BACK_BUTTON_TEXTS:
-        from handlers.common import go_back
-
-        await go_back(message, state)
+        await _return_to_add_methods_from_method_input(message, state)
         return
     await message.answer("Пожалуйста, отправь фото этикетки или выбери другой способ добавления.")
 
@@ -4062,8 +4074,7 @@ async def handle_openai_label_non_photo(message: Message, state: FSMContext):
     if await _reroute_add_method_button_if_needed(message, state, text):
         return
     if text in BACK_BUTTON_TEXTS:
-        from handlers.common import go_back
-        await go_back(message, state)
+        await _return_to_add_methods_from_method_input(message, state)
         return
     await message.answer("Пожалуйста, отправь фото этикетки или упаковки продукта.")
 
