@@ -96,44 +96,37 @@ def _build_recommendations_text() -> str:
     )
 
 
-
-async def send_main_menu_screen(message: Message, user_id: str) -> None:
-    """Отправляет единый экран главного меню с дневной сводкой."""
+@router.message(lambda m: m.text in MAIN_MENU_BUTTON_ALIASES)
+async def go_main_menu(message: Message, state: FSMContext):
+    """Обработчик кнопки 'Главное меню'."""
     from datetime import date
     from utils.progress_formatters import (
         format_progress_block,
         format_water_progress_block,
         format_today_workouts_block,
-        get_today_summary_text,
     )
-
+    
+    user_id = str(message.from_user.id)
+    logger.info(f"User {user_id} navigated to main menu")
+    AnalyticsRepository.track_event(user_id, "open_main_menu", section="main")
+    
+    # Очищаем FSM состояние
+    await state.clear()
+    
+    # Формируем сообщение с прогрессом
     progress_text = format_progress_block(user_id)
     water_progress_text = format_water_progress_block(user_id)
     workouts_text = format_today_workouts_block(user_id, include_date=False)
     recommendations_link = await _build_recommendations_link(message)
 
     today_line = f"📅 <b>{date.today().strftime('%d.%m.%Y')}</b>"
-    try:
-        summary_text = get_today_summary_text(user_id)
-    except Exception:
-        logger.exception("Failed to build today summary for user %s", user_id)
-        summary_text = ""
-
-    if summary_text:
-        welcome_text = (
-            f"{today_line}\n\n"
-            f"{summary_text}\n\n"
-            f"{recommendations_link}\n\n"
-            f"{workouts_text}\n\n{progress_text}\n\n{water_progress_text}"
-        )
-    else:
-        welcome_text = (
-            f"{today_line}\n\n"
-            f"{recommendations_link}\n\n"
-            f"{workouts_text}\n\n{progress_text}\n\n{water_progress_text}"
-        )
-
+    welcome_text = (
+        f"{today_line}\n\n{recommendations_link}\n\n"
+        f"{workouts_text}\n\n{progress_text}\n\n{water_progress_text}"
+    )
+    
     push_menu_stack(message.bot, main_menu)
+    # Отправляем текст с кратким дневным статусом и inline-кнопками быстрых действий
     try:
         await message.answer(
             welcome_text,
@@ -143,19 +136,8 @@ async def send_main_menu_screen(message: Message, user_id: str) -> None:
         )
     except Exception:
         logger.exception("Failed to send main menu summary for user %s", user_id)
+    # Затем — отдельное сообщение с основной клавиатурой без уведомления
     await message.answer("⬇️ Кнопки управления", reply_markup=main_menu, disable_notification=True)
-
-
-@router.message(lambda m: m.text in MAIN_MENU_BUTTON_ALIASES)
-async def go_main_menu(message: Message, state: FSMContext):
-    """Обработчик кнопки 'Главное меню'."""
-    user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} navigated to main menu")
-    AnalyticsRepository.track_event(user_id, "open_main_menu", section="main")
-
-    # Очищаем FSM состояние
-    await state.clear()
-    await send_main_menu_screen(message, user_id)
 
 
 @router.message(StateFilter(None), lambda m: m.text == "⬅️ Назад")
