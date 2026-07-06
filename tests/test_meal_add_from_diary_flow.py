@@ -101,11 +101,17 @@ def test_show_input_methods_sends_add_menu():
 
     state.set_state.assert_awaited_once_with(meals.MealEntryStates.choosing_meal_type)
     push_stack.assert_called_once_with(message.bot, meals.kbju_add_menu)
-    assert message.answer.await_count == 1
-    assert message.answer.await_args.args[0].startswith("Теперь выбери способ добавления приёма пищи")
+    assert message.answer.await_count == 2
+    first_call, second_call = message.answer.await_args_list
+    assert first_call.args[0].startswith("Теперь выбери способ добавления приёма пищи")
+    inline_keyboard = first_call.kwargs["reply_markup"].inline_keyboard
+    assert [[button.text for button in row] for row in inline_keyboard] == [["📦 Мои продукты"]]
+    assert inline_keyboard[0][0].callback_data == "meal_entry_my_products:snack:1"
+    assert second_call.args[0] == "⬇️ Кнопки управления"
+    assert second_call.kwargs["reply_markup"] == meals.kbju_add_menu
 
 
-def test_show_input_methods_points_to_recent_products_when_available():
+def test_show_input_methods_points_to_my_product_products_when_available():
     message = _build_message()
     message.from_user = SimpleNamespace(id=12345)
     state = _DummyState()
@@ -126,9 +132,11 @@ def test_show_input_methods_points_to_recent_products_when_available():
         asyncio.run(meals._show_input_methods(message, state))
 
     assert message.answer.await_count == 2
-    methods_text = message.answer.await_args.args[0]
-    assert methods_text.startswith("<b>Можешь выбрать один из недавно добавленных продуктов выше ☝️")
-    assert "или воспользоваться одним из этих вариантов:</b>" in methods_text
+    methods_text = message.answer.await_args_list[0].args[0]
+    assert methods_text.startswith("Теперь выбери способ добавления приёма пищи")
+    inline_keyboard = message.answer.await_args_list[0].kwargs["reply_markup"].inline_keyboard
+    assert [[button.text for button in row] for row in inline_keyboard] == [["📦 Мои продукты"]]
+    assert inline_keyboard[0][0].callback_data == "meal_entry_my_products:snack:1"
     assert "• 📝 Ввести приём пищи текстом (AI-анализ)" in methods_text
     assert "• 📷 Анализ еды по фото" in methods_text
     assert "• 📋 Анализ этикетки" in methods_text
@@ -201,9 +209,9 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_switches_bottom_
     assert "➕ Добавь следующий продукт" not in answer_text
     assert "✅ Когда приём пищи заполнен" not in answer_text
     keyboard = message.answer.await_args_list[1].kwargs["reply_markup"]
-    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [["✏️ Редактировать", "🕘 Недавние"]]
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [["✏️ Редактировать", "📦 Мои продукты"]]
     assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
-        ["edit_meal:breakfast:2026-04-08", "meal_entry_recent:breakfast:1"]
+        ["edit_meal:breakfast:2026-04-08", "meal_entry_my_products:breakfast:1"]
     ]
     assert message.answer.await_args_list[1].kwargs["parse_mode"] == "HTML"
     add_menu_call = message.answer.await_args_list[-1]
@@ -320,8 +328,8 @@ def test_custom_product_text_amount_save_uses_entered_per_100g_calories():
     assert '"kcal": 32.5' in save_meal.call_args.kwargs["products_json"]
 
 
-def test_meal_entry_recent_inline_button_opens_recent_products_page():
-    callback = _build_callback("meal_entry_recent:dinner:1")
+def test_meal_entry_my_products_inline_button_opens_my_product_products_page():
+    callback = _build_callback("meal_entry_my_products:dinner:1")
     state = _DummyState()
     meal = SimpleNamespace(
         id=7,
@@ -335,12 +343,12 @@ def test_meal_entry_recent_inline_button_opens_recent_products_page():
     )
 
     with patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[meal]):
-        asyncio.run(meals.meal_entry_recent(callback, state))
+        asyncio.run(meals.meal_entry_my_products(callback, state))
 
     callback.answer.assert_awaited_once()
     assert state._data["meal_type"] == meals.MealType.DINNER.value
     text = callback.message.answer.await_args.args[0]
-    assert "🕘 <b>Недавно добавленные • страница 1</b>" in text
+    assert "📦 <b>Мои продукты • страница 1</b>" in text
     assert callback.message.answer.await_args.kwargs["parse_mode"] == "HTML"
 
 
@@ -447,38 +455,38 @@ def test_meal_type_navigation_main_menu_alias():
     go_main_menu.assert_awaited_once_with(message, state)
 
 
-def test_extract_recent_meal_amount_g_from_products_json():
+def test_extract_my_product_amount_g_from_meal_from_products_json():
     meal = SimpleNamespace(products_json='[{"name":"x","grams":40}]')
-    assert meals._extract_recent_meal_amount_g(meal) == 40
+    assert meals._extract_my_product_amount_g_from_meal(meal) == 40
 
 
-def test_extract_recent_meal_amount_g_fallback_to_100():
+def test_extract_my_product_amount_g_from_meal_fallback_to_100():
     meal = SimpleNamespace(products_json='[{"name":"x","grams":"oops"}]')
-    assert meals._extract_recent_meal_amount_g(meal) == 100
+    assert meals._extract_my_product_amount_g_from_meal(meal) == 100
 
 
-def test_recent_weight_editor_keyboard_uses_tenth_scale_on_first_rows():
-    keyboard = meals._build_recent_weight_editor_keyboard()
+def test_my_product_weight_editor_keyboard_uses_tenth_scale_on_first_rows():
+    keyboard = meals._build_my_product_weight_editor_keyboard()
 
     rows = keyboard.inline_keyboard
     assert [button.text for button in rows[0]] == ["−100 г", "−50 г", "+50 г", "+100 г"]
     assert [button.callback_data for button in rows[0]] == [
-        "recent_wchg:-100",
-        "recent_wchg:-50",
-        "recent_wchg:50",
-        "recent_wchg:100",
+        "my_product_wchg:-100",
+        "my_product_wchg:-50",
+        "my_product_wchg:50",
+        "my_product_wchg:100",
     ]
     assert [button.text for button in rows[1]] == ["−25 г", "−10 г", "+10 г", "+25 г"]
     assert [button.callback_data for button in rows[1]] == [
-        "recent_wchg:-25",
-        "recent_wchg:-10",
-        "recent_wchg:10",
-        "recent_wchg:25",
+        "my_product_wchg:-25",
+        "my_product_wchg:-10",
+        "my_product_wchg:10",
+        "my_product_wchg:25",
     ]
 
 
-def test_recent_weight_editor_text_bolds_labels_and_uses_kbju_block():
-    item = meals.RecentMealItem(
+def test_my_product_weight_editor_text_bolds_labels_and_uses_kbju_block():
+    item = meals.MyProductItem(
         source_meal_id=7,
         product_index=0,
         title="БАЛТИКА БЕЗАЛКОГОЛЬНОЕ ГРЕЙПФРУТ №0",
@@ -489,7 +497,7 @@ def test_recent_weight_editor_text_bolds_labels_and_uses_kbju_block():
         carbs=41.6,
     )
 
-    text = meals._render_recent_weight_editor_text(item, draft_amount_g=450)
+    text = meals._render_my_product_weight_editor_text(item, draft_amount_g=450)
 
     assert "<b>✏️ Изменение веса продукта</b>" in text
     assert "<b>Продукт:</b> БАЛТИКА БЕЗАЛКОГОЛЬНОЕ ГРЕЙПФРУТ №0" in text
@@ -505,8 +513,8 @@ def test_recent_weight_editor_text_bolds_labels_and_uses_kbju_block():
     assert "Б 0.9 / Ж 0.1 / У 37.4" not in text
 
 
-def test_recent_confirm_text_uses_photo_style_kbju_and_escapes_html():
-    item = meals.RecentMealItem(
+def test_my_product_confirm_text_uses_photo_style_kbju_and_escapes_html():
+    item = meals.MyProductItem(
         source_meal_id=7,
         product_index=0,
         title="Tea <green>",
@@ -517,7 +525,7 @@ def test_recent_confirm_text_uses_photo_style_kbju_and_escapes_html():
         carbs=0.9,
     )
 
-    text = meals._render_recent_meal_confirm_text("dinner", item, amount_g=300)
+    text = meals._render_my_product_confirm_text("dinner", item, amount_g=300)
 
     assert "🍽 <b>Ужин</b> • <b>Добавить продукт?</b>" in text
     assert "<b>Продукт:</b> Tea &lt;green&gt;" in text
@@ -532,8 +540,8 @@ def test_recent_confirm_text_uses_photo_style_kbju_and_escapes_html():
     assert "Tea <green>" not in text
 
 
-def test_recent_pick_sends_html_parse_mode_for_confirm_card():
-    callback = _build_callback("recent_meal_pick:dinner:1:7:0")
+def test_my_product_pick_sends_html_parse_mode_for_confirm_card():
+    callback = _build_callback("my_product_pick:dinner:1:7:0")
     state = _DummyState()
     meal = SimpleNamespace(
         id=7,
@@ -547,7 +555,7 @@ def test_recent_pick_sends_html_parse_mode_for_confirm_card():
     )
 
     with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal):
-        asyncio.run(meals.recent_meal_pick(callback, state))
+        asyncio.run(meals.my_product_pick(callback, state))
 
     assert callback.message.answer.await_args.kwargs["parse_mode"] == "HTML"
 
@@ -595,7 +603,7 @@ def test_label_intro_message_bolds_title_and_send_paragraph():
     assert [[button.text for button in row] for row in reply_markup.keyboard] == [["⬅️ Назад"]]
 
 
-def test_expand_recent_meals_splits_multi_product_entries():
+def test_expand_my_products_splits_multi_product_entries():
     meal = SimpleNamespace(
         id=7,
         raw_query="Кура гриль 150 г, окрошка 200 г",
@@ -610,7 +618,7 @@ def test_expand_recent_meals_splits_multi_product_entries():
         carbs=34,
     )
 
-    items = meals._expand_recent_meals([meal])
+    items = meals._expand_my_products([meal])
 
     assert [item.title for item in items] == ["Кура гриль", "Окрошка без заправки"]
     assert [item.product_index for item in items] == [0, 1]
@@ -628,8 +636,8 @@ def test_format_emoji_number_uses_full_emoji_digits():
     assert meals._format_emoji_number(20) == "2️⃣0️⃣"
 
 
-def test_format_recent_meals_text_uses_meal_report_bold_style_and_escapes_html():
-    item = meals.RecentMealItem(
+def test_format_my_products_text_uses_meal_report_bold_style_and_escapes_html():
+    item = meals.MyProductItem(
         source_meal_id=7,
         product_index=0,
         title="Салат <Курочка>",
@@ -640,16 +648,16 @@ def test_format_recent_meals_text_uses_meal_report_bold_style_and_escapes_html()
         carbs=1.7,
     )
 
-    text = meals._format_recent_meals_text([item], page=1)
+    text = meals._format_my_products_text([item], page=1)
 
-    assert "🕘 <b>Недавно добавленные • страница 1</b>" in text
+    assert "📦 <b>Мои продукты • страница 1</b>" in text
     assert "1️⃣ <b>Салат &lt;Курочка&gt;</b>" in text
     assert "<b>120 г • 67 ккал</b>" in text
     assert "<i>Б 3.1 / Ж 5.3 / У 1.7</i>" in text
     assert "<Курочка>" not in text
 
 
-def test_show_recent_meals_page_sends_html_parse_mode():
+def test_show_my_products_page_sends_html_parse_mode():
     message = _build_message()
     message.from_user = SimpleNamespace(id=12345)
     state = _DummyState()
@@ -665,24 +673,24 @@ def test_show_recent_meals_page_sends_html_parse_mode():
     )
 
     with patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[meal]):
-        asyncio.run(meals._show_recent_meals_page(message, state, meal_type="snack", page=1))
+        asyncio.run(meals._show_my_products_page(message, state, meal_type="snack", page=1))
 
     assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
 
 
-def test_recent_search_start_bolds_prompt_first_sentence():
-    callback = _build_callback("recent_search_start:snack")
+def test_my_products_search_start_bolds_prompt_first_sentence():
+    callback = _build_callback("my_products_search_start:snack")
     state = _DummyState()
 
-    asyncio.run(meals.recent_search_start(callback, state))
+    asyncio.run(meals.my_products_search_start(callback, state))
 
     text = callback.message.answer.await_args.args[0]
     assert text.startswith("<b>Введите название продукта или часть названия 👇</b>\n\n")
     assert "Например:\nсыр\nйог\nкур" in text
 
 
-def test_recent_meals_keyboard_has_search_button():
-    item = meals.RecentMealItem(
+def test_my_product_meals_keyboard_has_search_button():
+    item = meals.MyProductItem(
         source_meal_id=7,
         product_index=0,
         title="Сыр творожный",
@@ -693,30 +701,30 @@ def test_recent_meals_keyboard_has_search_button():
         carbs=3,
     )
 
-    keyboard = meals._build_recent_meals_keyboard([item], meal_type="snack", page=1, has_prev=False, has_next=False)
+    keyboard = meals._build_my_products_keyboard([item], meal_type="snack", page=1, has_prev=False, has_next=False)
 
     assert keyboard.inline_keyboard[-1][0].text == "🔎 Поиск продукта"
-    assert keyboard.inline_keyboard[-1][0].callback_data == "recent_search_start:snack"
+    assert keyboard.inline_keyboard[-1][0].callback_data == "my_products_search_start:snack"
 
 
-def test_search_recent_items_matches_any_part_case_insensitive():
+def test_search_my_products_matches_any_part_case_insensitive():
     items = [
-        meals.RecentMealItem(1, 0, "Плавленый сыр сливочный", 100, 250, 12, 20, 3),
-        meals.RecentMealItem(2, 0, "Сыр творожный", 100, 180, 11, 12, 4),
-        meals.RecentMealItem(3, 0, "Бутерброд с сыром", 100, 310, 13, 14, 32),
-        meals.RecentMealItem(4, 0, "Курица гриль", 100, 180, 25, 8, 0),
+        meals.MyProductItem(1, 0, "Плавленый сыр сливочный", 100, 250, 12, 20, 3),
+        meals.MyProductItem(2, 0, "Сыр творожный", 100, 180, 11, 12, 4),
+        meals.MyProductItem(3, 0, "Бутерброд с сыром", 100, 310, 13, 14, 32),
+        meals.MyProductItem(4, 0, "Курица гриль", 100, 180, 25, 8, 0),
     ]
 
-    assert [item.title for item in meals._search_recent_items(items, "СЫР")] == [
+    assert [item.title for item in meals._search_my_products(items, "СЫР")] == [
         "Плавленый сыр сливочный",
         "Сыр творожный",
         "Бутерброд с сыром",
     ]
-    assert [item.title for item in meals._search_recent_items(items, "кур")] == ["Курица гриль"]
+    assert [item.title for item in meals._search_my_products(items, "кур")] == ["Курица гриль"]
 
 
-def test_format_recent_search_results_text_uses_recent_format_and_escapes_query():
-    item = meals.RecentMealItem(
+def test_format_my_products_search_results_text_uses_my_product_format_and_escapes_query():
+    item = meals.MyProductItem(
         source_meal_id=7,
         product_index=0,
         title="Сыр <творожный>",
@@ -727,7 +735,7 @@ def test_format_recent_search_results_text_uses_recent_format_and_escapes_query(
         carbs=1.7,
     )
 
-    text = meals._format_recent_search_results_text("сыр <", [item], page=1)
+    text = meals._format_my_products_search_results_text("сыр <", [item], page=1)
 
     assert "🔎 <b>Результаты поиска: сыр &lt;</b>" in text
     assert "1️⃣ <b>Сыр &lt;творожный&gt;</b>" in text
@@ -735,7 +743,7 @@ def test_format_recent_search_results_text_uses_recent_format_and_escapes_query(
     assert "<i>Б 3.1 / Ж 5.3 / У 1.7</i>" in text
 
 
-def test_recent_search_query_uses_full_user_history_not_recent_page():
+def test_my_products_search_query_uses_full_user_history_not_my_product_page():
     message = _build_message()
     message.from_user = SimpleNamespace(id=12345)
     message.text = "сыр"
@@ -755,7 +763,7 @@ def test_recent_search_query_uses_full_user_history_not_recent_page():
     with patch("handlers.meals.MealRepository.get_user_meal_history", return_value=[meal]) as history, patch(
         "handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]
     ) as recent:
-        asyncio.run(meals.handle_recent_meal_search_query(message, state))
+        asyncio.run(meals.handle_my_products_search_query(message, state))
 
     history.assert_called_once_with("12345")
     recent.assert_not_called()
@@ -763,14 +771,14 @@ def test_recent_search_query_uses_full_user_history_not_recent_page():
     assert "Плавленый сыр сливочный" in message.answer.await_args.args[0]
 
 
-def test_recent_search_empty_result_shows_retry_and_back_buttons():
+def test_my_products_search_empty_result_shows_retry_and_back_buttons():
     message = _build_message()
     message.from_user = SimpleNamespace(id=12345)
     state = _DummyState()
 
     with patch("handlers.meals.MealRepository.get_user_meal_history", return_value=[]):
         asyncio.run(
-            meals._show_recent_search_results(
+            meals._show_my_products_search_results(
                 message,
                 state,
                 user_id="12345",
@@ -785,19 +793,19 @@ def test_recent_search_empty_result_shows_retry_and_back_buttons():
     assert "Ничего не нашёл 😕" in text
     assert [row[0].text for row in keyboard.inline_keyboard] == [
         "🔎 Искать ещё",
-        "⬅️ К недавним продуктам",
+        "⬅️ К моим продуктам",
     ]
 
 
-def test_recent_meals_keyboard_uses_full_emoji_numbers_on_later_pages():
+def test_my_product_meals_keyboard_uses_full_emoji_numbers_on_later_pages():
     items = [
-        meals.RecentMealItem(9, 0, "Продукт 9", 100, 100, 1, 1, 1),
-        meals.RecentMealItem(10, 0, "Продукт 10", 100, 100, 1, 1, 1),
-        meals.RecentMealItem(11, 0, "Продукт 11", 100, 100, 1, 1, 1),
-        meals.RecentMealItem(12, 0, "Продукт 12", 100, 100, 1, 1, 1),
+        meals.MyProductItem(9, 0, "Продукт 9", 100, 100, 1, 1, 1),
+        meals.MyProductItem(10, 0, "Продукт 10", 100, 100, 1, 1, 1),
+        meals.MyProductItem(11, 0, "Продукт 11", 100, 100, 1, 1, 1),
+        meals.MyProductItem(12, 0, "Продукт 12", 100, 100, 1, 1, 1),
     ]
 
-    keyboard = meals._build_recent_meals_keyboard(
+    keyboard = meals._build_my_products_keyboard(
         items, meal_type="snack", page=2, has_prev=True, has_next=True
     )
 
@@ -808,8 +816,8 @@ def test_recent_meals_keyboard_uses_full_emoji_numbers_on_later_pages():
     assert keyboard.inline_keyboard[-1][0].text == "🔎 Поиск продукта"
 
 
-def test_recent_search_results_keyboard_marks_pick_origin_as_search():
-    item = meals.RecentMealItem(
+def test_my_products_search_results_keyboard_marks_pick_origin_as_search():
+    item = meals.MyProductItem(
         source_meal_id=7,
         product_index=2,
         title="Патиссоны маринованные",
@@ -820,20 +828,20 @@ def test_recent_search_results_keyboard_marks_pick_origin_as_search():
         carbs=1.8,
     )
 
-    keyboard = meals._build_recent_search_results_keyboard(
+    keyboard = meals._build_my_products_search_results_keyboard(
         [item], meal_type="dinner", page=1, has_prev=False, has_next=False
     )
 
-    assert keyboard.inline_keyboard[0][0].callback_data == "recent_meal_pick:dinner:1:7:2:search"
+    assert keyboard.inline_keyboard[0][0].callback_data == "my_product_pick:dinner:1:7:2:search"
 
 
-def test_recent_search_results_keyboard_uses_absolute_numbers_on_later_pages():
+def test_my_products_search_results_keyboard_uses_absolute_numbers_on_later_pages():
     items = [
-        meals.RecentMealItem(21, 0, "Сыр полутвердый", 70, 97, 14, 4.2, 0.7),
-        meals.RecentMealItem(22, 0, "Карпаччо куриное", 60, 64, 10.2, 1.8, 1.8),
+        meals.MyProductItem(21, 0, "Сыр полутвердый", 70, 97, 14, 4.2, 0.7),
+        meals.MyProductItem(22, 0, "Карпаччо куриное", 60, 64, 10.2, 1.8, 1.8),
     ]
 
-    keyboard = meals._build_recent_search_results_keyboard(
+    keyboard = meals._build_my_products_search_results_keyboard(
         items, meal_type="dinner", page=3, has_prev=True, has_next=True
     )
 
@@ -865,7 +873,7 @@ def test_custom_product_pick_shows_delete_button():
     markup = callback.message.answer.await_args.kwargs["reply_markup"]
     button_texts = [button.text for row in markup.inline_keyboard for button in row]
     assert button_texts == ["✅ Добавить", "✏️ Изменить вес", "🗑 Удалить", "⬅️ Назад"]
-    assert state._data["recent_pick_origin"] == "custom"
+    assert state._data["my_product_pick_origin"] == "custom"
 
 
 def test_custom_product_delete_removes_saved_product_and_returns_to_my_products():
@@ -894,21 +902,21 @@ def test_custom_product_delete_removes_saved_product_and_returns_to_my_products(
     callback.message.answer.assert_awaited_once_with("✅ Продукт удалён из списка своих продуктов.")
     show_my_product.assert_awaited_once_with(callback.message, state, meal_type="dinner", user_id="12345")
 
-def test_recent_meal_back_returns_to_search_results_when_product_opened_from_search():
-    callback = _build_callback("recent_meal_back:dinner:1")
+def test_my_product_back_returns_to_search_results_when_product_opened_from_search():
+    callback = _build_callback("my_product_back:dinner:1")
     state = _DummyState()
     state._data.update(
         {
-            "recent_pick_origin": "search",
-            "recent_search_query": "Марин",
-            "recent_search_page": 2,
+            "my_product_pick_origin": "search",
+            "my_products_search_query": "Марин",
+            "my_products_search_page": 2,
         }
     )
 
-    with patch("handlers.meals._show_recent_search_results", new=AsyncMock()) as show_search, patch(
-        "handlers.meals._show_recent_meals_page", new=AsyncMock()
+    with patch("handlers.meals._show_my_products_search_results", new=AsyncMock()) as show_search, patch(
+        "handlers.meals._show_my_products_page", new=AsyncMock()
     ) as show_recent:
-        asyncio.run(meals.recent_meal_back(callback, state))
+        asyncio.run(meals.my_product_back(callback, state))
 
     show_search.assert_awaited_once_with(
         callback.message,
@@ -922,15 +930,15 @@ def test_recent_meal_back_returns_to_search_results_when_product_opened_from_sea
     show_recent.assert_not_awaited()
 
 
-def test_recent_meal_back_returns_to_recent_list_for_regular_recent_pick():
-    callback = _build_callback("recent_meal_back:dinner:3")
+def test_my_product_back_returns_to_my_product_list_for_regular_my_product_pick():
+    callback = _build_callback("my_product_back:dinner:3")
     state = _DummyState()
-    state._data.update({"recent_pick_origin": "recent", "recent_search_query": "Марин"})
+    state._data.update({"my_product_pick_origin": "recent", "my_products_search_query": "Марин"})
 
-    with patch("handlers.meals._show_recent_search_results", new=AsyncMock()) as show_search, patch(
-        "handlers.meals._show_recent_meals_page", new=AsyncMock()
+    with patch("handlers.meals._show_my_products_search_results", new=AsyncMock()) as show_search, patch(
+        "handlers.meals._show_my_products_page", new=AsyncMock()
     ) as show_recent:
-        asyncio.run(meals.recent_meal_back(callback, state))
+        asyncio.run(meals.my_product_back(callback, state))
 
     show_recent.assert_awaited_once_with(
         callback.message,
@@ -943,8 +951,8 @@ def test_recent_meal_back_returns_to_recent_list_for_regular_recent_pick():
     show_search.assert_not_awaited()
 
 
-def test_recent_weight_edit_from_my_products_preserves_custom_origin():
-    callback = _build_callback("recent_meal_edit_weight:dinner:1:7:0")
+def test_my_product_weight_edit_from_my_products_preserves_custom_origin():
+    callback = _build_callback("my_product_edit_weight:dinner:1:7:0")
     state = _DummyState()
     state._data.update({"in_my_product_menu": True})
     meal = SimpleNamespace(
@@ -962,23 +970,23 @@ def test_recent_weight_edit_from_my_products_preserves_custom_origin():
     )
 
     with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal):
-        asyncio.run(meals.recent_meal_edit_weight(callback, state))
+        asyncio.run(meals.my_product_edit_weight(callback, state))
 
-    assert state._data["recent_pick_origin"] == "custom"
+    assert state._data["my_product_pick_origin"] == "custom"
     assert state._data["in_my_product_menu"] is True
 
 
-def test_recent_weight_back_from_my_products_keeps_delete_button_on_confirm_card():
-    callback = _build_callback("recent_wback")
+def test_my_product_weight_back_from_my_products_keeps_delete_button_on_confirm_card():
+    callback = _build_callback("my_product_wback")
     state = _DummyState()
     state._data.update(
         {
-            "recent_source_meal_id": 7,
-            "recent_source_product_idx": 0,
-            "recent_pick_origin": "custom",
+            "my_product_source_meal_id": 7,
+            "my_product_source_product_idx": 0,
+            "my_product_pick_origin": "custom",
             "in_my_product_menu": True,
             "meal_type": "dinner",
-            "recent_meals_page": 1,
+            "my_products_page": 1,
         }
     )
     meal = SimpleNamespace(
@@ -996,15 +1004,15 @@ def test_recent_weight_back_from_my_products_keeps_delete_button_on_confirm_card
     )
 
     with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal):
-        asyncio.run(meals.recent_meal_weight_back(callback, state))
+        asyncio.run(meals.my_product_weight_back(callback, state))
 
     markup = callback.message.edit_text.await_args.kwargs["reply_markup"]
     button_texts = [button.text for row in markup.inline_keyboard for button in row]
     assert button_texts == ["✅ Добавить", "✏️ Изменить вес", "🗑 Удалить", "⬅️ Назад"]
 
 
-def test_recent_confirm_uses_single_selected_product():
-    callback = _build_callback("recent_meal_confirm:dinner:1:7:1")
+def test_my_product_confirm_uses_single_selected_product():
+    callback = _build_callback("my_product_confirm:dinner:1:7:1")
     state = _DummyState()
     meal = SimpleNamespace(
         id=7,
@@ -1025,7 +1033,7 @@ def test_recent_confirm_uses_single_selected_product():
     with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal), patch(
         "handlers.meals.MealRepository.save_meal", return_value=saved
     ) as save_meal, patch("handlers.meals._keep_meal_entry_open_after_save", new=AsyncMock()) as keep_open:
-        asyncio.run(meals.recent_meal_confirm(callback, state))
+        asyncio.run(meals.my_product_confirm(callback, state))
 
     save_meal.assert_called_once()
     keep_open.assert_awaited_once()
@@ -1235,14 +1243,14 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
             ],
         ), \
         patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]), \
-        patch("handlers.meals._show_recent_meals_page", new=AsyncMock()) as show_recent_meals, \
+        patch("handlers.meals._show_my_products_page", new=AsyncMock()) as show_my_product_meals, \
         patch("handlers.meals.push_menu_stack"):
         caplog.set_level("INFO", logger="handlers.meals")
         asyncio.run(meals.handle_ai_food_input(message, state))
 
     deepseek_analyze.assert_called_once_with("200 г курицы")
     gemini_task.assert_not_called()
-    show_recent_meals.assert_not_awaited()
+    show_my_product_meals.assert_not_awaited()
     save_meal.assert_called_once()
     assert save_meal.call_args.kwargs["calories"] == 330
     assert save_meal.call_args.kwargs["meal_type"] == meals.MealType.LUNCH.value
@@ -1275,8 +1283,8 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_add_menu
 
 
-def test_recent_meal_page_edits_existing_message_instead_of_sending_new_one():
-    callback = _build_callback("recent_meal_page:dinner:2")
+def test_my_products_page_edits_existing_message_instead_of_sending_new_one():
+    callback = _build_callback("my_products_page:dinner:2")
     state = _DummyState()
     meals_history = [
         SimpleNamespace(
@@ -1296,7 +1304,7 @@ def test_recent_meal_page_edits_existing_message_instead_of_sending_new_one():
     ]
 
     with patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=meals_history):
-        asyncio.run(meals.recent_meal_page(callback, state))
+        asyncio.run(meals.my_products_page(callback, state))
 
     callback.answer.assert_awaited_once()
     callback.message.answer.assert_not_awaited()
@@ -1308,7 +1316,7 @@ def test_custom_product_page_edits_existing_message_instead_of_sending_new_one()
     callback = _build_callback("custom_product_page:snack:2")
     state = _DummyState()
     items = [
-        meals.RecentMealItem(i, 0, f"Мой продукт {i}", 100, 50, 1, 2, 3)
+        meals.MyProductItem(i, 0, f"Мой продукт {i}", 100, 50, 1, 2, 3)
         for i in range(1, 10)
     ]
 

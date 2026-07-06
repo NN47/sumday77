@@ -101,7 +101,7 @@ ADD_METHOD_TEXTS = {
     "label": "📋 Анализ этикетки",
     "label_openai": "🧪 Анализ этикетки OpenAI",
     "barcode": "📷 Скан штрих-кода",
-    "custom": "🧺 Мой продукт",
+    "custom": "🧺 Внести вручную",
 }
 
 
@@ -489,7 +489,7 @@ def _format_label_weight_confirmation_text(data: dict, weight_grams: float) -> s
     return "\n".join(lines)
 
 
-RECENT_MEALS_PAGE_SIZE = 8
+MY_PRODUCTS_PAGE_SIZE = 8
 
 
 _EMOJI_DIGITS = {
@@ -514,8 +514,8 @@ def _format_emoji_number(number: int) -> str:
 
 
 @dataclass(frozen=True)
-class RecentMealItem:
-    """Один продукт для отображения в списке недавних продуктов."""
+class MyProductItem:
+    """Один продукт для отображения в списке моих продуктов."""
 
     source_meal_id: int
     product_index: int | None
@@ -527,14 +527,14 @@ class RecentMealItem:
     carbs: float
 
 
-def _truncate_recent_name(name: str, limit: int = 22) -> str:
+def _truncate_my_product_name(name: str, limit: int = 22) -> str:
     clean = (name or "").strip()
     if len(clean) <= limit:
         return clean
     return f"{clean[:limit-1].rstrip()}…"
 
 
-def _normalize_recent_meal_title(meal) -> str:
+def _normalize_my_product_title(meal) -> str:
     """Возвращает человекочитаемое название продукта без технических префиксов."""
     raw_title = (meal.raw_query or meal.description or "Продукт").strip()
     lowered = raw_title.lower()
@@ -550,7 +550,7 @@ def _safe_float(value, default: float = 0.0) -> float:
         return default
 
 
-def _parse_recent_products(meal) -> list[dict]:
+def _parse_my_products(meal) -> list[dict]:
     raw_products = getattr(meal, "products_json", None)
     if not raw_products:
         return []
@@ -563,46 +563,46 @@ def _parse_recent_products(meal) -> list[dict]:
     return [product for product in parsed if isinstance(product, dict)]
 
 
-def _recent_product_title(product: dict) -> str:
+def _my_product_title(product: dict) -> str:
     raw_name = str(product.get("name") or "").strip()
     if not raw_name or raw_name.lower() == "none":
         return "Продукт"
     return raw_name
 
 
-def _recent_product_value(product: dict, *keys: str) -> float:
+def _my_product_value(product: dict, *keys: str) -> float:
     for key in keys:
         if key in product:
             return _safe_float(product.get(key))
     return 0.0
 
 
-def _extract_recent_product_amount_g(product: dict) -> int:
+def _extract_my_product_amount_g(product: dict) -> int:
     grams_value = _safe_float(product.get("grams"), default=0.0)
     if grams_value <= 0:
         return 100
     return max(1, int(round(grams_value)))
 
 
-def _build_recent_item_from_product(meal, product: dict, product_index: int) -> RecentMealItem:
-    return RecentMealItem(
+def _build_my_product_item_from_product(meal, product: dict, product_index: int) -> MyProductItem:
+    return MyProductItem(
         source_meal_id=meal.id,
         product_index=product_index,
-        title=_recent_product_title(product),
-        amount_g=_extract_recent_product_amount_g(product),
-        calories=_recent_product_value(product, "kcal", "calories"),
-        protein=_recent_product_value(product, "protein", "protein_g"),
-        fat=_recent_product_value(product, "fat", "fat_total_g"),
-        carbs=_recent_product_value(product, "carbs", "carbohydrates_total_g"),
+        title=_my_product_title(product),
+        amount_g=_extract_my_product_amount_g(product),
+        calories=_my_product_value(product, "kcal", "calories"),
+        protein=_my_product_value(product, "protein", "protein_g"),
+        fat=_my_product_value(product, "fat", "fat_total_g"),
+        carbs=_my_product_value(product, "carbs", "carbohydrates_total_g"),
     )
 
 
-def _build_recent_item_from_meal(meal) -> RecentMealItem:
-    return RecentMealItem(
+def _build_my_product_item_from_meal(meal) -> MyProductItem:
+    return MyProductItem(
         source_meal_id=meal.id,
         product_index=None,
-        title=_normalize_recent_meal_title(meal),
-        amount_g=_extract_recent_meal_amount_g(meal),
+        title=_normalize_my_product_title(meal),
+        amount_g=_extract_my_product_amount_g_from_meal(meal),
         calories=float(meal.calories or 0),
         protein=float(meal.protein or 0),
         fat=float(meal.fat or 0),
@@ -610,19 +610,19 @@ def _build_recent_item_from_meal(meal) -> RecentMealItem:
     )
 
 
-def _expand_recent_meals(recent_meals: list, limit: int = 64) -> list[RecentMealItem]:
+def _expand_my_products(my_product_meals: list, limit: int = 64) -> list[MyProductItem]:
     """Разворачивает записи истории в отдельные продукты для выбора по одному."""
-    items: list[RecentMealItem] = []
+    items: list[MyProductItem] = []
     seen: set[str] = set()
-    for meal in recent_meals:
-        products = _parse_recent_products(meal)
+    for meal in my_product_meals:
+        products = _parse_my_products(meal)
         meal_items = [
-            _build_recent_item_from_product(meal, product, idx)
+            _build_my_product_item_from_product(meal, product, idx)
             for idx, product in enumerate(products)
-            if _recent_product_title(product) != "Продукт"
+            if _my_product_title(product) != "Продукт"
         ]
         if not meal_items:
-            meal_items = [_build_recent_item_from_meal(meal)]
+            meal_items = [_build_my_product_item_from_meal(meal)]
 
         for item in meal_items:
             key = item.title.strip().lower()
@@ -636,21 +636,21 @@ def _expand_recent_meals(recent_meals: list, limit: int = 64) -> list[RecentMeal
 
 
 def _is_custom_product_meal(meal) -> bool:
-    """Проверяет, что запись создана именно через кнопку «Мой продукт»."""
-    return any(product.get("source") == "custom_product" for product in _parse_recent_products(meal))
+    """Проверяет, что запись создана именно через кнопку «Внести вручную»."""
+    return any(product.get("source") == "custom_product" for product in _parse_my_products(meal))
 
 
-def _get_custom_product_items(user_id: str, limit: int = 64) -> list[RecentMealItem]:
-    """Возвращает только продукты, созданные пользователем через кнопку «Мой продукт»."""
+def _get_custom_product_items(user_id: str, limit: int = 64) -> list[MyProductItem]:
+    """Возвращает только продукты, созданные пользователем через кнопку «Внести вручную»."""
     source_meals = MealRepository.get_user_meal_history(user_id)
     custom_meals = [meal for meal in source_meals if _is_custom_product_meal(meal)]
-    return _expand_recent_meals(custom_meals, limit=limit)
+    return _expand_my_products(custom_meals, limit=limit)
 
 
-def _format_recent_meals_text(recent_meals: list[RecentMealItem], page: int, *, title: str = "🕘 <b>Недавно добавленные") -> str:
-    start_idx = (page - 1) * RECENT_MEALS_PAGE_SIZE
+def _format_my_products_text(my_product_meals: list[MyProductItem], page: int, *, title: str = "📦 <b>Мои продукты") -> str:
+    start_idx = (page - 1) * MY_PRODUCTS_PAGE_SIZE
     lines: list[str] = [f"{title} • страница {page}</b>", ""]
-    for offset, item in enumerate(recent_meals, start=start_idx + 1):
+    for offset, item in enumerate(my_product_meals, start=start_idx + 1):
         lines.extend(
             [
                 f"{_format_emoji_number(offset)} <b>{html.escape(item.title)}</b>",
@@ -662,8 +662,8 @@ def _format_recent_meals_text(recent_meals: list[RecentMealItem], page: int, *, 
     return "\n".join(lines).strip()
 
 
-def _format_recent_search_results_text(query: str, items: list[RecentMealItem], page: int) -> str:
-    start_idx = (page - 1) * RECENT_MEALS_PAGE_SIZE
+def _format_my_products_search_results_text(query: str, items: list[MyProductItem], page: int) -> str:
+    start_idx = (page - 1) * MY_PRODUCTS_PAGE_SIZE
     safe_query = html.escape((query or "").strip())
     lines: list[str] = [f"🔎 <b>Результаты поиска: {safe_query}</b>", ""]
     for offset, item in enumerate(items, start=start_idx + 1):
@@ -678,52 +678,52 @@ def _format_recent_search_results_text(query: str, items: list[RecentMealItem], 
     return "\n".join(lines).strip()
 
 
-def _search_recent_items(items: list[RecentMealItem], query: str) -> list[RecentMealItem]:
+def _search_my_products(items: list[MyProductItem], query: str) -> list[MyProductItem]:
     normalized_query = (query or "").strip().casefold()
     if not normalized_query:
         return []
     return [item for item in items if normalized_query in (item.title or "").casefold()]
 
 
-def _build_recent_meals_keyboard(recent_meals: list[RecentMealItem], meal_type: str, page: int, has_prev: bool, has_next: bool) -> InlineKeyboardMarkup:
+def _build_my_products_keyboard(my_product_meals: list[MyProductItem], meal_type: str, page: int, has_prev: bool, has_next: bool) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    for offset, item in enumerate(recent_meals, start=1):
-        title = _truncate_recent_name(item.title)
-        number = (page - 1) * RECENT_MEALS_PAGE_SIZE + offset
+    for offset, item in enumerate(my_product_meals, start=1):
+        title = _truncate_my_product_name(item.title)
+        number = (page - 1) * MY_PRODUCTS_PAGE_SIZE + offset
         product_idx = "" if item.product_index is None else str(item.product_index)
         rows.append(
             [
                 InlineKeyboardButton(
                     text=f"{_format_emoji_number(number)} {title}",
-                    callback_data=f"recent_meal_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}",
+                    callback_data=f"my_product_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}",
                 )
             ]
         )
 
     nav_row: list[InlineKeyboardButton] = []
     if has_prev:
-        nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"recent_meal_page:{meal_type}:{page-1}"))
+        nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_products_page:{meal_type}:{page-1}"))
     if has_next:
-        nav_row.append(InlineKeyboardButton(text="➡️ Показать ещё", callback_data=f"recent_meal_page:{meal_type}:{page+1}"))
+        nav_row.append(InlineKeyboardButton(text="➡️ Показать ещё", callback_data=f"my_products_page:{meal_type}:{page+1}"))
     if nav_row:
         rows.append(nav_row)
 
-    rows.append([InlineKeyboardButton(text="🔎 Поиск продукта", callback_data=f"recent_search_start:{meal_type}")])
+    rows.append([InlineKeyboardButton(text="🔎 Поиск продукта", callback_data=f"my_products_search_start:{meal_type}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _build_custom_products_keyboard(
-    products: list[RecentMealItem],
+    products: list[MyProductItem],
     meal_type: str,
     page: int,
     has_prev: bool,
     has_next: bool,
 ) -> InlineKeyboardMarkup:
-    """Inline-выбор своих продуктов в визуальном стиле списка недавних."""
+    """Inline-выбор своих продуктов в визуальном стиле списка моих."""
     rows: list[list[InlineKeyboardButton]] = []
     for offset, item in enumerate(products, start=1):
-        title = _truncate_recent_name(item.title)
-        number = (page - 1) * RECENT_MEALS_PAGE_SIZE + offset
+        title = _truncate_my_product_name(item.title)
+        number = (page - 1) * MY_PRODUCTS_PAGE_SIZE + offset
         product_idx = "" if item.product_index is None else str(item.product_index)
         rows.append(
             [
@@ -744,45 +744,45 @@ def _build_custom_products_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _build_recent_search_results_keyboard(
-    items: list[RecentMealItem],
+def _build_my_products_search_results_keyboard(
+    items: list[MyProductItem],
     meal_type: str,
     page: int,
     has_prev: bool,
     has_next: bool,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    start_idx = (page - 1) * RECENT_MEALS_PAGE_SIZE
+    start_idx = (page - 1) * MY_PRODUCTS_PAGE_SIZE
     for offset, item in enumerate(items, start=1):
-        title = _truncate_recent_name(item.title)
+        title = _truncate_my_product_name(item.title)
         number = start_idx + offset
         product_idx = "" if item.product_index is None else str(item.product_index)
         rows.append(
             [
                 InlineKeyboardButton(
                     text=f"{_format_emoji_number(number)} {title}",
-                    callback_data=f"recent_meal_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}:search",
+                    callback_data=f"my_product_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}:search",
                 )
             ]
         )
 
     nav_row: list[InlineKeyboardButton] = []
     if has_prev:
-        nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"recent_search_page:{meal_type}:{page-1}"))
+        nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_products_search_page:{meal_type}:{page-1}"))
     if has_next:
-        nav_row.append(InlineKeyboardButton(text="➡️ Показать ещё", callback_data=f"recent_search_page:{meal_type}:{page+1}"))
+        nav_row.append(InlineKeyboardButton(text="➡️ Показать ещё", callback_data=f"my_products_search_page:{meal_type}:{page+1}"))
     if nav_row:
         rows.append(nav_row)
-    rows.append([InlineKeyboardButton(text="🔎 Искать ещё", callback_data=f"recent_search_start:{meal_type}")])
-    rows.append([InlineKeyboardButton(text="⬅️ К недавним продуктам", callback_data=f"recent_search_back:{meal_type}")])
+    rows.append([InlineKeyboardButton(text="🔎 Искать ещё", callback_data=f"my_products_search_start:{meal_type}")])
+    rows.append([InlineKeyboardButton(text="⬅️ К моим продуктам", callback_data=f"my_products_search_back:{meal_type}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _build_recent_search_empty_keyboard(meal_type: str) -> InlineKeyboardMarkup:
+def _build_my_products_search_empty_keyboard(meal_type: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔎 Искать ещё", callback_data=f"recent_search_start:{meal_type}")],
-            [InlineKeyboardButton(text="⬅️ К недавним продуктам", callback_data=f"recent_search_back:{meal_type}")],
+            [InlineKeyboardButton(text="🔎 Искать ещё", callback_data=f"my_products_search_start:{meal_type}")],
+            [InlineKeyboardButton(text="⬅️ К моим продуктам", callback_data=f"my_products_search_back:{meal_type}")],
         ]
     )
 
@@ -1036,7 +1036,7 @@ async def custom_product_value_save(callback: CallbackQuery, state: FSMContext):
 
 
 def _build_my_product_keyboard(meal_type: str) -> ReplyKeyboardMarkup:
-    """Обычные кнопки нижней части экрана «Мой продукт»."""
+    """Обычные кнопки нижней части экрана «Внести вручную»."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="➕ Создать продукт")],
@@ -1064,14 +1064,14 @@ async def _show_my_product_menu(
     meal_type: str,
     user_id: str,
 ) -> None:
-    """Показывает продукты, созданные через «Мой продукт», и обычные кнопки действий."""
+    """Показывает продукты, созданные через «Внести вручную», и обычные кнопки действий."""
     products = _get_custom_product_items(user_id, limit=64)
     if products:
-        total_pages = max(1, math.ceil(len(products) / RECENT_MEALS_PAGE_SIZE))
+        total_pages = max(1, math.ceil(len(products) / MY_PRODUCTS_PAGE_SIZE))
         page = 1
-        page_items = products[:RECENT_MEALS_PAGE_SIZE]
+        page_items = products[:MY_PRODUCTS_PAGE_SIZE]
         await message.answer(
-            _format_recent_meals_text(page_items, page, title="🧺 <b>Мои продукты"),
+            _format_my_products_text(page_items, page, title="🧺 <b>Мои продукты"),
             reply_markup=_build_custom_products_keyboard(
                 page_items,
                 meal_type,
@@ -1082,12 +1082,12 @@ async def _show_my_product_menu(
             parse_mode="HTML",
         )
         text = (
-            "<b>🧺 Мой продукт</b>\n\n"
+            "<b>🧺 Внести вручную</b>\n\n"
             "Выбери один из своих продуктов выше или создай новый продукт вручную."
         )
     else:
         text = (
-            "<b>🧺 Мой продукт</b>\n\n"
+            "<b>🧺 Внести вручную</b>\n\n"
             "Здесь ты можешь сам внести свой продукт: название и КБЖУ на 100 г.\n"
             "Нажми «➕ Создать продукт», чтобы добавить первый продукт."
         )
@@ -1614,31 +1614,36 @@ async def _ensure_meal_type_selected(
     return False
 
 
+def _build_my_products_entry_keyboard(meal_type: str) -> InlineKeyboardMarkup:
+    normalized_meal_type = normalize_meal_type(meal_type, fallback=MealType.SNACK.value)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📦 Мои продукты",
+                    callback_data=f"meal_entry_my_products:{normalized_meal_type}:1",
+                )
+            ]
+        ]
+    )
+
+
 async def _show_input_methods(message: Message, state: FSMContext, *, user_id: str | None = None) -> None:
     """Показывает меню способов добавления еды для уже выбранного типа приёма."""
     await state.set_state(MealEntryStates.choosing_meal_type)
     meal_type = normalize_meal_type((await state.get_data()).get("meal_type"), fallback=MealType.SNACK.value)
-    recent_meals_shown = await _show_recent_meals_page(message, state, meal_type=meal_type, page=1, user_id=user_id)
-    if recent_meals_shown:
-        text = (
-            "<b>Можешь выбрать один из недавно добавленных продуктов выше ☝️ "
-            "или воспользоваться одним из этих вариантов:</b>\n\n"
-            "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
-            "• 📷 Анализ еды по фото\n"
-            "• 📋 Анализ этикетки"
-        )
-    else:
-        text = (
-            "Теперь выбери способ добавления приёма пищи:\n\n"
-            "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
-            "• 📷 Анализ еды по фото\n"
-            "• 📋 Анализ этикетки"
-        )
+    text = (
+        "Теперь выбери способ добавления приёма пищи:\n\n"
+        "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
+        "• 📷 Анализ еды по фото\n"
+        "• 📋 Анализ этикетки"
+    )
     push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu)
+    await message.answer(text, reply_markup=_build_my_products_entry_keyboard(meal_type))
+    await message.answer("⬇️ Кнопки управления", reply_markup=kbju_add_menu)
 
 
-async def _show_recent_meals_page(
+async def _show_my_products_page(
     message: Message,
     state: FSMContext,
     meal_type: str,
@@ -1649,18 +1654,18 @@ async def _show_recent_meals_page(
 ) -> bool:
     user_id = user_id or str(message.from_user.id)
     source_meals = MealRepository.get_recent_unique_meals(user_id, limit=64)
-    all_recent_meals = _expand_recent_meals(source_meals, limit=64)
-    if not all_recent_meals:
+    all_my_product_meals = _expand_my_products(source_meals, limit=64)
+    if not all_my_product_meals:
         return False
-    total_pages = max(1, math.ceil(len(all_recent_meals) / RECENT_MEALS_PAGE_SIZE))
+    total_pages = max(1, math.ceil(len(all_my_product_meals) / MY_PRODUCTS_PAGE_SIZE))
     page = min(max(1, page), total_pages)
-    start = (page - 1) * RECENT_MEALS_PAGE_SIZE
-    page_items = all_recent_meals[start : start + RECENT_MEALS_PAGE_SIZE]
+    start = (page - 1) * MY_PRODUCTS_PAGE_SIZE
+    page_items = all_my_product_meals[start : start + MY_PRODUCTS_PAGE_SIZE]
     has_prev = page > 1
     has_next = page < total_pages
-    await state.update_data(recent_meals_page=page, meal_type=meal_type)
-    text = _format_recent_meals_text(page_items, page)
-    reply_markup = _build_recent_meals_keyboard(page_items, meal_type, page, has_prev, has_next)
+    await state.update_data(my_products_page=page, meal_type=meal_type)
+    text = _format_my_products_text(page_items, page)
+    reply_markup = _build_my_products_keyboard(page_items, meal_type, page, has_prev, has_next)
     if edit_message:
         await message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
     else:
@@ -1680,8 +1685,8 @@ def _build_meal_entry_post_save_keyboard(meal_type: str, entry_date: date) -> In
                     callback_data=f"edit_meal:{normalized_meal_type}:{iso_date}",
                 ),
                 InlineKeyboardButton(
-                    text="🕘 Недавние",
-                    callback_data=f"meal_entry_recent:{normalized_meal_type}:1",
+                    text="📦 Мои продукты",
+                    callback_data=f"meal_entry_my_products:{normalized_meal_type}:1",
                 ),
             ]
         ]
@@ -1703,12 +1708,12 @@ def _build_meal_entry_edit_keyboard(meal_type: str, entry_date: date) -> InlineK
         ]
     )
 
-def _get_all_recent_items_for_search(user_id: str) -> list[RecentMealItem]:
+def _get_all_my_products_for_search(user_id: str) -> list[MyProductItem]:
     source_meals = MealRepository.get_user_meal_history(user_id)
-    return _expand_recent_meals(source_meals, limit=10_000)
+    return _expand_my_products(source_meals, limit=10_000)
 
 
-async def _show_recent_search_results(
+async def _show_my_products_search_results(
     message: Message,
     state: FSMContext,
     *,
@@ -1718,25 +1723,25 @@ async def _show_recent_search_results(
     page: int = 1,
     edit_message: bool = False,
 ) -> None:
-    all_items = _get_all_recent_items_for_search(user_id)
-    matched_items = _search_recent_items(all_items, query)
-    await state.update_data(recent_search_query=query, meal_type=meal_type)
+    all_items = _get_all_my_products_for_search(user_id)
+    matched_items = _search_my_products(all_items, query)
+    await state.update_data(my_products_search_query=query, meal_type=meal_type)
 
     if not matched_items:
         await message.answer(
             "Ничего не нашёл 😕\n"
             "Попробуй ввести другое название или часть названия.",
-            reply_markup=_build_recent_search_empty_keyboard(meal_type),
+            reply_markup=_build_my_products_search_empty_keyboard(meal_type),
         )
         return
 
-    total_pages = max(1, math.ceil(len(matched_items) / RECENT_MEALS_PAGE_SIZE))
+    total_pages = max(1, math.ceil(len(matched_items) / MY_PRODUCTS_PAGE_SIZE))
     page = min(max(1, page), total_pages)
-    start = (page - 1) * RECENT_MEALS_PAGE_SIZE
-    page_items = matched_items[start : start + RECENT_MEALS_PAGE_SIZE]
-    await state.update_data(recent_search_page=page)
-    text = _format_recent_search_results_text(query, page_items, page)
-    reply_markup = _build_recent_search_results_keyboard(
+    start = (page - 1) * MY_PRODUCTS_PAGE_SIZE
+    page_items = matched_items[start : start + MY_PRODUCTS_PAGE_SIZE]
+    await state.update_data(my_products_search_page=page)
+    text = _format_my_products_search_results_text(query, page_items, page)
+    reply_markup = _build_my_products_search_results_keyboard(
         page_items,
         meal_type,
         page,
@@ -1749,16 +1754,16 @@ async def _show_recent_search_results(
         await message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
 
 
-def _render_recent_meal_confirm_text(meal_type: str, meal, amount_g: int = 100) -> str:
+def _render_my_product_confirm_text(meal_type: str, meal, amount_g: int = 100) -> str:
     meal_ui = display_meal_type_with_bold_name(meal_type)
-    if isinstance(meal, RecentMealItem):
+    if isinstance(meal, MyProductItem):
         title = meal.title
         calories = meal.calories
         protein = meal.protein
         fat = meal.fat
         carbs = meal.carbs
     else:
-        title = _normalize_recent_meal_title(meal)
+        title = _normalize_my_product_title(meal)
         calories = float(meal.calories or 0)
         protein = float(meal.protein or 0)
         fat = float(meal.fat or 0)
@@ -1776,18 +1781,18 @@ def _render_recent_meal_confirm_text(meal_type: str, meal, amount_g: int = 100) 
     )
 
 
-def _get_recent_item_from_source_meal(meal, product_index: int | None) -> RecentMealItem:
+def _get_my_product_from_source_meal(meal, product_index: int | None) -> MyProductItem:
     if product_index is not None:
-        products = _parse_recent_products(meal)
+        products = _parse_my_products(meal)
         if 0 <= product_index < len(products):
-            return _build_recent_item_from_product(meal, products[product_index], product_index)
-    return _build_recent_item_from_meal(meal)
+            return _build_my_product_item_from_product(meal, products[product_index], product_index)
+    return _build_my_product_item_from_meal(meal)
 
 
-def _single_product_json_for_recent_item(meal, item: RecentMealItem, ratio: float = 1.0, amount_g: int | None = None) -> str | None:
+def _single_product_json_for_my_product(meal, item: MyProductItem, ratio: float = 1.0, amount_g: int | None = None) -> str | None:
     if item.product_index is None:
         return meal.products_json
-    products = _parse_recent_products(meal)
+    products = _parse_my_products(meal)
     if 0 <= item.product_index < len(products):
         product = dict(products[item.product_index])
         if amount_g is not None:
@@ -1808,7 +1813,7 @@ def _single_product_json_for_recent_item(meal, item: RecentMealItem, ratio: floa
     return None
 
 
-def _parse_recent_product_index(raw_index: str | None) -> int | None:
+def _parse_my_product_index(raw_index: str | None) -> int | None:
     if raw_index in (None, ""):
         return None
     try:
@@ -1816,7 +1821,7 @@ def _parse_recent_product_index(raw_index: str | None) -> int | None:
     except (TypeError, ValueError):
         return None
 
-def _extract_recent_meal_amount_g(meal) -> int:
+def _extract_my_product_amount_g_from_meal(meal) -> int:
     """Возвращает исходную граммовку продукта из products_json, если доступно."""
     raw_products = getattr(meal, "products_json", None)
     if not raw_products:
@@ -1837,7 +1842,7 @@ def _extract_recent_meal_amount_g(meal) -> int:
     return max(1, int(round(grams_value)))
 
 
-def _build_recent_meal_confirm_keyboard(
+def _build_my_product_confirm_keyboard(
     source_meal_id: int,
     meal_type: str,
     page: int,
@@ -1847,8 +1852,8 @@ def _build_recent_meal_confirm_keyboard(
 ) -> InlineKeyboardMarkup:
     product_idx = "" if product_index is None else str(product_index)
     rows = [
-        [InlineKeyboardButton(text="✅ Добавить", callback_data=f"recent_meal_confirm:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
-        [InlineKeyboardButton(text="✏️ Изменить вес", callback_data=f"recent_meal_edit_weight:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
+        [InlineKeyboardButton(text="✅ Добавить", callback_data=f"my_product_confirm:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
+        [InlineKeyboardButton(text="✏️ Изменить вес", callback_data=f"my_product_edit_weight:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
     ]
     if include_delete:
         rows.append(
@@ -1859,11 +1864,11 @@ def _build_recent_meal_confirm_keyboard(
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"recent_meal_back:{meal_type}:{page}")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_product_back:{meal_type}:{page}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _render_recent_weight_editor_text(item: RecentMealItem, draft_amount_g: int | None = None) -> str:
+def _render_my_product_weight_editor_text(item: MyProductItem, draft_amount_g: int | None = None) -> str:
     """Текст экрана быстрого изменения веса продукта из истории."""
     current_amount = int(item.amount_g or 100)
     new_amount = int(draft_amount_g or current_amount)
@@ -1895,39 +1900,39 @@ def _render_recent_weight_editor_text(item: RecentMealItem, draft_amount_g: int 
     return "\n".join(lines)
 
 
-def _build_recent_weight_editor_keyboard() -> InlineKeyboardMarkup:
+def _build_my_product_weight_editor_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура изменения веса продукта из истории по аналогии с редактором приёма пищи."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="−100 г", callback_data="recent_wchg:-100"),
-                InlineKeyboardButton(text="−50 г", callback_data="recent_wchg:-50"),
-                InlineKeyboardButton(text="+50 г", callback_data="recent_wchg:50"),
-                InlineKeyboardButton(text="+100 г", callback_data="recent_wchg:100"),
+                InlineKeyboardButton(text="−100 г", callback_data="my_product_wchg:-100"),
+                InlineKeyboardButton(text="−50 г", callback_data="my_product_wchg:-50"),
+                InlineKeyboardButton(text="+50 г", callback_data="my_product_wchg:50"),
+                InlineKeyboardButton(text="+100 г", callback_data="my_product_wchg:100"),
             ],
             [
-                InlineKeyboardButton(text="−25 г", callback_data="recent_wchg:-25"),
-                InlineKeyboardButton(text="−10 г", callback_data="recent_wchg:-10"),
-                InlineKeyboardButton(text="+10 г", callback_data="recent_wchg:10"),
-                InlineKeyboardButton(text="+25 г", callback_data="recent_wchg:25"),
+                InlineKeyboardButton(text="−25 г", callback_data="my_product_wchg:-25"),
+                InlineKeyboardButton(text="−10 г", callback_data="my_product_wchg:-10"),
+                InlineKeyboardButton(text="+10 г", callback_data="my_product_wchg:10"),
+                InlineKeyboardButton(text="+25 г", callback_data="my_product_wchg:25"),
             ],
             [
-                InlineKeyboardButton(text="−5 г", callback_data="recent_wchg:-5"),
-                InlineKeyboardButton(text="−1 г", callback_data="recent_wchg:-1"),
-                InlineKeyboardButton(text="+1 г", callback_data="recent_wchg:1"),
-                InlineKeyboardButton(text="+5 г", callback_data="recent_wchg:5"),
+                InlineKeyboardButton(text="−5 г", callback_data="my_product_wchg:-5"),
+                InlineKeyboardButton(text="−1 г", callback_data="my_product_wchg:-1"),
+                InlineKeyboardButton(text="+1 г", callback_data="my_product_wchg:1"),
+                InlineKeyboardButton(text="+5 г", callback_data="my_product_wchg:5"),
             ],
-            [InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data="recent_wmanual")],
-            [InlineKeyboardButton(text="✅ Сохранить", callback_data="recent_wsave")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="recent_wback")],
+            [InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data="my_product_wmanual")],
+            [InlineKeyboardButton(text="✅ Сохранить", callback_data="my_product_wsave")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="my_product_wback")],
         ]
     )
 
 
-def _build_adjusted_recent_item(item: RecentMealItem, amount_g: int) -> RecentMealItem:
+def _build_adjusted_my_product_item(item: MyProductItem, amount_g: int) -> MyProductItem:
     """Возвращает копию продукта из истории с пересчитанными КБЖУ под новый вес."""
     ratio = amount_g / float(item.amount_g or 100)
-    return RecentMealItem(
+    return MyProductItem(
         source_meal_id=item.source_meal_id,
         product_index=item.product_index,
         title=item.title,
@@ -1939,9 +1944,9 @@ def _build_adjusted_recent_item(item: RecentMealItem, amount_g: int) -> RecentMe
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("meal_entry_recent:"))
-async def meal_entry_recent(callback: CallbackQuery, state: FSMContext):
-    """Открывает список недавних продуктов из inline-кнопки под текущим приёмом пищи."""
+@router.callback_query(lambda c: c.data.startswith("meal_entry_my_products:"))
+async def meal_entry_my_products(callback: CallbackQuery, state: FSMContext):
+    """Открывает список моих продуктов из inline-кнопки под текущим приёмом пищи."""
     await callback.answer()
     parts = callback.data.split(":")
     meal_type = normalize_meal_type(parts[1] if len(parts) > 1 else None, fallback=MealType.SNACK.value)
@@ -1950,7 +1955,7 @@ async def meal_entry_recent(callback: CallbackQuery, state: FSMContext):
     except (TypeError, ValueError):
         page = 1
 
-    shown = await _show_recent_meals_page(
+    shown = await _show_my_products_page(
         callback.message,
         state,
         meal_type=meal_type,
@@ -1959,16 +1964,16 @@ async def meal_entry_recent(callback: CallbackQuery, state: FSMContext):
     )
     if not shown:
         await callback.message.answer(
-            "Пока нет недавних продуктов. Добавь продукт любым способом — он появится здесь."
+            "Пока нет моих продуктов. Добавь продукт любым способом — он появится здесь."
         )
 
 
-@router.callback_query(lambda c: c.data.startswith("recent_search_start:"))
-async def recent_search_start(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data.startswith("my_products_search_start:"))
+async def my_products_search_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     _, meal_type = callback.data.split(":", maxsplit=1)
-    await state.set_state(MealEntryStates.waiting_for_recent_meal_search)
-    await state.update_data(meal_type=meal_type, recent_search_page=1)
+    await state.set_state(MealEntryStates.waiting_for_my_products_search)
+    await state.update_data(meal_type=meal_type, my_products_search_page=1)
     await callback.message.answer(
         "<b>Введите название продукта или часть названия 👇</b>\n\n"
         "Например:\n"
@@ -1978,8 +1983,8 @@ async def recent_search_start(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.message(MealEntryStates.waiting_for_recent_meal_search)
-async def handle_recent_meal_search_query(message: Message, state: FSMContext):
+@router.message(MealEntryStates.waiting_for_my_products_search)
+async def handle_my_products_search_query(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
@@ -1993,7 +1998,7 @@ async def handle_recent_meal_search_query(message: Message, state: FSMContext):
 
     if text in BACK_BUTTON_TEXTS:
         await state.set_state(MealEntryStates.choosing_meal_type)
-        await _show_recent_meals_page(message, state, meal_type=meal_type, page=int(data.get("recent_meals_page") or 1))
+        await _show_my_products_page(message, state, meal_type=meal_type, page=int(data.get("my_products_page") or 1))
         return
 
     if not text:
@@ -2001,7 +2006,7 @@ async def handle_recent_meal_search_query(message: Message, state: FSMContext):
         return
 
     await state.set_state(MealEntryStates.choosing_meal_type)
-    await _show_recent_search_results(
+    await _show_my_products_search_results(
         message,
         state,
         user_id=str(message.from_user.id),
@@ -2011,17 +2016,17 @@ async def handle_recent_meal_search_query(message: Message, state: FSMContext):
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("recent_search_page:"))
-async def recent_search_page(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data.startswith("my_products_search_page:"))
+async def my_products_search_page(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     _, meal_type, page_str = callback.data.split(":", maxsplit=2)
     data = await state.get_data()
-    query = str(data.get("recent_search_query") or "").strip()
+    query = str(data.get("my_products_search_query") or "").strip()
     if not query:
-        await state.set_state(MealEntryStates.waiting_for_recent_meal_search)
+        await state.set_state(MealEntryStates.waiting_for_my_products_search)
         await callback.message.answer("Введите название продукта или часть названия 👇")
         return
-    await _show_recent_search_results(
+    await _show_my_products_search_results(
         callback.message,
         state,
         user_id=str(callback.from_user.id),
@@ -2032,80 +2037,80 @@ async def recent_search_page(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("recent_search_back:"))
-async def recent_search_back(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data.startswith("my_products_search_back:"))
+async def my_products_search_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     _, meal_type = callback.data.split(":", maxsplit=1)
     data = await state.get_data()
     await state.set_state(MealEntryStates.choosing_meal_type)
-    await _show_recent_meals_page(
+    await _show_my_products_page(
         callback.message,
         state,
         meal_type=meal_type,
-        page=int(data.get("recent_meals_page") or 1),
+        page=int(data.get("my_products_page") or 1),
         user_id=str(callback.from_user.id),
         edit_message=True,
     )
 
 
-@router.callback_query(lambda c: c.data == "recent_search_main_menu")
-async def recent_search_main_menu(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data == "my_products_search_main_menu")
+async def my_products_search_main_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
     push_menu_stack(callback.message.bot, main_menu)
     await callback.message.answer("⬇️ Кнопки управления", reply_markup=main_menu)
 
 
-@router.callback_query(lambda c: c.data.startswith("recent_meal_pick:"))
-async def recent_meal_pick(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data.startswith("my_product_pick:"))
+async def my_product_pick(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = str(callback.from_user.id)
     parts = callback.data.split(":")
     _, meal_type, page_str, source_meal_id_str, *product_idx_parts = parts
-    product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
-    pick_origin = product_idx_parts[1] if len(product_idx_parts) > 1 else "recent"
+    product_index = _parse_my_product_index(product_idx_parts[0] if product_idx_parts else None)
+    pick_origin = product_idx_parts[1] if len(product_idx_parts) > 1 else "my_products"
     source_meal_id = int(source_meal_id_str)
     page = int(page_str)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
     if not source_meal:
         await callback.message.answer("❌ Не удалось найти продукт в истории.")
         return
-    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
+    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
     await state.update_data(
-        recent_source_meal_id=source_meal_id,
-        recent_source_product_idx=product_index,
-        recent_custom_amount_g=None,
-        recent_meals_page=page,
-        recent_pick_origin="search" if pick_origin == "search" else "recent",
+        my_product_source_meal_id=source_meal_id,
+        my_product_source_product_idx=product_index,
+        my_product_custom_amount_g=None,
+        my_products_page=page,
+        my_product_pick_origin="search" if pick_origin == "search" else "my_products",
         meal_type=meal_type,
     )
     await callback.message.answer(
-        _render_recent_meal_confirm_text(meal_type, recent_item, amount_g=recent_item.amount_g),
-        reply_markup=_build_recent_meal_confirm_keyboard(source_meal_id, meal_type, page, product_index),
+        _render_my_product_confirm_text(meal_type, my_product_item, amount_g=my_product_item.amount_g),
+        reply_markup=_build_my_product_confirm_keyboard(source_meal_id, meal_type, page, product_index),
         parse_mode="HTML",
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("recent_meal_back:"))
-async def recent_meal_back(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data.startswith("my_product_back:"))
+async def my_product_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     _, meal_type, page_str = callback.data.split(":", maxsplit=2)
     data = await state.get_data()
-    if data.get("recent_pick_origin") == "search":
-        query = str(data.get("recent_search_query") or "").strip()
+    if data.get("my_product_pick_origin") == "search":
+        query = str(data.get("my_products_search_query") or "").strip()
         if query:
-            await _show_recent_search_results(
+            await _show_my_products_search_results(
                 callback.message,
                 state,
                 user_id=str(callback.from_user.id),
                 meal_type=meal_type,
                 query=query,
-                page=int(data.get("recent_search_page") or page_str),
+                page=int(data.get("my_products_search_page") or page_str),
                 edit_message=True,
             )
             return
 
-    if data.get("recent_pick_origin") == "custom" or data.get("in_my_product_menu"):
+    if data.get("my_product_pick_origin") == "custom" or data.get("in_my_product_menu"):
         await _show_my_product_menu(
             callback.message,
             state,
@@ -2114,7 +2119,7 @@ async def recent_meal_back(callback: CallbackQuery, state: FSMContext):
         )
         return
 
-    await _show_recent_meals_page(
+    await _show_my_products_page(
         callback.message,
         state,
         meal_type=meal_type,
@@ -2124,11 +2129,11 @@ async def recent_meal_back(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("recent_meal_page:"))
-async def recent_meal_page(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data.startswith("my_products_page:"))
+async def my_products_page(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     _, meal_type, page_str = callback.data.split(":", maxsplit=2)
-    await _show_recent_meals_page(
+    await _show_my_products_page(
         callback.message,
         state,
         meal_type=meal_type,
@@ -2138,50 +2143,50 @@ async def recent_meal_page(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("recent_meal_edit_weight:"))
-async def recent_meal_edit_weight(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data.startswith("my_product_edit_weight:"))
+async def my_product_edit_weight(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
     parts = callback.data.split(":")
     _, meal_type, page_str, source_meal_id_str, *product_idx_parts = parts
-    product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
+    product_index = _parse_my_product_index(product_idx_parts[0] if product_idx_parts else None)
     source_meal_id = int(source_meal_id_str)
     user_id = str(callback.from_user.id)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
     if not source_meal:
         await callback.message.answer("❌ Не удалось найти продукт в истории.")
         return
-    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
-    current_amount = int(recent_item.amount_g or 100)
-    custom_amount = int(data.get("recent_custom_amount_g") or current_amount)
+    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    current_amount = int(my_product_item.amount_g or 100)
+    custom_amount = int(data.get("my_product_custom_amount_g") or current_amount)
     pick_origin = (
         "custom"
-        if data.get("recent_pick_origin") == "custom" or data.get("in_my_product_menu")
-        else data.get("recent_pick_origin", "recent")
+        if data.get("my_product_pick_origin") == "custom" or data.get("in_my_product_menu")
+        else data.get("my_product_pick_origin", "my_products")
     )
     await state.update_data(
-        recent_source_meal_id=source_meal_id,
-        recent_source_product_idx=product_index,
-        recent_weight_edit_mode=True,
-        recent_weight_draft_g=custom_amount,
-        recent_meals_page=int(page_str),
-        recent_pick_origin=pick_origin,
+        my_product_source_meal_id=source_meal_id,
+        my_product_source_product_idx=product_index,
+        my_product_weight_edit_mode=True,
+        my_product_weight_draft_g=custom_amount,
+        my_products_page=int(page_str),
+        my_product_pick_origin=pick_origin,
         in_my_product_menu=pick_origin == "custom",
         meal_type=meal_type,
     )
     await callback.message.answer(
-        _render_recent_weight_editor_text(recent_item, draft_amount_g=custom_amount),
-        reply_markup=_build_recent_weight_editor_keyboard(),
+        _render_my_product_weight_editor_text(my_product_item, draft_amount_g=custom_amount),
+        reply_markup=_build_my_product_weight_editor_keyboard(),
         parse_mode="HTML",
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("recent_wchg:"))
-async def recent_meal_weight_change_draft(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data.startswith("my_product_wchg:"))
+async def my_product_weight_change_draft(callback: CallbackQuery, state: FSMContext):
     """Меняет временный вес продукта из истории кнопками +/−."""
     delta = int(callback.data.split(":", maxsplit=1)[1])
     data = await state.get_data()
-    source_meal_id = data.get("recent_source_meal_id")
+    source_meal_id = data.get("my_product_source_meal_id")
     if not source_meal_id:
         await callback.message.answer("❌ Не удалось найти продукт из истории.")
         return
@@ -2191,38 +2196,38 @@ async def recent_meal_weight_change_draft(callback: CallbackQuery, state: FSMCon
         await callback.message.answer("❌ Не удалось найти продукт из истории.")
         return
 
-    product_index = _parse_recent_product_index(data.get("recent_source_product_idx"))
-    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
-    base_amount = int(data.get("recent_weight_draft_g") or recent_item.amount_g or 100)
+    product_index = _parse_my_product_index(data.get("my_product_source_product_idx"))
+    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    base_amount = int(data.get("my_product_weight_draft_g") or my_product_item.amount_g or 100)
     new_amount = base_amount + delta
     if new_amount < 1:
         await callback.answer("Вес не может быть меньше 1 г", show_alert=True)
         return
 
-    await state.update_data(recent_weight_draft_g=new_amount, recent_weight_edit_mode=True)
+    await state.update_data(my_product_weight_draft_g=new_amount, my_product_weight_edit_mode=True)
     await callback.answer()
     await callback.message.edit_text(
-        _render_recent_weight_editor_text(recent_item, draft_amount_g=new_amount),
-        reply_markup=_build_recent_weight_editor_keyboard(),
+        _render_my_product_weight_editor_text(my_product_item, draft_amount_g=new_amount),
+        reply_markup=_build_my_product_weight_editor_keyboard(),
         parse_mode="HTML",
     )
 
 
-@router.callback_query(lambda c: c.data == "recent_wmanual")
-async def recent_meal_weight_manual_input_start(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data == "my_product_wmanual")
+async def my_product_weight_manual_input_start(callback: CallbackQuery, state: FSMContext):
     """Запрашивает ручной ввод веса для продукта из истории."""
     await callback.answer()
     await state.set_state(MealEntryStates.editing_meal_weight_manual_input)
-    await state.update_data(recent_weight_edit_mode=True)
+    await state.update_data(my_product_weight_edit_mode=True)
     await callback.message.answer("Введи новый вес (в граммах), например: 180")
 
 
-@router.callback_query(lambda c: c.data == "recent_wsave")
-async def recent_meal_weight_save_draft(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data == "my_product_wsave")
+async def my_product_weight_save_draft(callback: CallbackQuery, state: FSMContext):
     """Сохраняет выбранный вес продукта из истории и возвращает экран подтверждения."""
     await callback.answer()
     data = await state.get_data()
-    source_meal_id = data.get("recent_source_meal_id")
+    source_meal_id = data.get("my_product_source_meal_id")
     if not source_meal_id:
         await callback.message.answer("❌ Не удалось найти продукт из истории.")
         return
@@ -2233,36 +2238,36 @@ async def recent_meal_weight_save_draft(callback: CallbackQuery, state: FSMConte
         return
 
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    product_index = _parse_recent_product_index(data.get("recent_source_product_idx"))
-    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
-    new_amount = int(data.get("recent_weight_draft_g") or recent_item.amount_g or 100)
-    adjusted = _build_adjusted_recent_item(recent_item, new_amount)
+    product_index = _parse_my_product_index(data.get("my_product_source_product_idx"))
+    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    new_amount = int(data.get("my_product_weight_draft_g") or my_product_item.amount_g or 100)
+    adjusted = _build_adjusted_my_product_item(my_product_item, new_amount)
 
     await state.set_state(MealEntryStates.choosing_meal_type)
     await state.update_data(
-        recent_custom_amount_g=new_amount,
-        recent_weight_edit_mode=False,
-        recent_weight_draft_g=None,
+        my_product_custom_amount_g=new_amount,
+        my_product_weight_edit_mode=False,
+        my_product_weight_draft_g=None,
     )
     await callback.message.edit_text(
-        _render_recent_meal_confirm_text(meal_type, adjusted, amount_g=new_amount),
-        reply_markup=_build_recent_meal_confirm_keyboard(
+        _render_my_product_confirm_text(meal_type, adjusted, amount_g=new_amount),
+        reply_markup=_build_my_product_confirm_keyboard(
             int(source_meal_id),
             meal_type,
-            int(data.get("recent_meals_page") or 1),
+            int(data.get("my_products_page") or 1),
             product_index,
-            include_delete=data.get("recent_pick_origin") == "custom" or data.get("in_my_product_menu"),
+            include_delete=data.get("my_product_pick_origin") == "custom" or data.get("in_my_product_menu"),
         ),
         parse_mode="HTML",
     )
 
 
-@router.callback_query(lambda c: c.data == "recent_wback")
-async def recent_meal_weight_back(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data == "my_product_wback")
+async def my_product_weight_back(callback: CallbackQuery, state: FSMContext):
     """Возвращает экран подтверждения продукта из истории без сохранения черновика веса."""
     await callback.answer()
     data = await state.get_data()
-    source_meal_id = data.get("recent_source_meal_id")
+    source_meal_id = data.get("my_product_source_meal_id")
     if not source_meal_id:
         await callback.message.answer("❌ Не удалось найти продукт из истории.")
         return
@@ -2273,35 +2278,35 @@ async def recent_meal_weight_back(callback: CallbackQuery, state: FSMContext):
         return
 
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    product_index = _parse_recent_product_index(data.get("recent_source_product_idx"))
-    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
-    custom_amount = data.get("recent_custom_amount_g")
-    display_item = _build_adjusted_recent_item(recent_item, int(custom_amount)) if custom_amount else recent_item
-    display_amount = int(custom_amount or recent_item.amount_g or 100)
+    product_index = _parse_my_product_index(data.get("my_product_source_product_idx"))
+    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    custom_amount = data.get("my_product_custom_amount_g")
+    display_item = _build_adjusted_my_product_item(my_product_item, int(custom_amount)) if custom_amount else my_product_item
+    display_amount = int(custom_amount or my_product_item.amount_g or 100)
 
     await state.set_state(MealEntryStates.choosing_meal_type)
-    await state.update_data(recent_weight_edit_mode=False, recent_weight_draft_g=None)
+    await state.update_data(my_product_weight_edit_mode=False, my_product_weight_draft_g=None)
     await callback.message.edit_text(
-        _render_recent_meal_confirm_text(meal_type, display_item, amount_g=display_amount),
-        reply_markup=_build_recent_meal_confirm_keyboard(
+        _render_my_product_confirm_text(meal_type, display_item, amount_g=display_amount),
+        reply_markup=_build_my_product_confirm_keyboard(
             int(source_meal_id),
             meal_type,
-            int(data.get("recent_meals_page") or 1),
+            int(data.get("my_products_page") or 1),
             product_index,
-            include_delete=data.get("recent_pick_origin") == "custom" or data.get("in_my_product_menu"),
+            include_delete=data.get("my_product_pick_origin") == "custom" or data.get("in_my_product_menu"),
         ),
         parse_mode="HTML",
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("recent_meal_confirm:"))
-async def recent_meal_confirm(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data.startswith("my_product_confirm:"))
+async def my_product_confirm(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     user_id = str(callback.from_user.id)
     data = await state.get_data()
     parts = callback.data.split(":")
     _, meal_type_raw, _page_str, source_meal_id_str, *product_idx_parts = parts
-    product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else data.get("recent_source_product_idx"))
+    product_index = _parse_my_product_index(product_idx_parts[0] if product_idx_parts else data.get("my_product_source_product_idx"))
     source_meal_id = int(source_meal_id_str)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
     if not source_meal:
@@ -2313,20 +2318,20 @@ async def recent_meal_confirm(callback: CallbackQuery, state: FSMContext):
         entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
     except ValueError:
         entry_date = date.today()
-    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
-    custom_amount = data.get("recent_custom_amount_g")
-    old_amount = float(recent_item.amount_g or 100)
+    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    custom_amount = data.get("my_product_custom_amount_g")
+    old_amount = float(my_product_item.amount_g or 100)
     ratio = float(custom_amount) / old_amount if custom_amount else 1.0
     new_meal = MealRepository.save_meal(
         user_id=user_id,
-        raw_query=recent_item.title,
-        description=recent_item.title,
-        calories=float(recent_item.calories) * ratio,
-        protein=float(recent_item.protein) * ratio,
-        fat=float(recent_item.fat) * ratio,
-        carbs=float(recent_item.carbs) * ratio,
+        raw_query=my_product_item.title,
+        description=my_product_item.title,
+        calories=float(my_product_item.calories) * ratio,
+        protein=float(my_product_item.protein) * ratio,
+        fat=float(my_product_item.fat) * ratio,
+        carbs=float(my_product_item.carbs) * ratio,
         entry_date=entry_date,
-        products_json=_single_product_json_for_recent_item(source_meal, recent_item, ratio=ratio, amount_g=custom_amount),
+        products_json=_single_product_json_for_my_product(source_meal, my_product_item, ratio=ratio, amount_g=custom_amount),
         api_details=source_meal.api_details,
         meal_type=meal_type,
     )
@@ -2666,7 +2671,7 @@ async def kbju_add_via_gigachat(message: Message, state: FSMContext):
     )
 
 
-@router.message(lambda m: m.text == "🧺 Мой продукт")
+@router.message(lambda m: m.text == "🧺 Внести вручную")
 async def kbju_add_via_custom_product(message: Message, state: FSMContext):
     """Открывает выбор своего продукта или сценарий создания нового продукта."""
     if not await _ensure_meal_type_selected(message, state, "custom"):
@@ -2716,13 +2721,13 @@ async def custom_product_page(callback: CallbackQuery, state: FSMContext):
             "Здесь ты можешь сам внести свой продукт. Нажми «➕ Создать продукт», чтобы добавить первый."
         )
         return
-    total_pages = max(1, math.ceil(len(products) / RECENT_MEALS_PAGE_SIZE))
+    total_pages = max(1, math.ceil(len(products) / MY_PRODUCTS_PAGE_SIZE))
     page = min(max(1, int(page_str)), total_pages)
-    start = (page - 1) * RECENT_MEALS_PAGE_SIZE
-    page_items = products[start : start + RECENT_MEALS_PAGE_SIZE]
-    await state.update_data(recent_meals_page=page, meal_type=meal_type, in_my_product_menu=True)
+    start = (page - 1) * MY_PRODUCTS_PAGE_SIZE
+    page_items = products[start : start + MY_PRODUCTS_PAGE_SIZE]
+    await state.update_data(my_products_page=page, meal_type=meal_type, in_my_product_menu=True)
     await callback.message.edit_text(
-        _format_recent_meals_text(page_items, page, title="🧺 <b>Мои продукты"),
+        _format_my_products_text(page_items, page, title="🧺 <b>Мои продукты"),
         reply_markup=_build_custom_products_keyboard(
             page_items,
             meal_type,
@@ -2740,25 +2745,25 @@ async def custom_product_pick(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     parts = callback.data.split(":")
     _, meal_type, page_str, source_meal_id_str, *product_idx_parts = parts
-    product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
+    product_index = _parse_my_product_index(product_idx_parts[0] if product_idx_parts else None)
     source_meal_id = int(source_meal_id_str)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, str(callback.from_user.id))
     if not source_meal or not _is_custom_product_meal(source_meal):
         await callback.message.answer("❌ Не удалось найти свой продукт.")
         return
-    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
+    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
     await state.update_data(
-        recent_source_meal_id=source_meal_id,
-        recent_source_product_idx=product_index,
-        recent_custom_amount_g=None,
-        recent_meals_page=int(page_str),
-        recent_pick_origin="custom",
+        my_product_source_meal_id=source_meal_id,
+        my_product_source_product_idx=product_index,
+        my_product_custom_amount_g=None,
+        my_products_page=int(page_str),
+        my_product_pick_origin="custom",
         meal_type=meal_type,
         in_my_product_menu=True,
     )
     await callback.message.answer(
-        _render_recent_meal_confirm_text(meal_type, recent_item, amount_g=recent_item.amount_g),
-        reply_markup=_build_recent_meal_confirm_keyboard(
+        _render_my_product_confirm_text(meal_type, my_product_item, amount_g=my_product_item.amount_g),
+        reply_markup=_build_my_product_confirm_keyboard(
             source_meal_id,
             meal_type,
             int(page_str),
@@ -2795,16 +2800,16 @@ async def custom_product_delete_ask(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     parts = callback.data.split(":")
     _, meal_type, page_str, source_meal_id_str, *product_idx_parts = parts
-    product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
+    product_index = _parse_my_product_index(product_idx_parts[0] if product_idx_parts else None)
     source_meal_id = int(source_meal_id_str)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, str(callback.from_user.id))
     if not source_meal or not _is_custom_product_meal(source_meal):
         await callback.message.answer("❌ Не удалось найти свой продукт.")
         return
 
-    recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
+    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
     await callback.message.edit_text(
-        f'Удалить продукт «{html.escape(recent_item.title or "Мой продукт")}» из списка своих продуктов?',
+        f'Удалить продукт «{html.escape(my_product_item.title or "Продукт")}» из списка своих продуктов?',
         reply_markup=_build_custom_product_delete_confirm_keyboard(source_meal_id, meal_type, int(page_str), product_index),
         parse_mode="HTML",
     )
@@ -2816,7 +2821,7 @@ async def custom_product_delete(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     parts = callback.data.split(":")
     _, meal_type, _page_str, source_meal_id_str, *product_idx_parts = parts
-    product_index = _parse_recent_product_index(product_idx_parts[0] if product_idx_parts else None)
+    product_index = _parse_my_product_index(product_idx_parts[0] if product_idx_parts else None)
     source_meal_id = int(source_meal_id_str)
     user_id = str(callback.from_user.id)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
@@ -2824,7 +2829,7 @@ async def custom_product_delete(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("❌ Не удалось найти свой продукт.")
         return
 
-    products = _parse_recent_products(source_meal)
+    products = _parse_my_products(source_meal)
     if product_index is not None and len(products) > 1:
         products.pop(product_index)
         totals, api_details = _build_meal_update_payload(products)
@@ -2847,7 +2852,7 @@ async def custom_product_delete(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("❌ Не удалось удалить продукт. Попробуй позже.")
         return
 
-    await state.update_data(recent_source_meal_id=None, recent_source_product_idx=None, recent_custom_amount_g=None)
+    await state.update_data(my_product_source_meal_id=None, my_product_source_product_idx=None, my_product_custom_amount_g=None)
     await callback.message.answer("✅ Продукт удалён из списка своих продуктов.")
     await _show_my_product_menu(callback.message, state, meal_type=meal_type, user_id=user_id)
 
@@ -2960,7 +2965,7 @@ async def _save_custom_product(message: Message, state: FSMContext, *, user_id: 
     """Сохраняет свой продукт и добавляет съеденную порцию в приём пищи."""
     data = await state.get_data()
     product = dict(data.get("custom_product") or {})
-    name = str(product.get("name") or "Мой продукт").strip()
+    name = str(product.get("name") or "Продукт").strip()
     amount_g = max(1.0, float(product.get("amount") or 100))
     ratio = amount_g / 100.0
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
@@ -3133,7 +3138,7 @@ async def _handle_provider_food_input(
         meal_type=meal_type,
         intro_lines=lines,
         parse_mode="HTML",
-        show_recent_before_intro=False,
+        show_my_product_before_intro=False,
     )
 
 
@@ -3146,7 +3151,7 @@ async def _keep_meal_entry_open_after_save(
     meal_type: str,
     intro_lines: list[str] | None = None,
     parse_mode: str | None = None,
-    show_recent_before_intro: bool = False,
+    show_my_product_before_intro: bool = False,
 ) -> None:
     """Оставляет пользователя внутри выбранного приёма пищи после сохранения продукта."""
     normalized_meal_type = normalize_meal_type(meal_type, fallback=MealType.SNACK.value)
@@ -3163,8 +3168,8 @@ async def _keep_meal_entry_open_after_save(
         if normalize_meal_type(getattr(meal, "meal_type", None)) == normalized_meal_type
     ]
 
-    if show_recent_before_intro:
-        await _show_recent_meals_page(
+    if show_my_product_before_intro:
+        await _show_my_products_page(
             message,
             state,
             meal_type=normalized_meal_type,
@@ -5537,8 +5542,8 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
         return
 
     data = await state.get_data()
-    if data.get("recent_weight_edit_mode"):
-        source_meal_id = data.get("recent_source_meal_id")
+    if data.get("my_product_weight_edit_mode"):
+        source_meal_id = data.get("my_product_source_meal_id")
         if not source_meal_id:
             await message.answer("❌ Не удалось найти продукт из истории.")
             await state.clear()
@@ -5550,21 +5555,21 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
             await state.clear()
             return
         meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-        product_index = _parse_recent_product_index(data.get("recent_source_product_idx"))
-        recent_item = _get_recent_item_from_source_meal(source_meal, product_index)
-        adjusted = _build_adjusted_recent_item(recent_item, new_weight)
+        product_index = _parse_my_product_index(data.get("my_product_source_product_idx"))
+        my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+        adjusted = _build_adjusted_my_product_item(my_product_item, new_weight)
         await state.set_state(MealEntryStates.choosing_meal_type)
         await state.update_data(
-            recent_custom_amount_g=new_weight,
-            recent_weight_edit_mode=False,
-            recent_weight_draft_g=None,
+            my_product_custom_amount_g=new_weight,
+            my_product_weight_edit_mode=False,
+            my_product_weight_draft_g=None,
         )
         await message.answer(
-            _render_recent_meal_confirm_text(meal_type, adjusted, amount_g=new_weight),
-            reply_markup=_build_recent_meal_confirm_keyboard(
+            _render_my_product_confirm_text(meal_type, adjusted, amount_g=new_weight),
+            reply_markup=_build_my_product_confirm_keyboard(
                 int(source_meal_id),
                 meal_type,
-                int(data.get("recent_meals_page") or 1),
+                int(data.get("my_products_page") or 1),
                 product_index,
             ),
             parse_mode="HTML",

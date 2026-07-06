@@ -23,7 +23,7 @@ class MealEntryStates(StatesGroup):
     choosing_edit_type = State()  # Выбор типа редактирования
     editing_meal_weight = State()  # Редактирование веса продукта
     editing_meal_weight_manual_input = State()  # Ручной ввод веса для выбранного продукта
-    waiting_for_recent_meal_search = State()  # Поиск продукта среди недавно добавленных
+    waiting_for_my_products_search = State()  # Поиск продукта среди моих продуктов
     editing_meal_name_input = State()  # Ручной ввод нового названия продукта
     editing_meal_kbju = State()  # Ручная правка КБЖУ выбранного продукта
     edit_kbju_menu = State()  # Экран "Ручная правка КБЖУ"
@@ -48,7 +48,7 @@ class WorkoutStates(StatesGroup):
     entering_duration = State()
     entering_steps = State()
     confirming_steps = State()
-    browsing_recent_exercises = State()
+    browsing_my_product_exercises = State()
     browsing_all_exercises = State()
     searching_exercise = State()
     choosing_grip_type = State()  # Выбор типа хвата для подтягиваний
