@@ -783,7 +783,6 @@ def _build_recent_search_empty_keyboard(meal_type: str) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🔎 Искать ещё", callback_data=f"recent_search_start:{meal_type}")],
             [InlineKeyboardButton(text="⬅️ К недавним продуктам", callback_data=f"recent_search_back:{meal_type}")],
-            [InlineKeyboardButton(text="🔄 Главное меню", callback_data="recent_search_main_menu")],
         ]
     )
 

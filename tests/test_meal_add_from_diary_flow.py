@@ -763,7 +763,7 @@ def test_recent_search_query_uses_full_user_history_not_recent_page():
     assert "Плавленый сыр сливочный" in message.answer.await_args.args[0]
 
 
-def test_recent_search_empty_result_shows_retry_back_and_main_buttons():
+def test_recent_search_empty_result_shows_retry_and_back_buttons():
     message = _build_message()
     message.from_user = SimpleNamespace(id=12345)
     state = _DummyState()
@@ -786,7 +786,6 @@ def test_recent_search_empty_result_shows_retry_back_and_main_buttons():
     assert [row[0].text for row in keyboard.inline_keyboard] == [
         "🔎 Искать ещё",
         "⬅️ К недавним продуктам",
-        "🔄 Главное меню",
     ]
 
 
