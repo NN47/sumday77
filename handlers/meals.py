@@ -4377,17 +4377,8 @@ async def calories_today_results(message: Message):
 
 async def _return_to_food_diary(message: Message, user_id: str, target_date: date) -> None:
     """Возвращает пользователя в дневник питания после действия с приёмом пищи."""
-    from utils.meal_formatters import format_daily_totals_message
-
-    daily_totals = MealRepository.get_daily_totals(user_id, target_date)
-    settings = MealRepository.get_kbju_settings(user_id)
-    controls_text = (
-        "⬇️ Кнопки управления:\n\n"
-        f"{format_daily_totals_message(daily_totals, target_date.strftime('%d.%m.%Y'), settings=settings)}"
-    )
-
     push_menu_stack(message.bot, kbju_menu)
-    await message.answer(controls_text, reply_markup=kbju_menu)
+    await message.answer("🍱 Дневник питания", reply_markup=kbju_menu)
     await _render_day_meals_messages(
         message,
         user_id,
