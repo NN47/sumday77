@@ -1070,13 +1070,28 @@ def test_edit_last_meal_single_label_product_opens_product_actions_menu():
 def test_return_to_food_diary_sends_diary_menu_and_refreshes_today():
     message = _build_message()
 
+    settings = SimpleNamespace(goal="loss", calories=1993, protein=100, fat=68, carbs=245)
+    totals = {"calories": 1201, "protein_g": 73, "fat_total_g": 68, "carbohydrates_total_g": 78}
+
     with patch("handlers.meals.push_menu_stack") as push_stack, patch(
         "handlers.meals._render_day_meals_messages", new=AsyncMock()
-    ) as render_day:
+    ) as render_day, patch(
+        "handlers.meals.MealRepository.get_daily_totals", return_value=totals
+    ), patch(
+        "handlers.meals.MealRepository.get_kbju_settings", return_value=settings
+    ):
         asyncio.run(meals._return_to_food_diary(message, "12345", date.today()))
 
     push_stack.assert_called_once_with(message.bot, meals.kbju_menu)
-    message.answer.assert_awaited_once_with("🍱 Дневник питания", reply_markup=meals.kbju_menu)
+    answer_text = message.answer.await_args.args[0]
+    assert answer_text.startswith("⬇️ Кнопки управления:\n\n")
+    assert "🎯 <b>Цель:</b> Похудение" in answer_text
+    assert "📊 <b>Базовая норма:</b> 1993 ккал" in answer_text
+    assert "<b>🔥 Калории:</b> 1201/1993 ккал (60%)" in answer_text
+    assert "<b>💪 Белки:</b> 73/100 г (73%)" in answer_text
+    assert "<b>🥑 Жиры:</b> 68/68 г (100%)" in answer_text
+    assert "<b>🍩 Углеводы:</b> 78/245 г (32%)" in answer_text
+    assert message.answer.await_args.kwargs == {"reply_markup": meals.kbju_menu}
     render_day.assert_awaited_once_with(
         message,
         "12345",
