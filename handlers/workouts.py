@@ -721,14 +721,6 @@ async def confirm_steps(message: Message, state: FSMContext):
 
     step_entries = [w for w in WorkoutRepository.get_workouts_for_day(user_id, today) if _normalize_exercise_name(w.exercise) == "Шаги"]
 
-    if message.text == "🗑 Удалить шаги":
-        for entry in step_entries:
-            WorkoutRepository.delete_workout(entry.id, user_id)
-        await state.clear()
-        push_menu_stack(message.bot, training_menu)
-        await message.answer("✅ Шаги за сегодня удалены.", reply_markup=training_menu)
-        return
-
     if message.text != "✅ Сохранить":
         await message.answer("Выбери действие кнопкой ниже.")
         return

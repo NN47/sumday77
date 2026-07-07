@@ -143,55 +143,48 @@ async def quick_add_water_250(message: Message, state: FSMContext):
     await send_or_edit_quick_water_message(message, user_id, text)
 
 
-@router.callback_query(lambda c: c.data in {"quick_water_250", "quick_water_300"})
-async def quick_add_water_250_cb(callback: CallbackQuery, state: FSMContext):
-    """Быстро добавляет воду по legacy inline-кнопке под текстом."""
+async def add_quick_water_amount(callback: CallbackQuery, state: FSMContext, amount: float) -> None:
+    """Добавляет воду из callback-кнопки быстрого действия."""
     await callback.answer()
     message = callback.message
     user_id = str(callback.from_user.id)
-    amount = 250.0 if callback.data == "quick_water_250" else 300.0
-    logger.info(f"User {user_id} used quick water +{amount:.0f} legacy inline button")
-    
+    logger.info(f"User {user_id} used quick water {amount:+.0f} inline button")
+
     await state.clear()
-    
+
     entry_date = date.today()
     WaterRepository.save_water_entry(user_id, amount, entry_date)
-    
+
     daily_total = WaterRepository.get_daily_total(user_id, entry_date)
     recommended = get_water_recommended(user_id)
     bar = build_water_progress_bar(daily_total, recommended)
     text = build_water_added_text(amount, daily_total, recommended, bar)
-    
+
     await send_or_edit_quick_water_message(message, user_id, text)
+
+
+@router.callback_query(lambda c: c.data in {"quick_water_250", "quick_water_300"})
+async def quick_add_water_250_cb(callback: CallbackQuery, state: FSMContext):
+    """Быстро добавляет воду по legacy inline-кнопке под текстом."""
+    amount = 250.0 if callback.data == "quick_water_250" else 300.0
+    await add_quick_water_amount(callback, state, amount)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("quick_water_add_"))
 async def quick_add_water_amount_cb(callback: CallbackQuery, state: FSMContext):
     """Добавляет воду по inline-кнопке в меню воды."""
-    await callback.answer()
-    message = callback.message
-    user_id = str(callback.from_user.id)
     amount_text = callback.data.replace("quick_water_add_", "")
-    
+
     try:
         amount = float(amount_text)
         if amount == 0:
             raise ValueError
     except ValueError:
-        await message.answer("Не удалось определить количество воды. Попробуй ещё раз.")
+        await callback.answer()
+        await callback.message.answer("Не удалось определить количество воды. Попробуй ещё раз.")
         return
-    
-    await state.clear()
-    
-    entry_date = date.today()
-    WaterRepository.save_water_entry(user_id, amount, entry_date)
-    
-    daily_total = WaterRepository.get_daily_total(user_id, entry_date)
-    recommended = get_water_recommended(user_id)
-    bar = build_water_progress_bar(daily_total, recommended)
-    text = build_water_added_text(amount, daily_total, recommended, bar)
-    
-    await send_or_edit_quick_water_message(message, user_id, text)
+
+    await add_quick_water_amount(callback, state, amount)
 
 
 @router.callback_query(lambda c: c.data == "quick_water_clear_today")
