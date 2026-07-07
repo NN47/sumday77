@@ -277,6 +277,16 @@ def _build_photo_analysis_confirm_menu(items: list[dict] | None = None) -> Inlin
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _build_food_photo_clarification_menu() -> InlineKeyboardMarkup:
+    """Строит inline-меню выбора уточнения перед анализом фото еды."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✍️ Добавить уточнение", callback_data="food_photo_add_comment")],
+            [InlineKeyboardButton(text="⏭ Анализировать без уточнения", callback_data="food_photo_analyze_now")],
+        ]
+    )
+
+
 def _build_photo_weight_editor_menu(product_idx: int) -> InlineKeyboardMarkup:
     """Строит inline-меню редактирования веса одного продукта из анализа фото."""
     return InlineKeyboardMarkup(
@@ -1442,14 +1452,17 @@ async def _analyze_image_with_openai(
     user_id: str | int | None = None,
     feature: str,
     operation_log_name: str,
+    comment: str | None = None,
 ) -> Optional[dict]:
     """Выполняет анализ изображения через OpenAI и логирует fallback-вызов."""
     try:
+        kwargs = {"user_id": user_id, "feature": feature}
+        if comment:
+            kwargs["comment"] = comment
         result = await _run_openai_label_task(
             openai_analyzer,
             image_data,
-            user_id=user_id,
-            feature=feature,
+            **kwargs,
         )
     except Exception as exc:
         logger.error("[OpenAI] %s failed: %s", operation_log_name, exc, exc_info=True)
@@ -1481,11 +1494,15 @@ async def _run_image_analysis_with_openai_fallback(
     openai_feature: str,
     operation_type: str,
     success_validator=None,
+    comment: str | None = None,
 ) -> ProviderAnalysisResult:
     """Запускает анализ изображения через Gemini, а при недоступности/пустом ответе — через OpenAI."""
     logger.info("Gemini attempt for %s", operation_type)
     try:
-        gemini_result = await _run_gemini_task(gemini_analyzer, image_data)
+        if comment:
+            gemini_result = await _run_gemini_task(gemini_analyzer, image_data, comment)
+        else:
+            gemini_result = await _run_gemini_task(gemini_analyzer, image_data)
         if success_validator is None or success_validator(gemini_result):
             logger.info("%s completed successfully via Gemini", operation_type)
             return ProviderAnalysisResult(payload=gemini_result, provider="gemini")
@@ -1495,12 +1512,17 @@ async def _run_image_analysis_with_openai_fallback(
 
     logger.info("Fallback: переход на OpenAI для %s", operation_type)
     try:
+        openai_kwargs = {
+            "user_id": user_id,
+            "feature": openai_feature,
+            "operation_log_name": operation_type,
+        }
+        if comment:
+            openai_kwargs["comment"] = comment
         openai_result = await _analyze_image_with_openai(
             openai_analyzer,
             image_data,
-            user_id=user_id,
-            feature=openai_feature,
-            operation_log_name=operation_type,
+            **openai_kwargs,
         )
         if success_validator is None or success_validator(openai_result):
             logger.info("OpenAI success for %s", operation_type)
@@ -1539,6 +1561,7 @@ async def _run_food_photo_analysis_with_openai_fallback(
     image_data: bytes,
     *,
     user_id: str | int | None = None,
+    comment: str | None = None,
 ) -> ProviderAnalysisResult:
     """Запускает анализ еды по фото через Gemini с fallback на OpenAI."""
     try:
@@ -1550,6 +1573,7 @@ async def _run_food_photo_analysis_with_openai_fallback(
             openai_feature="food_photo_analysis",
             operation_type="анализа еды по фото",
             success_validator=_has_food_photo_result,
+            comment=comment,
         )
         if result.provider == "gemini":
             logger.info("Анализ еды по фото завершён успешно через Gemini")
@@ -3615,6 +3639,8 @@ async def _handle_food_photo_analysis(
     runner,
     error_sender,
     raw_query: str = "[Анализ по фото]",
+    image_file_id: str | None = None,
+    comment: str | None = None,
 ):
     """Общая логика обработки фото еды для Gemini и OpenAI."""
     user_id = str(message.from_user.id)
@@ -3637,25 +3663,40 @@ async def _handle_food_photo_analysis(
     logger.info("food_photo_analysis_provider=%s user_id=%s", provider, user_id)
     await message.answer("📷 Анализирую фото с помощью ИИ, секунду...")
 
-    photo = message.photo[-1]  # Берём самое большое разрешение
-    file = await message.bot.get_file(photo.file_id)
+    if image_file_id:
+        file_id = image_file_id
+    else:
+        photo = message.photo[-1]  # Берём самое большое разрешение
+        file_id = photo.file_id
+    file = await message.bot.get_file(file_id)
     image_bytes = await message.bot.download_file(file.file_path)
     image_data = image_bytes.read()
 
     try:
         if provider == "openai":
-            kbju_data = await runner(analyzer, image_data, user_id=user_id, feature="food_photo_analysis")
+            openai_kwargs = {"user_id": user_id, "feature": "food_photo_analysis"}
+            if comment:
+                openai_kwargs["comment"] = comment
+            kbju_data = await runner(
+                analyzer,
+                image_data,
+                **openai_kwargs,
+            )
             final_provider = "openai"
         elif provider == "gemini":
             analysis_result = await _run_food_photo_analysis_with_openai_fallback(
                 analyzer,
                 image_data,
                 user_id=user_id,
+                comment=comment,
             )
             kbju_data = analysis_result.payload
             final_provider = analysis_result.provider
         else:
-            kbju_data = await runner(analyzer, image_data)
+            if comment:
+                kbju_data = await runner(analyzer, image_data, comment)
+            else:
+                kbju_data = await runner(analyzer, image_data)
             final_provider = provider
     except AllProvidersUnavailableError:
         await message.answer(
@@ -3688,6 +3729,7 @@ async def _handle_food_photo_analysis(
     await state.update_data(
         photo_analysis_items=items,
         photo_analysis_raw_query=raw_query,
+        photo_analysis_comment=comment,
         photo_analysis_provider=final_provider,
         entry_date=entry_date.isoformat(),
         meal_type=meal_type,
@@ -3697,7 +3739,38 @@ async def _handle_food_photo_analysis(
 
 @router.message(MealEntryStates.waiting_for_photo, F.photo)
 async def handle_photo_input(message: Message, state: FSMContext):
-    """Обрабатывает фото еды через Gemini."""
+    """Сохраняет фото еды и предлагает добавить уточнение перед анализом."""
+    photo = message.photo[-1]
+    await state.update_data(food_photo_file_id=photo.file_id, food_photo_comment=None)
+    await message.answer(
+        "📷 Фото получено\n\n"
+        "Хотите добавить уточнение о блюде?\n"
+        "Например:\n"
+        "• общий вес 500 г\n"
+        "• помидоры, огурцы, фета, авокадо, лук\n"
+        "• съел половину порции\n"
+        "• без масла / с майонезом / со сметаной",
+        reply_markup=_build_food_photo_clarification_menu(),
+    )
+
+
+async def _run_pending_food_photo_analysis(
+    message: Message,
+    state: FSMContext,
+    *,
+    comment: str | None = None,
+) -> None:
+    """Запускает анализ ранее полученного фото еды с опциональным уточнением."""
+    data = await state.get_data()
+    file_id = data.get("food_photo_file_id")
+    if not file_id:
+        await state.set_state(MealEntryStates.waiting_for_photo)
+        await message.answer(
+            "Фото не найдено. Отправь фото еды ещё раз.",
+            reply_markup=kbju_add_method_back_menu,
+        )
+        return
+
     await _handle_food_photo_analysis(
         message,
         state,
@@ -3705,7 +3778,54 @@ async def handle_photo_input(message: Message, state: FSMContext):
         analyzer=gemini_service.estimate_kbju_from_photo,
         runner=_run_gemini_task,
         error_sender=_send_ai_error_message,
+        image_file_id=str(file_id),
+        comment=comment,
     )
+
+
+@router.callback_query(lambda c: c.data == "food_photo_analyze_now")
+async def analyze_food_photo_without_comment(callback: CallbackQuery, state: FSMContext):
+    """Запускает анализ сохранённого фото без дополнительного контекста."""
+    await callback.answer()
+    await _run_pending_food_photo_analysis(callback.message, state)
+
+
+@router.callback_query(lambda c: c.data == "food_photo_add_comment")
+async def request_food_photo_comment(callback: CallbackQuery, state: FSMContext):
+    """Переводит пользователя в состояние ожидания уточнения к фото еды."""
+    await state.set_state(MealEntryStates.waiting_for_food_photo_comment)
+    await callback.answer()
+    await callback.message.answer(
+        "✍️ Напишите уточнение к блюду одним сообщением.\n\n"
+        "Например: «общий вес 500 г, съел половину, салат с фетой и без масла».\n"
+        "Чтобы отменить анализ, нажмите «❌ Отмена».",
+        reply_markup=_build_photo_analysis_cancel_menu(),
+    )
+
+
+@router.message(MealEntryStates.waiting_for_food_photo_comment)
+async def handle_food_photo_comment(message: Message, state: FSMContext):
+    """Получает текстовое уточнение и запускает анализ фото еды."""
+    text = (message.text or "").strip()
+    if text in BACK_BUTTON_TEXTS or text == "❌ Отмена":
+        await _return_to_add_methods_from_method_input(message, state)
+        return
+    if not text:
+        await message.answer("Пожалуйста, введите уточнение текстом или нажмите «❌ Отмена».")
+        return
+
+    await state.update_data(food_photo_comment=text)
+    await _run_pending_food_photo_analysis(message, state, comment=text)
+
+
+@router.message(MealEntryStates.waiting_for_photo)
+async def handle_food_photo_non_photo(message: Message, state: FSMContext):
+    """Просит прислать фото еды или обрабатывает отмену сценария."""
+    text = (message.text or "").strip()
+    if text in BACK_BUTTON_TEXTS or text == "❌ Отмена":
+        await _return_to_add_methods_from_method_input(message, state)
+        return
+    await message.answer("Пожалуйста, отправь фото еды для анализа или нажми «⬅️ Назад».")
 
 
 @router.message(MealEntryStates.waiting_for_openai_food_photo, F.photo)

@@ -123,6 +123,15 @@ class OpenAILabelService:
         mime_type = self._detect_mime_type(image_bytes)
         client = OpenAI(api_key=self.api_key, timeout=self.timeout_seconds)
 
+        prompt = OPENAI_FOOD_PHOTO_PROMPT
+        if comment:
+            prompt += (
+                "\n\nДополнительное уточнение пользователя к фото:\n"
+                f"{comment.strip()}\n"
+                "Используй это уточнение как контекст: состав блюда, общий/съеденный вес, "
+                "количество съеденного, наличие масла, соусов, сыра, майонеза и других добавок."
+            )
+
         try:
             response = client.responses.create(
                 model=self.model,
@@ -197,6 +206,7 @@ class OpenAILabelService:
         *,
         user_id: str | int | None = None,
         feature: str = "food_photo_analysis",
+        comment: str | None = None,
     ) -> Optional[dict]:
         """Return food photo analysis in the same normalized shape as Gemini photo analysis."""
         if not self.api_key:
@@ -215,6 +225,15 @@ class OpenAILabelService:
         mime_type = self._detect_mime_type(image_bytes)
         client = OpenAI(api_key=self.api_key, timeout=self.timeout_seconds)
 
+        prompt = OPENAI_FOOD_PHOTO_PROMPT
+        if comment:
+            prompt += (
+                "\n\nДополнительное уточнение пользователя к фото:\n"
+                f"{comment.strip()}\n"
+                "Используй это уточнение как контекст: состав блюда, общий/съеденный вес, "
+                "количество съеденного, наличие масла, соусов, сыра, майонеза и других добавок."
+            )
+
         try:
             response = client.responses.create(
                 model=self.model,
@@ -222,7 +241,7 @@ class OpenAILabelService:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "input_text", "text": OPENAI_FOOD_PHOTO_PROMPT},
+                            {"type": "input_text", "text": prompt},
                             {
                                 "type": "input_image",
                                 "image_url": f"data:{mime_type};base64,{image_base64}",

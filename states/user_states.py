@@ -13,6 +13,7 @@ class MealEntryStates(StatesGroup):
     waiting_for_gigachat_food_input = State()  # GigaChat
     confirming_openrouter_meal = State()  # Подтверждение сохранения OpenRouter результата
     waiting_for_photo = State()  # Фото еды
+    waiting_for_food_photo_comment = State()  # Уточнение к фото еды перед AI-анализом
     waiting_for_openai_food_photo = State()  # Фото еды через OpenAI
     waiting_for_label_photo = State()  # Фото этикетки
     waiting_for_openai_label_photo = State()  # Фото этикетки через OpenAI
