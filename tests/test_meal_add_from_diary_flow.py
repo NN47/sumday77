@@ -72,9 +72,60 @@ def test_photo_weight_editor_menu_edits_specific_product_without_cancel():
     assert rows[1] == ["+20 г", "+50 г", "+100 г"]
     assert rows[2] == ["-1 г", "-5 г", "-10 г"]
     assert rows[3] == ["-20 г", "-50 г", "-100 г"]
-    assert rows[4] == ["✅ Готово"]
+    assert rows[4] == ["✅ Готово", "🗑 Удалить"]
     assert callbacks[0] == ["photo_wchg:1:1", "photo_wchg:1:5", "photo_wchg:1:10"]
-    assert callbacks[4] == ["photo_done"]
+    assert callbacks[4] == ["photo_done", "photo_delete:1"]
+
+
+def test_photo_weight_change_below_one_answers_without_updating_message():
+    callback = _build_callback("photo_wchg:0:-1")
+    state = _DummyState()
+    state._data = {"photo_analysis_items": [{"name": "Яблоко", "grams": 1, "kcal": 1, "protein": 0, "fat": 0, "carbs": 0}]}
+
+    asyncio.run(meals.photo_analysis_weight_change(callback, state))
+
+    callback.answer.assert_awaited_once_with(
+        "Минимальный вес продукта — 1 г. Чтобы убрать продукт, нажмите 🗑 Удалить.",
+        show_alert=False,
+    )
+    callback.message.edit_text.assert_not_awaited()
+    assert state._data["photo_analysis_items"][0]["grams"] == 1
+
+
+def test_photo_delete_product_updates_items_and_returns_to_confirmation():
+    callback = _build_callback("photo_delete:0")
+    state = _DummyState()
+    state._data = {
+        "photo_analysis_items": [
+            {"name": "Курица", "grams": 100, "kcal": 150, "protein": 20, "fat": 5, "carbs": 0},
+            {"name": "Рис", "grams": 50, "kcal": 70, "protein": 1, "fat": 0, "carbs": 15},
+        ],
+        "photo_analysis_editing_idx": 0,
+    }
+
+    asyncio.run(meals.photo_analysis_delete_product(callback, state))
+
+    callback.answer.assert_awaited_once_with("Продукт удалён")
+    assert [item["name"] for item in state._data["photo_analysis_items"]] == ["Рис"]
+    text = callback.message.edit_text.await_args.args[0]
+    assert "Рис" in text
+    assert "Курица" not in text
+    assert "70 ккал" in text
+
+
+def test_photo_delete_last_product_shows_empty_message_and_no_save_button():
+    callback = _build_callback("photo_delete:0")
+    state = _DummyState()
+    state._data = {"photo_analysis_items": [{"name": "Яблоко", "grams": 100, "kcal": 52}]}
+
+    asyncio.run(meals.photo_analysis_delete_product(callback, state))
+
+    assert state._data["photo_analysis_items"] == []
+    callback.message.edit_text.assert_awaited_once_with(
+        "Все продукты удалены. Добавьте продукт вручную или отмените действие.",
+        reply_markup=None,
+        parse_mode=None,
+    )
 
 
 def test_send_photo_analysis_confirmation_attaches_inline_without_cancel_hint_message():
