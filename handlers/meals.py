@@ -3369,7 +3369,7 @@ async def _keep_meal_entry_open_after_save(
         parse_mode="HTML",
     )
     await message.answer(
-        "Можешь добавить ещё продукт в этот приём пищи или завершить его.",
+        "Можно добавить ещё продукт в этот приём пищи или завершить его.",
         reply_markup=kbju_add_menu,
     )
 
