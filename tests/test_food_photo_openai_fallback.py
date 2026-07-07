@@ -75,6 +75,78 @@ def test_food_photo_analysis_falls_back_to_openai_after_gemini_failure(monkeypat
     ]
 
 
+def test_food_photo_analysis_passes_comment_to_gemini(monkeypatch):
+    calls = []
+    expected = _food_result("Салат с фетой")
+
+    async def fake_run_gemini_task(analyzer, image_data, comment):
+        calls.append(("gemini", analyzer, image_data, comment))
+        return expected
+
+    monkeypatch.setattr(meals, "_run_gemini_task", fake_run_gemini_task)
+
+    result = asyncio.run(
+        meals._run_food_photo_analysis_with_openai_fallback(
+            "gemini-analyzer",
+            b"image",
+            user_id="42",
+            comment="общий вес 500 г, без масла",
+        )
+    )
+
+    assert result.provider == "gemini"
+    assert result.payload == expected
+    assert calls == [("gemini", "gemini-analyzer", b"image", "общий вес 500 г, без масла")]
+
+
+def test_food_photo_analysis_passes_comment_to_openai_fallback(monkeypatch):
+    calls = []
+    expected = _food_result("Паста с соусом")
+
+    async def fake_run_gemini_task(analyzer, image_data, comment):
+        calls.append(("gemini", analyzer, image_data, comment))
+        raise meals.GeminiServiceTemporaryUnavailableError("timeout")
+
+    async def fake_analyze_image_with_openai(
+        openai_analyzer,
+        image_data,
+        *,
+        user_id=None,
+        feature,
+        operation_log_name,
+        comment=None,
+    ):
+        calls.append(("openai", openai_analyzer, image_data, user_id, feature, operation_log_name, comment))
+        return expected
+
+    monkeypatch.setattr(meals, "_run_gemini_task", fake_run_gemini_task)
+    monkeypatch.setattr(meals, "_analyze_image_with_openai", fake_analyze_image_with_openai)
+
+    result = asyncio.run(
+        meals._run_food_photo_analysis_with_openai_fallback(
+            "gemini-analyzer",
+            b"image",
+            user_id="42",
+            comment="съел половину порции",
+        )
+    )
+
+    assert result.provider == "openai"
+    assert result.payload == expected
+    assert calls == [
+        ("gemini", "gemini-analyzer", b"image", "съел половину порции"),
+        (
+            "openai",
+            meals.openai_label_service.analyze_food_photo_openai,
+            b"image",
+            "42",
+            "food_photo_analysis",
+            "анализа еды по фото",
+            "съел половину порции",
+        ),
+    ]
+
+
 def test_food_photo_analysis_raises_standard_error_when_both_providers_fail(monkeypatch):
     async def fake_run_gemini_task(analyzer, image_data):
         raise meals.GeminiServiceQuotaError("quota")

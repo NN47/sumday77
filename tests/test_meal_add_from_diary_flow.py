@@ -52,6 +52,16 @@ def test_photo_analysis_confirm_menu_uses_product_edit_buttons_for_multiple_item
     assert callbacks == [["edit_photo_food_item:0"], ["edit_photo_food_item:1"], ["save_photo_food_analysis"]]
 
 
+def test_food_photo_clarification_menu_offers_comment_or_immediate_analysis():
+    keyboard = meals._build_food_photo_clarification_menu()
+
+    rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
+    callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
+
+    assert rows == [["✍️ Добавить уточнение"], ["⏭ Анализировать без уточнения"]]
+    assert callbacks == [["food_photo_add_comment"], ["food_photo_analyze_now"]]
+
+
 def test_photo_weight_editor_menu_edits_specific_product_without_cancel():
     keyboard = meals._build_photo_weight_editor_menu(1)
 

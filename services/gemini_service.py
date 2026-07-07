@@ -518,7 +518,7 @@ class GeminiService:
             return None
         return {"items": normalized_items, "total": total}
 
-    def estimate_kbju_from_photo(self, image_bytes: bytes) -> Optional[dict]:
+    def estimate_kbju_from_photo(self, image_bytes: bytes, comment: str | None = None) -> Optional[dict]:
         prompt = """Ты нутрициолог. Оцени еду на фотографии.
 Верни строго валидный JSON без пояснений в формате:
 {
@@ -534,6 +534,13 @@ class GeminiService:
 - КБЖУ для items указывай за оценённую массу продукта, не на 100 г;
 - total должен равняться сумме items;
 - числа возвращай числами, не строками."""
+        if comment:
+            prompt += (
+                "\n\nДополнительное уточнение пользователя к фото:\n"
+                f"{comment.strip()}\n"
+                "Используй это уточнение как контекст: состав блюда, общий/съеденный вес, "
+                "количество съеденного, наличие масла, соусов, сыра, майонеза и других добавок."
+            )
         try:
             from google.genai import types
 
