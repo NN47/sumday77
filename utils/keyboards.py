@@ -747,7 +747,7 @@ water_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="➕ Добавить воду")],
         [KeyboardButton(text="📆 Календарь воды")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+        [main_menu_button],
     ],
     resize_keyboard=True,
 )
@@ -786,7 +786,7 @@ activity_analysis_menu = ReplyKeyboardMarkup(
         ],
         [KeyboardButton(text=ACTIVITY_ANALYSIS_WEEK_BUTTON_TEXT), KeyboardButton(text=ACTIVITY_ANALYSIS_MONTH_BUTTON_TEXT)],
         [KeyboardButton(text=ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT)],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
+        [main_menu_button],
     ],
     resize_keyboard=True,
 )
