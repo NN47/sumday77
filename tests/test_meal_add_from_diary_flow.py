@@ -1097,6 +1097,33 @@ def test_return_to_food_diary_sends_diary_menu_and_refreshes_today():
     )
 
 
+def test_render_today_meals_replaces_daily_totals_with_control_buttons_prompt():
+    message = _build_message()
+    message.answer.return_value = SimpleNamespace(message_id=42)
+    target_date = date(2026, 4, 8)
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Стейк",
+        description="Стейк",
+        products_json='[{"name":"Стейк","grams":150,"kcal":512,"protein":9.6,"fat":35.2,"carbs":41.6}]',
+        calories=512,
+        protein=9.6,
+        fat=35.2,
+        carbs=41.6,
+        meal_type=meals.MealType.LUNCH.value,
+    )
+
+    with patch("handlers.meals.MealRepository.get_meals_for_date", return_value=[meal]), patch(
+        "handlers.meals.MealRepository.get_daily_totals",
+        return_value={"calories": 1447, "protein_g": 64, "fat_total_g": 85, "carbohydrates_total_g": 107},
+    ), patch("handlers.meals.MealRepository.get_kbju_settings", return_value=None):
+        asyncio.run(meals._render_day_meals_messages(message, "12345", target_date, include_back=False))
+
+    assert message.answer.await_args_list[-1].args[0] == "⬇️ Кнопки управления"
+    assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_menu
+    assert not any("🎯 <b>Цель:</b>" in call.args[0] for call in message.answer.await_args_list)
+
+
 def test_meal_weight_done_returns_to_food_diary_for_edited_date():
     target_date = date(2026, 1, 15)
     callback = _build_callback("meal_wdone")

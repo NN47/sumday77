@@ -1327,6 +1327,15 @@ async def _render_day_meals_messages(
         await _delete_stored_message(message, meal_messages.get(stale_type))
         meal_messages.pop(stale_type, None)
 
+    if not include_back:
+        if day_store.get("summary"):
+            await _delete_stored_message(message, day_store.get("summary"))
+            day_store["summary"] = None
+
+        sent = await message.answer("⬇️ Кнопки управления", reply_markup=kbju_menu)
+        day_store["summary"] = sent.message_id if sent else None
+        return
+
     summary_text = format_daily_totals_message(
         daily_totals,
         day_str,
