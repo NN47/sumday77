@@ -4958,7 +4958,7 @@ def _build_product_actions_keyboard(product_idx: int) -> InlineKeyboardMarkup:
 
 
 def _build_weight_editor_reply_keyboard() -> ReplyKeyboardMarkup:
-    """Reply-клавиатура для отмены изменения веса продукта."""
+    """Reply-клавиатура для отмены режима редактирования продукта."""
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="❌ Отмена")]],
         resize_keyboard=True,
@@ -5198,16 +5198,16 @@ def _render_kbju_editor_text(product: dict, draft: Optional[dict] = None) -> str
         fat = float(draft.get("fat", fat))
         carbs = float(draft.get("carbs", carbs))
     lines = [
-        "🧮 Ручная правка КБЖУ",
+        "🧮 <b>Ручная правка КБЖУ</b>",
         "",
-        f"Продукт: {name}",
+        f"<b>Продукт:</b> {html.escape(str(name))}",
         "",
-        f"Текущий вес: {grams:.0f} г",
+        f"<b>Текущий вес:</b> {grams:.0f} г",
         "",
-        f"🔥 Калории: {calories:.0f} ккал",
-        f"💪 Белки: {protein:.1f} г",
-        f"🥑 Жиры: {fat:.1f} г",
-        f"{CARBS_EMOJI} Углеводы: {carbs:.1f} г",
+        f"🔥 <b>Калории:</b> {calories:.0f} ккал",
+        f"💪 <b>Белки:</b> {protein:.1f} г",
+        f"🥑 <b>Жиры:</b> {fat:.1f} г",
+        f"{CARBS_EMOJI} <b>Углеводы:</b> {carbs:.1f} г",
     ]
     if bool(product.get("is_manually_corrected")) or draft:
         lines.append("✏️ КБЖУ скорректированы вручную")
@@ -5262,15 +5262,15 @@ def _render_kbju_field_editor_text(product: dict, field: str, current_value: flo
     formatted_value = f"{current_value:.0f}" if precision == 0 else f"{current_value:.1f}"
     return "\n".join(
         [
-            f"{emoji} Изменение {title}",
+            f"{emoji} <b>Изменение {title}</b>",
             "",
-            f"Продукт: {name}",
+            f"<b>Продукт:</b> {html.escape(str(name))}",
             "",
-            f"Текущий вес: {grams:.0f} г",
+            f"<b>Текущий вес:</b> {grams:.0f} г",
             "",
-            f"Текущее значение: {formatted_value} {unit}",
+            f"<b>Текущее значение:</b> {formatted_value} {unit}",
             "",
-            "Выбери действие:",
+            "<b>Выбери действие:</b>",
         ]
     )
 
@@ -5684,6 +5684,7 @@ async def handle_meal_weight_edit(message: Message, state: FSMContext):
             drafts.pop(str(product_idx), None)
             await state.set_state(MealEntryStates.editing_meal_weight)
             await state.update_data(weight_drafts=drafts, editing_product_idx=product_idx)
+            await message.answer("⬇️ Возвращаю стандартную клавиатуру", reply_markup=main_menu)
             await message.answer(
                 _render_product_actions_text(saved_products[product_idx]),
                 reply_markup=_build_product_actions_keyboard(product_idx),
@@ -5858,7 +5859,8 @@ async def meal_product_name_input_start(callback: CallbackQuery, state: FSMConte
     await state.set_state(MealEntryStates.editing_meal_name_input)
     await state.update_data(editing_product_idx=product_idx)
     await callback.message.answer(
-        f'Введи новое название для продукта "{html.escape(str(product_name))}":'
+        f'Введи новое название для продукта "{html.escape(str(product_name))}":',
+        reply_markup=_build_weight_editor_reply_keyboard(),
     )
 
 
@@ -5866,6 +5868,22 @@ async def meal_product_name_input_start(callback: CallbackQuery, state: FSMConte
 async def meal_product_name_input_value(message: Message, state: FSMContext):
     """Сохраняет новое название продукта."""
     new_name = (message.text or "").strip()
+    if new_name == "❌ Отмена":
+        data = await state.get_data()
+        product_idx = data.get("editing_product_idx")
+        saved_products = data.get("saved_products", [])
+        if product_idx is not None and 0 <= product_idx < len(saved_products):
+            await state.set_state(MealEntryStates.editing_meal_weight)
+            await state.update_data(editing_product_idx=product_idx)
+            await message.answer("⬇️ Возвращаю стандартную клавиатуру", reply_markup=main_menu)
+            await message.answer(
+                _render_product_actions_text(saved_products[product_idx]),
+                reply_markup=_build_product_actions_keyboard(product_idx),
+            )
+            return
+        await state.set_state(MealEntryStates.editing_meal_weight)
+        await message.answer("Редактирование названия отменено.", reply_markup=main_menu)
+        return
     if not new_name:
         await message.answer("Пожалуйста, введи непустое название продукта.")
         return
@@ -5895,7 +5913,7 @@ async def meal_product_name_input_value(message: Message, state: FSMContext):
             ai_pending_meal={**pending, "items": saved_products},
             editing_product_idx=product_idx,
         )
-        await message.answer("✅ Название продукта обновлено")
+        await message.answer("✅ Название продукта обновлено", reply_markup=main_menu)
         await message.answer(
             _render_product_actions_text(product),
             reply_markup=_build_product_actions_keyboard(product_idx),
@@ -5949,6 +5967,7 @@ async def meal_product_name_input_value(message: Message, state: FSMContext):
     await state.update_data(saved_products=saved_products, editing_product_idx=product_idx)
     await message.answer(
         "✅ Название продукта обновлено",
+        reply_markup=main_menu,
     )
     await message.answer(
         _render_product_actions_text(product),
@@ -5967,16 +5986,17 @@ async def meal_product_open_weight_editor(callback: CallbackQuery, state: FSMCon
         await callback.answer("Не нашёл продукт", show_alert=True)
         return
     product = saved_products[product_idx]
-    draft_weight = drafts.get(str(product_idx))
-    has_changes = draft_weight is not None and round(float(draft_weight), 2) != round(float(product.get("grams") or 0), 2)
+    drafts.pop(str(product_idx), None)
+    draft_weight = None
     await state.set_state(MealEntryStates.editing_meal_weight)
     await state.update_data(
         editing_product_idx=product_idx,
+        weight_drafts=drafts,
         weight_editor_message_id=callback.message.message_id,
     )
     await callback.message.edit_text(
         _render_weight_editor_text(product, draft_weight=draft_weight),
-        reply_markup=_build_weight_editor_keyboard(product_idx, has_changes=has_changes),
+        reply_markup=_build_weight_editor_keyboard(product_idx, has_changes=False),
     )
     await callback.message.answer(
         "Для отмены изменения веса нажми «❌ Отмена».",
@@ -6001,6 +6021,10 @@ async def meal_product_open_kbju_editor(callback: CallbackQuery, state: FSMConte
     await callback.message.edit_text(
         _render_kbju_editor_text(product, draft=draft),
         reply_markup=_build_kbju_editor_keyboard(product_idx),
+    )
+    await callback.message.answer(
+        "Для отмены ручной правки КБЖУ нажми «❌ Отмена».",
+        reply_markup=_build_weight_editor_reply_keyboard(),
     )
 
 
@@ -6050,7 +6074,8 @@ async def meal_weight_manual_input_start(callback: CallbackQuery, state: FSMCont
     await state.set_state(MealEntryStates.editing_meal_weight_manual_input)
     await state.update_data(editing_product_idx=product_idx)
     await callback.message.answer(
-        f'Введи новый вес для продукта "{product_name}" в граммах:'
+        f'Введи новый вес для продукта "{product_name}" в граммах:',
+        reply_markup=_build_weight_editor_reply_keyboard(),
     )
 
 
@@ -6066,6 +6091,7 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
             drafts.pop(str(product_idx), None)
             await state.set_state(MealEntryStates.editing_meal_weight)
             await state.update_data(weight_drafts=drafts, editing_product_idx=product_idx)
+            await message.answer("⬇️ Возвращаю стандартную клавиатуру", reply_markup=main_menu)
             await message.answer(
                 _render_product_actions_text(saved_products[product_idx]),
                 reply_markup=_build_product_actions_keyboard(product_idx),
@@ -6153,7 +6179,20 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
 
 
 @router.message(MealEntryStates.edit_kbju_menu)
-async def handle_meal_kbju_edit(message: Message):
+async def handle_meal_kbju_edit(message: Message, state: FSMContext):
+    if (message.text or "").strip() == "❌ Отмена":
+        data = await state.get_data()
+        product_idx = data.get("editing_product_idx")
+        saved_products = data.get("saved_products", [])
+        if product_idx is not None and 0 <= product_idx < len(saved_products):
+            await state.set_state(MealEntryStates.editing_meal_weight)
+            await state.update_data(editing_product_idx=product_idx)
+            await message.answer("⬇️ Возвращаю стандартную клавиатуру", reply_markup=main_menu)
+            await message.answer(
+                _render_product_actions_text(saved_products[product_idx]),
+                reply_markup=_build_product_actions_keyboard(product_idx),
+            )
+            return
     await message.answer("Используй кнопки ниже, чтобы изменить КБЖУ 👇")
 
 
@@ -6185,6 +6224,10 @@ async def meal_kbju_edit_single_field_start(callback: CallbackQuery, state: FSMC
     await callback.message.edit_text(
         _render_kbju_field_editor_text(product, field, current_value),
         reply_markup=_build_kbju_field_editor_keyboard(product_idx, field),
+    )
+    await callback.message.answer(
+        "Для отмены изменения значения нажми «❌ Отмена».",
+        reply_markup=_build_weight_editor_reply_keyboard(),
     )
 
 
@@ -6226,10 +6269,50 @@ async def meal_kbju_edit_single_field_manual_start(callback: CallbackQuery, stat
             inline_keyboard=[[InlineKeyboardButton(text="↩️ Назад", callback_data=f"meal_kfback:{product_idx}")]]
         ),
     )
+    await callback.message.answer(
+        "Для отмены ручного ввода нажми «❌ Отмена».",
+        reply_markup=_build_weight_editor_reply_keyboard(),
+    )
+
+
+@router.message(MealEntryStates.edit_kbju_field)
+async def handle_meal_kbju_field_edit(message: Message, state: FSMContext):
+    if (message.text or "").strip() != "❌ Отмена":
+        await message.answer("Используй кнопки ниже, чтобы изменить значение КБЖУ 👇")
+        return
+
+    data = await state.get_data()
+    product_idx = data.get("editing_product_idx")
+    saved_products = data.get("saved_products", [])
+    kbju_drafts = data.get("kbju_drafts", {})
+    if product_idx is not None and 0 <= product_idx < len(saved_products):
+        await state.set_state(MealEntryStates.edit_kbju_menu)
+        await state.update_data(editing_product_idx=product_idx)
+        await message.answer(
+            _render_kbju_editor_text(saved_products[product_idx], draft=kbju_drafts.get(str(product_idx))),
+            reply_markup=_build_kbju_editor_keyboard(product_idx),
+        )
+        return
+
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    await message.answer("Редактирование значения отменено.", reply_markup=main_menu)
 
 
 @router.message(MealEntryStates.edit_kbju_manual_input)
 async def meal_kbju_edit_single_field_value(message: Message, state: FSMContext):
+    if (message.text or "").strip() == "❌ Отмена":
+        data = await state.get_data()
+        product_idx = data.get("editing_product_idx")
+        saved_products = data.get("saved_products", [])
+        kbju_drafts = data.get("kbju_drafts", {})
+        if product_idx is not None and 0 <= product_idx < len(saved_products):
+            await state.set_state(MealEntryStates.edit_kbju_menu)
+            await state.update_data(editing_product_idx=product_idx)
+            await message.answer(
+                _render_kbju_editor_text(saved_products[product_idx], draft=kbju_drafts.get(str(product_idx))),
+                reply_markup=_build_kbju_editor_keyboard(product_idx),
+            )
+            return
     raw_value = (message.text or "").strip().replace(",", ".")
     try:
         value = float(raw_value)
