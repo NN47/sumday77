@@ -4957,41 +4957,44 @@ def _build_product_actions_keyboard(product_idx: int) -> InlineKeyboardMarkup:
     )
 
 
-def _build_weight_editor_keyboard(product_idx: int) -> InlineKeyboardMarkup:
-    """Клавиатура изменения веса одного продукта."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="−100 г", callback_data=f"meal_wchg:{product_idx}:-100"),
-                InlineKeyboardButton(text="−50 г", callback_data=f"meal_wchg:{product_idx}:-50"),
-                InlineKeyboardButton(text="+50 г", callback_data=f"meal_wchg:{product_idx}:50"),
-                InlineKeyboardButton(text="+100 г", callback_data=f"meal_wchg:{product_idx}:100"),
-            ],
-            [
-                InlineKeyboardButton(text="−25 г", callback_data=f"meal_wchg:{product_idx}:-25"),
-                InlineKeyboardButton(text="−10 г", callback_data=f"meal_wchg:{product_idx}:-10"),
-                InlineKeyboardButton(text="+10 г", callback_data=f"meal_wchg:{product_idx}:10"),
-                InlineKeyboardButton(text="+25 г", callback_data=f"meal_wchg:{product_idx}:25"),
-            ],
-            [
-                InlineKeyboardButton(text="−5 г", callback_data=f"meal_wchg:{product_idx}:-5"),
-                InlineKeyboardButton(text="−1 г", callback_data=f"meal_wchg:{product_idx}:-1"),
-                InlineKeyboardButton(text="+1 г", callback_data=f"meal_wchg:{product_idx}:1"),
-                InlineKeyboardButton(text="+5 г", callback_data=f"meal_wchg:{product_idx}:5"),
-            ],
-            [
-                InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data=f"meal_wmanual:{product_idx}"),
-            ],
-            [
-                InlineKeyboardButton(text="✅ Сохранить", callback_data=f"meal_wsave:{product_idx}"),
-                InlineKeyboardButton(text="🗑 Удалить", callback_data=f"meal_wdelask:{product_idx}"),
-            ],
-            [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="meal_wback_list"),
-                InlineKeyboardButton(text="❌ Отмена", callback_data="meal_wcancel"),
-            ],
-        ]
+def _build_weight_editor_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Reply-клавиатура для отмены изменения веса продукта."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="❌ Отмена")]],
+        resize_keyboard=True,
     )
+
+
+def _build_weight_editor_keyboard(product_idx: int, *, has_changes: bool = True) -> InlineKeyboardMarkup:
+    """Клавиатура изменения веса одного продукта."""
+    rows = [
+        [
+            InlineKeyboardButton(text="−100 г", callback_data=f"meal_wchg:{product_idx}:-100"),
+            InlineKeyboardButton(text="−50 г", callback_data=f"meal_wchg:{product_idx}:-50"),
+            InlineKeyboardButton(text="+50 г", callback_data=f"meal_wchg:{product_idx}:50"),
+            InlineKeyboardButton(text="+100 г", callback_data=f"meal_wchg:{product_idx}:100"),
+        ],
+        [
+            InlineKeyboardButton(text="−25 г", callback_data=f"meal_wchg:{product_idx}:-25"),
+            InlineKeyboardButton(text="−10 г", callback_data=f"meal_wchg:{product_idx}:-10"),
+            InlineKeyboardButton(text="+10 г", callback_data=f"meal_wchg:{product_idx}:10"),
+            InlineKeyboardButton(text="+25 г", callback_data=f"meal_wchg:{product_idx}:25"),
+        ],
+        [
+            InlineKeyboardButton(text="−5 г", callback_data=f"meal_wchg:{product_idx}:-5"),
+            InlineKeyboardButton(text="−1 г", callback_data=f"meal_wchg:{product_idx}:-1"),
+            InlineKeyboardButton(text="+1 г", callback_data=f"meal_wchg:{product_idx}:1"),
+            InlineKeyboardButton(text="+5 г", callback_data=f"meal_wchg:{product_idx}:5"),
+        ],
+        [InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data=f"meal_wmanual:{product_idx}")],
+    ]
+    action_row = []
+    if has_changes:
+        action_row.append(InlineKeyboardButton(text="✅ Сохранить", callback_data=f"meal_wsave:{product_idx}"))
+    action_row.append(InlineKeyboardButton(text="🗑 Удалить", callback_data=f"meal_wdelask:{product_idx}"))
+    rows.append(action_row)
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"meal_wback_product:{product_idx}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _build_weight_delete_confirm_keyboard(product_idx: int) -> InlineKeyboardMarkup:
@@ -5139,10 +5142,22 @@ def _build_meal_update_payload(products: list[dict]) -> tuple[dict, str]:
     return totals, "\n".join(api_details_lines) if api_details_lines else None
 
 
+def _build_product_preview_for_weight(product: dict, draft_weight: Optional[float]) -> dict:
+    """Возвращает копию продукта с КБЖУ, пересчитанными под черновой вес."""
+    preview = dict(product)
+    current_weight = float(product.get("grams") or 0)
+    if draft_weight is not None and round(float(draft_weight), 2) != round(current_weight, 2):
+        _apply_product_weight(preview, float(draft_weight))
+    return preview
+
+
 def _render_weight_editor_text(product: dict, draft_weight: Optional[float] = None) -> str:
     """Текст экрана изменения веса конкретного продукта."""
-    name = product.get("name") or "продукт"
+    name = html.escape(str(product.get("name") or "продукт"))
     current_weight = float(product.get("grams") or 0)
+    has_changes = draft_weight is not None and round(float(draft_weight), 2) != round(current_weight, 2)
+    preview = _build_product_preview_for_weight(product, draft_weight if has_changes else None)
+    calories, protein, fat, carbs = _extract_product_macros(preview)
     lines = [
         "<b>✏️ Изменение веса продукта</b>",
         "",
@@ -5150,10 +5165,10 @@ def _render_weight_editor_text(product: dict, draft_weight: Optional[float] = No
         "",
         f"<b>Текущий вес:</b> {current_weight:.0f} г",
     ]
-    if draft_weight is not None and round(draft_weight, 2) != round(current_weight, 2):
-        lines.append(f"<b>Новый вес:</b> {draft_weight:.0f} г")
+    if has_changes:
+        lines.append(f"<b>Новый вес:</b> {float(draft_weight):.0f} г")
 
-    lines.extend(["", "<b>Выбери действие:</b>"])
+    lines.extend(["", _format_product_macro_summary(calories, protein, fat, carbs), "", "<b>Выбери действие:</b>"])
     return "\n".join(lines)
 
 
@@ -5660,7 +5675,30 @@ async def handle_edit_type_choice(message: Message, state: FSMContext):
 async def handle_meal_weight_edit(message: Message, state: FSMContext):
     """Обрабатывает сообщения в режиме изменения веса."""
     text = (message.text or "").strip()
-    if text in {"⬅️ Назад", "❌ Отмена"}:
+    if text == "❌ Отмена":
+        data = await state.get_data()
+        product_idx = data.get("editing_product_idx")
+        saved_products = data.get("saved_products", [])
+        drafts = data.get("weight_drafts", {})
+        if product_idx is not None and 0 <= product_idx < len(saved_products):
+            drafts.pop(str(product_idx), None)
+            await state.set_state(MealEntryStates.editing_meal_weight)
+            await state.update_data(weight_drafts=drafts, editing_product_idx=product_idx)
+            await message.answer(
+                _render_product_actions_text(saved_products[product_idx]),
+                reply_markup=_build_product_actions_keyboard(product_idx),
+            )
+            return
+
+        await state.set_state(MealEntryStates.choosing_edit_type)
+        push_menu_stack(message.bot, kbju_edit_type_menu)
+        await message.answer(
+            "✏️ Редактирование приёма пищи\n\nВыбери, что хочешь изменить:",
+            reply_markup=kbju_edit_type_menu,
+        )
+        return
+
+    if text == "⬅️ Назад":
         await state.set_state(MealEntryStates.choosing_edit_type)
         push_menu_stack(message.bot, kbju_edit_type_menu)
         await message.answer(
@@ -5735,6 +5773,27 @@ async def meal_weight_cancel(callback: CallbackQuery, state: FSMContext):
     await callback.answer("Редактирование отменено")
     await state.clear()
     await callback.message.answer("Ок, отменил изменение веса 👌", reply_markup=kbju_after_meal_menu)
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_wback_product:"))
+async def meal_weight_back_to_product_actions(callback: CallbackQuery, state: FSMContext):
+    """Возврат с экрана изменения веса к действиям выбранного продукта без сохранения черновика."""
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    saved_products = data.get("saved_products", [])
+    drafts = data.get("weight_drafts", {})
+    if product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не нашёл продукт", show_alert=True)
+        return
+
+    drafts.pop(str(product_idx), None)
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    await state.update_data(weight_drafts=drafts, editing_product_idx=product_idx)
+    await callback.message.edit_text(
+        _render_product_actions_text(saved_products[product_idx]),
+        reply_markup=_build_product_actions_keyboard(product_idx),
+    )
 
 
 @router.callback_query(lambda c: c.data == "meal_wback_list")
@@ -5909,11 +5968,19 @@ async def meal_product_open_weight_editor(callback: CallbackQuery, state: FSMCon
         return
     product = saved_products[product_idx]
     draft_weight = drafts.get(str(product_idx))
+    has_changes = draft_weight is not None and round(float(draft_weight), 2) != round(float(product.get("grams") or 0), 2)
     await state.set_state(MealEntryStates.editing_meal_weight)
-    await state.update_data(editing_product_idx=product_idx)
+    await state.update_data(
+        editing_product_idx=product_idx,
+        weight_editor_message_id=callback.message.message_id,
+    )
     await callback.message.edit_text(
         _render_weight_editor_text(product, draft_weight=draft_weight),
-        reply_markup=_build_weight_editor_keyboard(product_idx),
+        reply_markup=_build_weight_editor_keyboard(product_idx, has_changes=has_changes),
+    )
+    await callback.message.answer(
+        "Для отмены изменения веса нажми «❌ Отмена».",
+        reply_markup=_build_weight_editor_reply_keyboard(),
     )
 
 
@@ -5964,7 +6031,7 @@ async def meal_weight_change_draft(callback: CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         _render_weight_editor_text(product, draft_weight=new_weight),
-        reply_markup=_build_weight_editor_keyboard(product_idx),
+        reply_markup=_build_weight_editor_keyboard(product_idx, has_changes=True),
     )
 
 
@@ -5990,6 +6057,24 @@ async def meal_weight_manual_input_start(callback: CallbackQuery, state: FSMCont
 @router.message(MealEntryStates.editing_meal_weight_manual_input)
 async def meal_weight_manual_input_value(message: Message, state: FSMContext):
     """Обрабатывает ручной ввод нового веса."""
+    if (message.text or "").strip() == "❌ Отмена":
+        data = await state.get_data()
+        product_idx = data.get("editing_product_idx")
+        saved_products = data.get("saved_products", [])
+        drafts = data.get("weight_drafts", {})
+        if product_idx is not None and 0 <= product_idx < len(saved_products):
+            drafts.pop(str(product_idx), None)
+            await state.set_state(MealEntryStates.editing_meal_weight)
+            await state.update_data(weight_drafts=drafts, editing_product_idx=product_idx)
+            await message.answer(
+                _render_product_actions_text(saved_products[product_idx]),
+                reply_markup=_build_product_actions_keyboard(product_idx),
+            )
+        else:
+            await state.set_state(MealEntryStates.editing_meal_weight)
+            await message.answer("Используй кнопки ниже для редактирования продукта 👇")
+        return
+
     raw_value = (message.text or "").strip().replace(",", ".")
     if not raw_value.isdigit():
         await message.answer("Пожалуйста, введи вес числом в граммах, например: 180")
@@ -6048,10 +6133,23 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
     await state.set_state(MealEntryStates.editing_meal_weight)
     await state.update_data(weight_drafts=drafts)
 
-    await message.answer(
-        _render_weight_editor_text(product, draft_weight=new_weight),
-        reply_markup=_build_weight_editor_keyboard(product_idx),
-    )
+    editor_message_id = data.get("weight_editor_message_id")
+    if editor_message_id:
+        try:
+            await message.delete()
+        except TelegramBadRequest:
+            pass
+        await message.bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=editor_message_id,
+            text=_render_weight_editor_text(product, draft_weight=new_weight),
+            reply_markup=_build_weight_editor_keyboard(product_idx, has_changes=True),
+        )
+    else:
+        await message.answer(
+            _render_weight_editor_text(product, draft_weight=new_weight),
+            reply_markup=_build_weight_editor_keyboard(product_idx, has_changes=True),
+        )
 
 
 @router.message(MealEntryStates.edit_kbju_menu)
@@ -6361,7 +6459,13 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
         return
 
     product = saved_products[product_idx]
+    if str(product_idx) not in drafts:
+        await callback.answer("Сначала измени вес", show_alert=True)
+        return
     draft_weight = float(drafts.get(str(product_idx), product.get("grams", 0)))
+    if round(draft_weight, 2) == round(float(product.get("grams") or 0), 2):
+        await callback.answer("Вес не изменён", show_alert=True)
+        return
     if draft_weight < 1:
         await callback.answer("Вес не может быть меньше 1 г", show_alert=True)
         return
