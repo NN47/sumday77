@@ -7,6 +7,7 @@ from handlers.meals import (
     _build_custom_product_value_keyboard,
     _build_kbju_editor_keyboard,
     _build_kbju_field_editor_keyboard,
+    _build_name_input_keyboard,
     _build_product_actions_keyboard,
     _build_weight_editor_keyboard,
     _format_product_macro_summary,
@@ -207,6 +208,15 @@ def test_weight_editor_text_bolds_title_and_colon_labels():
     assert "<b>Текущий вес:</b> 500 г" in text
     assert "<b>Новый вес:</b> 450 г" in text
     assert "<b>Выбери действие:</b>" in text
+
+
+def test_name_input_keyboard_has_inline_back_button_only():
+    keyboard = _build_name_input_keyboard(2)
+    rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
+    callback_rows = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
+
+    assert rows == [["⬅️ Назад"]]
+    assert callback_rows == [["meal_pact_name_back:2"]]
 
 
 def test_product_actions_keyboard_has_change_name_button():
