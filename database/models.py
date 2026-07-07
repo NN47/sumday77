@@ -181,6 +181,16 @@ class WaterEntry(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
 
 
+class QuickWaterMessage(Base):
+    """Актуальное сообщение быстрого добавления воды пользователя."""
+    __tablename__ = "quick_water_messages"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, unique=True, nullable=False, index=True)
+    chat_id = Column(String, nullable=False)
+    message_id = Column(Integer, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class WellbeingEntry(Base):
     """Модель отметки самочувствия."""
     __tablename__ = "wellbeing_entries"

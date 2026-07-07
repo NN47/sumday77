@@ -2,6 +2,7 @@
 import logging
 from datetime import date
 from aiogram import Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from states.user_states import WaterStates
@@ -19,7 +20,7 @@ from utils.calendar_utils import (
     build_water_day_actions_keyboard,
 )
 from utils.progress_formatters import build_water_progress_bar
-from database.repositories import WaterRepository, WeightRepository
+from database.repositories import QuickWaterMessageRepository, WaterRepository, WeightRepository
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,35 @@ def build_water_added_text(amount: float, daily_total: float, recommended: float
         f"<b>📈 Прогресс</b>: {progress}%\n"
         f"{bar}"
     )
+
+
+async def send_or_edit_quick_water_message(message: Message, user_id: str, text: str) -> Message:
+    """Обновляет актуальное сообщение быстрого добавления воды или создаёт новое."""
+    saved_message = QuickWaterMessageRepository.get_message(user_id)
+
+    if saved_message:
+        try:
+            edited_message = await message.bot.edit_message_text(
+                chat_id=saved_message.chat_id,
+                message_id=saved_message.message_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=water_quick_add_inline,
+            )
+            if isinstance(edited_message, Message):
+                return edited_message
+            return message
+        except TelegramAPIError as exc:
+            logger.warning(
+                "Failed to edit quick water message %s for user %s: %s",
+                saved_message.message_id,
+                user_id,
+                exc,
+            )
+
+    sent_message = await message.answer(text, parse_mode="HTML", reply_markup=water_quick_add_inline)
+    QuickWaterMessageRepository.save_message(user_id, sent_message.chat.id, sent_message.message_id)
+    return sent_message
 
 
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
@@ -86,7 +116,8 @@ async def water(message: Message):
         "Отслеживай количество выпитой воды в течение дня."
     )
     
-    await message.answer(intro_text, reply_markup=water_quick_add_inline)
+    sent_message = await message.answer(intro_text, reply_markup=water_quick_add_inline)
+    QuickWaterMessageRepository.save_message(user_id, sent_message.chat.id, sent_message.message_id)
     push_menu_stack(message.bot, water_menu)
     await message.answer("Выбери действие в меню ниже.", reply_markup=water_menu)
 
@@ -109,7 +140,7 @@ async def quick_add_water_250(message: Message, state: FSMContext):
     bar = build_water_progress_bar(daily_total, recommended)
     text = build_water_added_text(amount, daily_total, recommended, bar)
     
-    await message.answer(text, parse_mode="HTML", reply_markup=water_quick_add_inline)
+    await send_or_edit_quick_water_message(message, user_id, text)
 
 
 @router.callback_query(lambda c: c.data in {"quick_water_250", "quick_water_300"})
@@ -131,7 +162,7 @@ async def quick_add_water_250_cb(callback: CallbackQuery, state: FSMContext):
     bar = build_water_progress_bar(daily_total, recommended)
     text = build_water_added_text(amount, daily_total, recommended, bar)
     
-    await message.answer(text, parse_mode="HTML", reply_markup=water_quick_add_inline)
+    await send_or_edit_quick_water_message(message, user_id, text)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("quick_water_add_"))
@@ -160,7 +191,7 @@ async def quick_add_water_amount_cb(callback: CallbackQuery, state: FSMContext):
     bar = build_water_progress_bar(daily_total, recommended)
     text = build_water_added_text(amount, daily_total, recommended, bar)
     
-    await message.answer(text, parse_mode="HTML", reply_markup=water_quick_add_inline)
+    await send_or_edit_quick_water_message(message, user_id, text)
 
 
 @router.callback_query(lambda c: c.data == "quick_water_clear_today")

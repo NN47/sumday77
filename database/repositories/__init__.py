@@ -2,7 +2,7 @@
 from .meal_repository import MealRepository
 from .workout_repository import WorkoutRepository
 from .weight_repository import WeightRepository
-from .water_repository import WaterRepository
+from .water_repository import QuickWaterMessageRepository, WaterRepository
 from .supplement_repository import SupplementRepository
 from .procedure_repository import ProcedureRepository
 from .note_repository import NoteRepository
@@ -23,6 +23,7 @@ __all__ = [
     "WorkoutRepository",
     "WeightRepository",
     "WaterRepository",
+    "QuickWaterMessageRepository",
     "SupplementRepository",
     "ProcedureRepository",
     "NoteRepository",
