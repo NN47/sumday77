@@ -46,7 +46,7 @@ def test_kbju_add_menu_exposes_primary_input_and_custom_product_buttons():
         "📝 Ввести приём пищи текстом (AI-анализ)",
         "📷 Анализ еды по фото",
         "📋 Анализ этикетки",
-        "🧺 Внести вручную",
+        "✍️ Внести вручную",
         FINISH_MEAL_BUTTON_TEXT,
     ]
     assert "🧪 Ввести текст через OpenRouter" not in texts
