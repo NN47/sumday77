@@ -101,7 +101,7 @@ ADD_METHOD_TEXTS = {
     "label": "📋 Анализ этикетки",
     "label_openai": "🧪 Анализ этикетки OpenAI",
     "barcode": "📷 Скан штрих-кода",
-    "custom": "🧺 Внести вручную",
+    "custom": "✍️ Внести вручную",
 }
 
 
@@ -1082,12 +1082,12 @@ async def _show_my_product_menu(
             parse_mode="HTML",
         )
         text = (
-            "<b>🧺 Внести вручную</b>\n\n"
+            "<b>✍️ Внести вручную</b>\n\n"
             "Выбери один из своих продуктов выше или создай новый продукт вручную."
         )
     else:
         text = (
-            "<b>🧺 Внести вручную</b>\n\n"
+            "<b>✍️ Внести вручную</b>\n\n"
             "Здесь ты можешь сам внести свой продукт: название и КБЖУ на 100 г.\n"
             "Нажми «➕ Создать продукт», чтобы добавить первый продукт."
         )
@@ -1633,11 +1633,12 @@ async def _show_input_methods(message: Message, state: FSMContext, *, user_id: s
     await state.set_state(MealEntryStates.choosing_meal_type)
     meal_type = normalize_meal_type((await state.get_data()).get("meal_type"), fallback=MealType.SNACK.value)
     text = (
-        "Теперь выбери способ добавления приёма пищи:\n\n"
+        "Теперь выбери способ добавления приёма пищи.\n\n"
+        "💡 Уже добавлял этот продукт? Нажми «📦 Мои продукты» ниже.\n\n"
         "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
         "• 📷 Анализ еды по фото\n"
         "• 📋 Анализ этикетки\n"
-        "• 🧺 Внести вручную"
+        "• ✍️ Внести вручную"
     )
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(text, reply_markup=_build_my_products_entry_keyboard(meal_type))
@@ -2672,7 +2673,7 @@ async def kbju_add_via_gigachat(message: Message, state: FSMContext):
     )
 
 
-@router.message(lambda m: m.text == "🧺 Внести вручную")
+@router.message(lambda m: m.text == "✍️ Внести вручную")
 async def kbju_add_via_custom_product(message: Message, state: FSMContext):
     """Открывает выбор своего продукта или сценарий создания нового продукта."""
     if not await _ensure_meal_type_selected(message, state, "custom"):
