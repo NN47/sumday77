@@ -38,8 +38,8 @@ def test_photo_analysis_confirm_menu_uses_single_product_edit_and_save_buttons()
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
     callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
 
-    assert rows == [["✏️ Пицца 4 сыра"], ["✅ Сохранить"]]
-    assert callbacks == [["edit_photo_food_item:0"], ["save_photo_food_analysis"]]
+    assert rows == [["✏️ Пицца 4 сыра"], ["⚖️ Общий вес", "✅ Сохранить"]]
+    assert callbacks == [["edit_photo_food_item:0"], ["photo_total_weight", "save_photo_food_analysis"]]
 
 
 def test_photo_analysis_confirm_menu_uses_product_edit_buttons_for_multiple_items():
@@ -48,8 +48,8 @@ def test_photo_analysis_confirm_menu_uses_product_edit_buttons_for_multiple_item
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
     callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
 
-    assert rows == [["✏️ Кусочек медовика"], ["✏️ Кофе с молоком"], ["✅ Сохранить"]]
-    assert callbacks == [["edit_photo_food_item:0"], ["edit_photo_food_item:1"], ["save_photo_food_analysis"]]
+    assert rows == [["✏️ Кусочек медовика"], ["✏️ Кофе с молоком"], ["⚖️ Общий вес", "✅ Сохранить"]]
+    assert callbacks == [["edit_photo_food_item:0"], ["edit_photo_food_item:1"], ["photo_total_weight", "save_photo_food_analysis"]]
 
 
 def test_food_photo_clarification_menu_offers_comment_or_immediate_analysis():
@@ -88,7 +88,7 @@ def test_send_photo_analysis_confirmation_attaches_inline_without_cancel_hint_me
     assert message.answer.await_count == 1
     result_call = message.answer.await_args_list[0]
     assert result_call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "edit_photo_food_item:0"
-    assert result_call.kwargs["reply_markup"].inline_keyboard[-1][0].callback_data == "save_photo_food_analysis"
+    assert [button.callback_data for button in result_call.kwargs["reply_markup"].inline_keyboard[-1]] == ["photo_total_weight", "save_photo_food_analysis"]
     assert "Для отмены" not in result_call.args[0]
 
 

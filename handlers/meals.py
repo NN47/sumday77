@@ -350,7 +350,10 @@ def _build_photo_analysis_confirm_menu(items: list[dict] | None = None) -> Inlin
     for idx, item in enumerate(items):
         name = _short_product_button_name(item.get("name") or "Продукт")
         rows.append([InlineKeyboardButton(text=f"✏️ {name}", callback_data=f"edit_photo_food_item:{idx}")])
-    rows.append([InlineKeyboardButton(text="✅ Сохранить", callback_data="save_photo_food_analysis")])
+    rows.append([
+        InlineKeyboardButton(text="⚖️ Общий вес", callback_data="photo_total_weight"),
+        InlineKeyboardButton(text="✅ Сохранить", callback_data="save_photo_food_analysis"),
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -360,6 +363,37 @@ def _build_food_photo_clarification_menu() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="✍️ Добавить уточнение", callback_data="food_photo_add_comment")],
             [InlineKeyboardButton(text="⏭ Анализировать без уточнения", callback_data="food_photo_analyze_now")],
+        ]
+    )
+
+
+def _build_photo_total_weight_editor_menu() -> InlineKeyboardMarkup:
+    """Строит inline-меню редактирования общего веса блюда из анализа фото."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="−100 г", callback_data="photo_twchg:-100"),
+                InlineKeyboardButton(text="−50 г", callback_data="photo_twchg:-50"),
+                InlineKeyboardButton(text="+50 г", callback_data="photo_twchg:50"),
+                InlineKeyboardButton(text="+100 г", callback_data="photo_twchg:100"),
+            ],
+            [
+                InlineKeyboardButton(text="−25 г", callback_data="photo_twchg:-25"),
+                InlineKeyboardButton(text="−10 г", callback_data="photo_twchg:-10"),
+                InlineKeyboardButton(text="+10 г", callback_data="photo_twchg:10"),
+                InlineKeyboardButton(text="+25 г", callback_data="photo_twchg:25"),
+            ],
+            [
+                InlineKeyboardButton(text="−5 г", callback_data="photo_twchg:-5"),
+                InlineKeyboardButton(text="−1 г", callback_data="photo_twchg:-1"),
+                InlineKeyboardButton(text="+1 г", callback_data="photo_twchg:1"),
+                InlineKeyboardButton(text="+5 г", callback_data="photo_twchg:5"),
+            ],
+            [InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data="photo_twmanual")],
+            [
+                InlineKeyboardButton(text="✅ Сохранить", callback_data="photo_twsave"),
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="photo_twback"),
+            ],
         ]
     )
 
@@ -468,7 +502,11 @@ def _scale_photo_items(items: list[dict], new_total_weight: float) -> list[dict]
     """Пропорционально пересчитывает вес и КБЖУ всех блюд в черновике (legacy helper)."""
     current_total_weight = sum(_safe_float(item.get("grams")) for item in items)
     if current_total_weight <= 0:
-        return items
+        if not items:
+            return items
+        updated_items = [dict(item) for item in items]
+        updated_items[0] = _scale_photo_item(updated_items[0], max(1.0, new_total_weight))
+        return updated_items
     factor = max(1.0, new_total_weight) / current_total_weight
     return [_scale_photo_item(item, _safe_float(item.get("grams")) * factor) for item in items]
 
@@ -510,6 +548,19 @@ def _format_photo_analysis_confirmation_text(items: list[dict]) -> str:
     else:
         lines.append("Проверьте результат перед сохранением.")
     return "\n".join(lines).rstrip()
+
+
+def _format_photo_total_weight_editor_text(total_weight: float) -> str:
+    """Форматирует экран редактирования общего веса блюда."""
+    return "\n".join(
+        [
+            "⚖️ <b>Изменение общего веса блюда</b>",
+            "",
+            f"Текущий общий вес: {max(1.0, total_weight):.0f} г",
+            "",
+            "Выбери действие:",
+        ]
+    )
 
 
 def _format_photo_weight_editor_text(item: dict) -> str:
@@ -3954,6 +4005,8 @@ async def _cancel_photo_analysis_confirmation(message: Message, state: FSMContex
         photo_analysis_raw_query=None,
         photo_analysis_provider=None,
         photo_analysis_editing_idx=None,
+        photo_total_weight_draft_items=None,
+        photo_total_weight_original_items=None,
     )
     await message.answer("❌ Добавление еды отменено.", reply_markup=kbju_add_menu)
 
@@ -4004,6 +4057,8 @@ async def _save_photo_analysis_confirmation(message: Message, state: FSMContext,
         photo_analysis_raw_query=None,
         photo_analysis_provider=None,
         photo_analysis_editing_idx=None,
+        photo_total_weight_draft_items=None,
+        photo_total_weight_original_items=None,
     )
     await _keep_meal_entry_open_after_save(
         message,
@@ -4094,6 +4149,149 @@ async def photo_analysis_weight_done(callback: CallbackQuery, state: FSMContext)
     await callback.answer()
 
 
+@router.callback_query(lambda c: c.data == "photo_total_weight")
+async def photo_analysis_total_weight_open(callback: CallbackQuery, state: FSMContext):
+    """Открывает редактор общего веса блюда из анализа фото."""
+    data = await state.get_data()
+    items = data.get("photo_analysis_items") or []
+    if not items:
+        await callback.answer("Черновик анализа фото не найден", show_alert=True)
+        return
+
+    draft_items = [dict(item) for item in items]
+    total_weight = sum(_safe_float(item.get("grams")) for item in draft_items)
+    await state.update_data(
+        photo_total_weight_original_items=[dict(item) for item in items],
+        photo_total_weight_draft_items=draft_items,
+    )
+    await callback.message.edit_text(
+        _format_photo_total_weight_editor_text(total_weight),
+        reply_markup=_build_photo_total_weight_editor_menu(),
+        parse_mode="HTML",
+    )
+    await callback.message.answer(
+        "Для отмены изменения общего веса нажми «❌ Отмена».",
+        reply_markup=_build_photo_analysis_cancel_menu(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data.startswith("photo_twchg:"))
+async def photo_analysis_total_weight_change(callback: CallbackQuery, state: FSMContext):
+    """Меняет общий вес блюда и пропорционально пересчитывает все продукты в черновике."""
+    data = await state.get_data()
+    draft_items = data.get("photo_total_weight_draft_items") or data.get("photo_analysis_items") or []
+    if not draft_items:
+        await callback.answer("Черновик анализа фото не найден", show_alert=True)
+        return
+    try:
+        delta = float(callback.data.split(":", 1)[1])
+    except (TypeError, ValueError, IndexError):
+        await callback.answer("Не удалось изменить общий вес", show_alert=True)
+        return
+
+    current_total_weight = sum(_safe_float(item.get("grams")) for item in draft_items)
+    new_total_weight = max(1.0, current_total_weight + delta)
+    updated_items = _scale_photo_items([dict(item) for item in draft_items], new_total_weight)
+    await state.update_data(photo_total_weight_draft_items=updated_items)
+    await callback.message.edit_text(
+        _format_photo_total_weight_editor_text(sum(_safe_float(item.get("grams")) for item in updated_items)),
+        reply_markup=_build_photo_total_weight_editor_menu(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == "photo_twmanual")
+async def photo_analysis_total_weight_manual_request(callback: CallbackQuery, state: FSMContext):
+    """Запрашивает ручной ввод общего веса блюда."""
+    data = await state.get_data()
+    if not (data.get("photo_total_weight_draft_items") or data.get("photo_analysis_items")):
+        await callback.answer("Черновик анализа фото не найден", show_alert=True)
+        return
+    await state.set_state(MealEntryStates.editing_photo_total_weight_manual_input)
+    await callback.message.answer(
+        "Введи общий вес блюда числом в граммах, например: 500",
+        reply_markup=_build_photo_analysis_cancel_menu(),
+    )
+    await callback.answer()
+
+
+@router.message(MealEntryStates.editing_photo_total_weight_manual_input)
+async def photo_analysis_total_weight_manual_apply(message: Message, state: FSMContext):
+    """Применяет ручной ввод общего веса блюда."""
+    text = (message.text or "").strip().replace(",", ".")
+    if text == "❌ Отмена":
+        data = await state.get_data()
+        await _cancel_photo_analysis_confirmation(message, state, data)
+        return
+    try:
+        new_total_weight = float(text)
+    except (TypeError, ValueError):
+        await message.answer("Пожалуйста, введи вес числом в граммах, например: 500")
+        return
+    if new_total_weight < 1:
+        await message.answer("Общий вес должен быть не меньше 1 г. Введи число в граммах.")
+        return
+
+    data = await state.get_data()
+    draft_items = data.get("photo_total_weight_draft_items") or data.get("photo_analysis_items") or []
+    if not draft_items:
+        await state.set_state(MealEntryStates.confirming_photo_analysis)
+        await message.answer("Черновик анализа фото не найден. Можно попробовать ещё раз.", reply_markup=kbju_add_menu)
+        return
+
+    updated_items = _scale_photo_items([dict(item) for item in draft_items], new_total_weight)
+    await state.set_state(MealEntryStates.confirming_photo_analysis)
+    await state.update_data(photo_total_weight_draft_items=updated_items)
+    await message.answer(
+        _format_photo_total_weight_editor_text(sum(_safe_float(item.get("grams")) for item in updated_items)),
+        reply_markup=_build_photo_total_weight_editor_menu(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data == "photo_twsave")
+async def photo_analysis_total_weight_save(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет черновик общего веса и возвращает экран результата анализа фото."""
+    data = await state.get_data()
+    draft_items = data.get("photo_total_weight_draft_items") or []
+    if not draft_items:
+        await callback.answer("Черновик общего веса не найден", show_alert=True)
+        return
+    await state.update_data(
+        photo_analysis_items=draft_items,
+        photo_total_weight_draft_items=None,
+        photo_total_weight_original_items=None,
+    )
+    await callback.message.edit_text(
+        _format_photo_analysis_confirmation_text(draft_items),
+        reply_markup=_build_photo_analysis_confirm_menu(draft_items),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == "photo_twback")
+async def photo_analysis_total_weight_back(callback: CallbackQuery, state: FSMContext):
+    """Возвращает к результату анализа фото без сохранения черновика общего веса."""
+    data = await state.get_data()
+    items = data.get("photo_total_weight_original_items") or data.get("photo_analysis_items") or []
+    if not items:
+        await callback.answer("Черновик анализа фото не найден", show_alert=True)
+        return
+    await state.update_data(
+        photo_total_weight_draft_items=None,
+        photo_total_weight_original_items=None,
+    )
+    await callback.message.edit_text(
+        _format_photo_analysis_confirmation_text(items),
+        reply_markup=_build_photo_analysis_confirm_menu(items),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
 @router.callback_query(lambda c: c.data == "photo_cancel")
 async def photo_analysis_cancel(callback: CallbackQuery, state: FSMContext):
     """Legacy: отменяет сохранение анализа фото через inline-кнопку."""
@@ -4131,6 +4329,8 @@ async def handle_photo_analysis_confirmation(message: Message, state: FSMContext
             photo_analysis_raw_query=None,
             photo_analysis_provider=None,
             photo_analysis_editing_idx=None,
+            photo_total_weight_draft_items=None,
+            photo_total_weight_original_items=None,
         )
         await message.answer("Черновик анализа фото не найден. Можно попробовать ещё раз.", reply_markup=kbju_add_menu)
         return
