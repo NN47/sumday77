@@ -140,6 +140,7 @@ def test_show_input_methods_points_to_my_product_products_when_available():
     assert "• 📝 Ввести приём пищи текстом (AI-анализ)" in methods_text
     assert "• 📷 Анализ еды по фото" in methods_text
     assert "• 📋 Анализ этикетки" in methods_text
+    assert "• 🧺 Внести вручную" in methods_text
 
 
 def test_add_meal_from_diary_block_sets_context_and_opens_methods():
