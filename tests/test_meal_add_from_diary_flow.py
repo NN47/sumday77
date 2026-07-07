@@ -456,6 +456,20 @@ def test_meal_finish_button_returns_to_food_diary_for_entry_date():
     return_to_diary.assert_awaited_once_with(message, "12345", date(2026, 4, 8))
 
 
+def test_send_weight_products_list_removes_reply_keyboard_before_inline_list():
+    message = _build_message()
+    products = [{"name": "Курица", "grams": 200}, {"name": "Рис", "grams": 150}]
+
+    asyncio.run(meals._send_weight_products_list(message, "<b>✏️ Выбери продукт для редактирования:</b>", products))
+
+    assert message.answer.await_count == 2
+    remove_call, list_call = message.answer.await_args_list
+    assert remove_call.args[0] == "⬇️ Убираю нижнюю клавиатуру на время редактирования"
+    assert remove_call.kwargs["reply_markup"].remove_keyboard is True
+    assert list_call.args[0] == "<b>✏️ Выбери продукт для редактирования:</b>"
+    button_rows = [[button.text for button in row] for row in list_call.kwargs["reply_markup"].inline_keyboard]
+    assert button_rows == [["1️⃣ Курица — 200 г"], ["2️⃣ Рис — 150 г"], ["✅ Готово"]]
+
 def test_meal_type_navigation_main_menu_alias():
     message = _build_message()
     message.text = "🔄 Главное меню"

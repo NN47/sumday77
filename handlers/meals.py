@@ -8,7 +8,7 @@ import html
 from dataclasses import dataclass
 from datetime import date
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.exceptions import TelegramBadRequest
 from typing import Optional
 from aiogram.fsm.context import FSMContext
@@ -3709,9 +3709,10 @@ async def edit_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
             reply_markup=_build_product_actions_keyboard(0),
         )
     else:
-        await callback.message.answer(
+        await _send_weight_products_list(
+            callback.message,
             "<b>✏️ Выбери продукт для редактирования:</b>",
-            reply_markup=_build_weight_products_keyboard(products),
+            products,
         )
 
 @router.message(lambda m: m.text == "📋 Анализ этикетки")
@@ -4912,6 +4913,22 @@ def _build_weight_products_keyboard(products: list[dict]) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+async def _send_weight_products_list(
+    message: Message,
+    text: str,
+    products: list[dict],
+    *,
+    remove_reply_keyboard: bool = True,
+) -> None:
+    """Открывает список продуктов для редактирования и скрывает старую reply-клавиатуру."""
+    if remove_reply_keyboard:
+        await message.answer(
+            "⬇️ Убираю нижнюю клавиатуру на время редактирования",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    await message.answer(text, reply_markup=_build_weight_products_keyboard(products))
+
+
 def _format_product_macro_summary(
     calories: float,
     protein: float,
@@ -5348,9 +5365,10 @@ async def edit_last_meal(message: Message, state: FSMContext):
         )
         return
 
-    await message.answer(
+    await _send_weight_products_list(
+        message,
         "<b>✏️ Выбери продукт для редактирования:</b>",
-        reply_markup=_build_weight_products_keyboard(products),
+        products,
     )
 
 
@@ -5412,9 +5430,10 @@ async def _start_meal_edit_flow(
         )
         return
 
-    await message.answer(
+    await _send_weight_products_list(
+        message,
         "<b>✏️ Выбери продукт для редактирования:</b>",
-        reply_markup=_build_weight_products_keyboard(products),
+        products,
     )
 
 
@@ -5546,10 +5565,11 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
     await state.set_state(MealEntryStates.editing_meal_weight)
 
     meal_title = display_meal_type_with_bold_name(meal_type)
-    await callback.message.answer(
+    await _send_weight_products_list(
+        callback.message,
         f"⚖️ Нашёл несколько записей в приёме пищи «{meal_title}» за день — показываю объединённый список продуктов.\n"
         "<b>Выбери продукт для редактирования:</b>",
-        reply_markup=_build_weight_products_keyboard(merged_products),
+        merged_products,
     )
 
 
@@ -5663,9 +5683,10 @@ async def handle_edit_type_choice(message: Message, state: FSMContext):
         await state.set_state(MealEntryStates.editing_meal_weight)
         await state.update_data(weight_drafts={}, kbju_drafts={}, editing_product_idx=None)
 
-        await message.answer(
+        await _send_weight_products_list(
+            message,
             "<b>✏️ Выбери продукт для редактирования:</b>",
-            reply_markup=_build_weight_products_keyboard(saved_products),
+            saved_products,
         )
     else:
         await message.answer("Пожалуйста, выбери вариант с кнопки.")
