@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Optional
 from sqlalchemy import func
 from database.session import get_db_session
-from database.models import WaterEntry
+from database.models import QuickWaterMessage, WaterEntry
 
 logger = logging.getLogger(__name__)
 
@@ -124,3 +124,44 @@ class WaterRepository:
                 target_date.isoformat(),
             )
             return int(deleted_count)
+
+
+
+class QuickWaterMessageRepository:
+    """Репозиторий для актуального сообщения быстрого добавления воды."""
+
+    @staticmethod
+    def get_message(user_id: str) -> Optional[QuickWaterMessage]:
+        """Получает сохранённое сообщение быстрого добавления воды."""
+        with get_db_session() as session:
+            return (
+                session.query(QuickWaterMessage)
+                .filter(QuickWaterMessage.user_id == user_id)
+                .first()
+            )
+
+    @staticmethod
+    def save_message(user_id: str, chat_id: int | str, message_id: int) -> QuickWaterMessage:
+        """Создаёт или обновляет ссылку на актуальное сообщение."""
+        with get_db_session() as session:
+            message = (
+                session.query(QuickWaterMessage)
+                .filter(QuickWaterMessage.user_id == user_id)
+                .first()
+            )
+            if message is None:
+                message = QuickWaterMessage(user_id=user_id, chat_id=str(chat_id), message_id=message_id)
+                session.add(message)
+            else:
+                message.chat_id = str(chat_id)
+                message.message_id = message_id
+                message.updated_at = datetime.utcnow()
+            session.commit()
+            session.refresh(message)
+            logger.info(
+                "Saved quick water message %s for user %s in chat %s",
+                message_id,
+                user_id,
+                chat_id,
+            )
+            return message
