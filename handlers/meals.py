@@ -418,7 +418,10 @@ def _build_photo_weight_editor_menu(product_idx: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text=f"-{step} г", callback_data=f"photo_wchg:{product_idx}:-{step}")
                 for step in PHOTO_WEIGHT_ADJUSTMENTS[3:]
             ],
-            [InlineKeyboardButton(text="✅ Готово", callback_data="photo_done")],
+            [
+                InlineKeyboardButton(text="✅ Готово", callback_data="photo_done"),
+                InlineKeyboardButton(text="🗑 Удалить", callback_data=f"photo_delete:{product_idx}"),
+            ],
         ]
     )
 
@@ -438,6 +441,21 @@ async def _send_photo_analysis_confirmation(message: Message, items: list[dict])
         reply_markup=_build_photo_analysis_confirm_menu(items),
         parse_mode="HTML",
     )
+
+
+async def _edit_or_send_photo_analysis_message(
+    message: Message,
+    text: str,
+    *,
+    reply_markup: InlineKeyboardMarkup | None = None,
+    parse_mode: str | None = "HTML",
+) -> None:
+    """Обновляет сообщение анализа фото, а если Telegram не дал отредактировать — отправляет новое."""
+    try:
+        await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    except TelegramBadRequest as exc:
+        logger.info("Could not edit photo analysis message, sending a new one: %s", exc)
+        await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 
 def _normalize_photo_analysis_items(items: list | None, total: dict | None) -> list[dict]:
@@ -4121,16 +4139,66 @@ async def photo_analysis_weight_change(callback: CallbackQuery, state: FSMContex
         await callback.answer("Продукт не найден", show_alert=True)
         return
 
-    new_weight = max(1.0, _safe_float(items[product_idx].get("grams")) + delta)
+    current_weight = _safe_float(items[product_idx].get("grams"))
+    new_weight = current_weight + delta
+    if new_weight < 1:
+        await callback.answer(
+            "Минимальный вес продукта — 1 г. Чтобы убрать продукт, нажмите 🗑 Удалить.",
+            show_alert=False,
+        )
+        return
+
     updated_items = [dict(item) for item in items]
     updated_items[product_idx] = _scale_photo_item(updated_items[product_idx], new_weight)
     await state.update_data(photo_analysis_items=updated_items, photo_analysis_editing_idx=product_idx)
-    await callback.message.edit_text(
+    await _edit_or_send_photo_analysis_message(
+        callback.message,
         _format_photo_weight_editor_text(updated_items[product_idx]),
         reply_markup=_build_photo_weight_editor_menu(product_idx),
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@router.callback_query(lambda c: c.data.startswith("photo_delete:"))
+async def photo_analysis_delete_product(callback: CallbackQuery, state: FSMContext):
+    """Удаляет выбранный продукт из текущего результата анализа фото."""
+    data = await state.get_data()
+    items = data.get("photo_analysis_items") or []
+    try:
+        product_idx = int(callback.data.split(":", 1)[1])
+    except (TypeError, ValueError, IndexError):
+        await callback.answer("Не удалось удалить продукт", show_alert=True)
+        return
+
+    if product_idx < 0 or product_idx >= len(items):
+        await callback.answer("Продукт не найден", show_alert=True)
+        return
+
+    updated_items = [dict(item) for idx, item in enumerate(items) if idx != product_idx]
+    await state.update_data(
+        photo_analysis_items=updated_items,
+        photo_analysis_editing_idx=None,
+        photo_total_weight_draft_items=None,
+        photo_total_weight_original_items=None,
+    )
+    await callback.answer("Продукт удалён")
+
+    if not updated_items:
+        await _edit_or_send_photo_analysis_message(
+            callback.message,
+            "Все продукты удалены. Добавьте продукт вручную или отмените действие.",
+            reply_markup=None,
+            parse_mode=None,
+        )
+        return
+
+    await _edit_or_send_photo_analysis_message(
+        callback.message,
+        _format_photo_analysis_confirmation_text(updated_items),
+        reply_markup=_build_photo_analysis_confirm_menu(updated_items),
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(lambda c: c.data == "photo_done")
@@ -4142,7 +4210,8 @@ async def photo_analysis_weight_done(callback: CallbackQuery, state: FSMContext)
         await callback.answer("Черновик анализа фото не найден", show_alert=True)
         return
     await state.update_data(photo_analysis_editing_idx=None)
-    await callback.message.edit_text(
+    await _edit_or_send_photo_analysis_message(
+        callback.message,
         _format_photo_analysis_confirmation_text(items),
         reply_markup=_build_photo_analysis_confirm_menu(items),
         parse_mode="HTML",
