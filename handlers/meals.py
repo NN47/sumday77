@@ -5047,6 +5047,15 @@ def _build_product_actions_keyboard(product_idx: int) -> InlineKeyboardMarkup:
     )
 
 
+def _build_name_input_keyboard(product_idx: int) -> InlineKeyboardMarkup:
+    """Inline-клавиатура выхода из режима ввода нового названия."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"meal_pact_name_back:{product_idx}")],
+        ]
+    )
+
+
 def _build_weight_editor_reply_keyboard() -> ReplyKeyboardMarkup:
     """Reply-клавиатура для отмены режима редактирования продукта."""
     return ReplyKeyboardMarkup(
@@ -5961,8 +5970,33 @@ async def meal_product_name_input_start(callback: CallbackQuery, state: FSMConte
     await state.update_data(editing_product_idx=product_idx)
     await callback.message.answer(
         f'Введи новое название для продукта "{html.escape(str(product_name))}":',
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=_build_name_input_keyboard(product_idx),
     )
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_pact_name_back:"))
+async def meal_product_name_input_back(callback: CallbackQuery, state: FSMContext):
+    """Отменяет ввод нового названия и возвращает карточку продукта."""
+    await callback.answer()
+    product_idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    saved_products = data.get("saved_products", [])
+    if product_idx < 0 or product_idx >= len(saved_products):
+        await callback.answer("Не нашёл продукт", show_alert=True)
+        return
+
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    await state.update_data(editing_product_idx=product_idx)
+    try:
+        await callback.message.edit_text(
+            _render_product_actions_text(saved_products[product_idx]),
+            reply_markup=_build_product_actions_keyboard(product_idx),
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            _render_product_actions_text(saved_products[product_idx]),
+            reply_markup=_build_product_actions_keyboard(product_idx),
+        )
 
 
 @router.message(MealEntryStates.editing_meal_name_input)

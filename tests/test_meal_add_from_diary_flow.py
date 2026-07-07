@@ -1153,6 +1153,47 @@ def test_edit_last_meal_single_label_product_opens_product_actions_menu():
     assert button_texts == ["✏️ Изменить название", "⚖️ Изменить вес", "🧮 Изменить КБЖУ", "🗑 Удалить", "⬅️ Назад"]
 
 
+def test_meal_product_name_input_start_uses_inline_back_without_reply_keyboard():
+    callback = _build_callback("meal_pact_name:0")
+    state = _DummyState()
+    state._data["saved_products"] = [{"name": "Кофе", "grams": 250}]
+
+    asyncio.run(meals.meal_product_name_input_start(callback, state))
+
+    state.set_state.assert_awaited_once_with(meals.MealEntryStates.editing_meal_name_input)
+    callback.message.answer.assert_awaited_once()
+    answer_kwargs = callback.message.answer.await_args.kwargs
+    keyboard = answer_kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [["⬅️ Назад"]]
+    assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [["meal_pact_name_back:0"]]
+
+
+def test_meal_product_name_input_back_returns_to_product_actions_without_saving():
+    callback = _build_callback("meal_pact_name_back:0")
+    state = _DummyState()
+    state._data.update(
+        {
+            "saved_products": [{"name": "Кофе", "grams": 250, "kcal": 10}],
+            "editing_product_idx": 0,
+        }
+    )
+
+    asyncio.run(meals.meal_product_name_input_back(callback, state))
+
+    state.set_state.assert_awaited_once_with(meals.MealEntryStates.editing_meal_weight)
+    assert state._data["saved_products"][0]["name"] == "Кофе"
+    callback.message.edit_text.assert_awaited_once()
+    edit_text = callback.message.edit_text.await_args.args[0]
+    assert "✏️ Редактирование продукта" in edit_text
+    assert "<b>Продукт:</b> Кофе" in edit_text
+    button_texts = [
+        button.text
+        for row in callback.message.edit_text.await_args.kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert button_texts == ["✏️ Изменить название", "⚖️ Изменить вес", "🧮 Изменить КБЖУ", "🗑 Удалить", "⬅️ Назад"]
+
+
 def test_return_to_food_diary_sends_diary_menu_and_refreshes_today():
     message = _build_message()
 
