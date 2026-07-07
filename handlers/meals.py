@@ -120,7 +120,7 @@ def _format_kbju_summary_block(totals: dict, *, bold_values: bool = False) -> st
     )
 
 
-def _format_ai_food_analysis_message(title: str, items: list, totals: dict) -> str:
+def _format_ai_food_analysis_message(title: str, items: list, totals: dict, *, saved: bool = True) -> str:
     """Форматирует красивое отдельное сообщение результата AI-анализа продукта."""
     lines = [f"<b>{html.escape(title)}</b>", "", "📌 <b>Распознанные продукты:</b>"]
     if items:
@@ -142,13 +142,90 @@ def _format_ai_food_analysis_message(title: str, items: list, totals: dict) -> s
     lines.extend(
         [
             "",
-            "📊 <b>Итого за добавленный продукт:</b>",
+            "📊 <b>Итого:</b>",
             _format_kbju_summary_block(totals, bold_values=True),
-            "",
-            "✅ <b>Продукт сохранён.</b>",
         ]
     )
+    if saved:
+        lines.extend(["", "✅ <b>Продукт сохранён.</b>"])
+    else:
+        lines.extend(["", "Проверьте данные перед сохранением."])
     return "\n".join(lines)
+
+
+def _build_ai_meal_preview_inline_menu() -> InlineKeyboardMarkup:
+    """Строит inline-кнопки предпросмотра текстового AI-анализа."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Сохранить", callback_data="save_ai_meal_draft"),
+            InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_ai_meal_draft"),
+        ]]
+    )
+
+
+def _build_ai_meal_preview_reply_menu() -> ReplyKeyboardMarkup:
+    """Строит reply-кнопку отмены предпросмотра AI-анализа."""
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отмена")]], resize_keyboard=True)
+
+
+def _normalize_ai_items_for_edit(items: list | None) -> list[dict]:
+    """Нормализует продукты текстового AI-анализа для черновика и редактора."""
+    normalized = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        grams = _safe_float(item.get("grams") or item.get("weight") or item.get("amount_g"))
+        calories = _safe_float(item.get("kcal") or item.get("calories"))
+        protein = _safe_float(item.get("protein") or item.get("protein_g"))
+        fat = _safe_float(item.get("fat") or item.get("fat_total_g"))
+        carbs = _safe_float(item.get("carbs") or item.get("carbohydrates_total_g"))
+        product = dict(item)
+        product.update({
+            "name": str(item.get("name") or item.get("title") or "Продукт"),
+            "grams": grams,
+            "kcal": calories,
+            "calories": calories,
+            "protein": protein,
+            "protein_g": protein,
+            "fat": fat,
+            "fat_total_g": fat,
+            "carbs": carbs,
+            "carbohydrates_total_g": carbs,
+        })
+        if grams > 0:
+            product.setdefault("calories_per_100g", (calories / grams) * 100 if calories else 0)
+            product.setdefault("protein_per_100g", (protein / grams) * 100 if protein else 0)
+            product.setdefault("fat_per_100g", (fat / grams) * 100 if fat else 0)
+            product.setdefault("carbs_per_100g", (carbs / grams) * 100 if carbs else 0)
+        normalized.append(product)
+    return normalized
+
+
+def _collect_ai_draft_totals(items: list[dict]) -> dict:
+    totals, _ = _build_meal_update_payload(items)
+    return {
+        "calories": totals["calories"],
+        "protein": totals["protein_g"],
+        "fat": totals["fat_total_g"],
+        "carbs": totals["carbohydrates_total_g"],
+    }
+
+
+async def _send_ai_meal_preview(message: Message, state: FSMContext) -> None:
+    """Показывает предпросмотр текстового AI-анализа без записи в дневник."""
+    data = await state.get_data()
+    draft = data.get("ai_pending_meal") or {}
+    items = draft.get("items") or []
+    title = draft.get("analysis_title") or "🧾 AI-анализ приёма пищи"
+    totals = _collect_ai_draft_totals(items)
+    await state.set_state(MealEntryStates.confirming_ai_meal)
+    await state.update_data(ai_pending_meal={**draft, "items": items, "total": totals})
+    await message.answer(
+        _format_ai_food_analysis_message(title, items, totals, saved=False),
+        reply_markup=_build_ai_meal_preview_inline_menu(),
+        parse_mode="HTML",
+    )
+    await message.answer("Для отмены нажми кнопку ниже.", reply_markup=_build_ai_meal_preview_reply_menu())
 
 
 def _format_current_meal_after_save_message(meal_type: str, current_meal_items: list, entry_date: date) -> str:
@@ -3126,7 +3203,7 @@ async def _handle_provider_food_input(
         await message.answer("Можешь отправить текст ещё раз.")
         return
 
-    items = kbju_data.get("items", [])
+    items = _normalize_ai_items_for_edit(kbju_data.get("items", []))
     total = kbju_data.get("total", {})
 
     analysis_title = (
@@ -3134,13 +3211,6 @@ async def _handle_provider_food_input(
         if provider_title == "📝 AI-анализ приёма пищи"
         else f"{provider_title}: оценка приёма пищи"
     )
-    analysis_totals = {
-        "calories": float(total.get("kcal", 0) or 0),
-        "protein": float(total.get("protein", 0) or 0),
-        "fat": float(total.get("fat", 0) or 0),
-        "carbs": float(total.get("carbs", 0) or 0),
-    }
-    lines = [_format_ai_food_analysis_message(analysis_title, items, analysis_totals)]
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
@@ -3149,32 +3219,30 @@ async def _handle_provider_food_input(
     except ValueError:
         entry_date = date.today()
 
-    saved_meal = MealRepository.save_meal(
-        user_id=user_id,
-        raw_query=user_text,
-        calories=float(total.get("kcal", 0)),
-        protein=float(total.get("protein", 0)),
-        fat=float(total.get("fat", 0)),
-        carbs=float(total.get("carbs", 0)),
-        entry_date=entry_date,
-        products_json=json.dumps(items),
-        meal_type=meal_type,
+    # Для текстового AI-анализа больше не пишем в дневник автоматически:
+    # сохраняем распознавание только во временный FSM-черновик до подтверждения.
+    if not items:
+        items = _normalize_ai_items_for_edit([
+            {
+                "name": "AI-анализ приёма пищи",
+                "grams": 0,
+                "kcal": float(total.get("kcal", 0) or 0),
+                "protein": float(total.get("protein", 0) or 0),
+                "fat": float(total.get("fat", 0) or 0),
+                "carbs": float(total.get("carbs", 0) or 0),
+            }
+        ])
+    await state.update_data(
+        ai_pending_meal={
+            "raw_query": user_text,
+            "items": items,
+            "total": _collect_ai_draft_totals(items),
+            "meal_type": meal_type,
+            "entry_date": entry_date.isoformat(),
+            "analysis_title": analysis_title,
+        }
     )
-
-    if not hasattr(message.bot, "last_meal_ids"):
-        message.bot.last_meal_ids = {}
-    message.bot.last_meal_ids[user_id] = saved_meal.id
-
-    await _keep_meal_entry_open_after_save(
-        message,
-        state,
-        user_id=user_id,
-        entry_date=entry_date,
-        meal_type=meal_type,
-        intro_lines=lines,
-        parse_mode="HTML",
-        show_my_product_before_intro=False,
-    )
+    await _send_ai_meal_preview(message, state)
 
 
 async def _keep_meal_entry_open_after_save(
@@ -3500,7 +3568,7 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
 
 @router.message(MealEntryStates.confirming_ai_meal)
 async def handle_ai_confirm(message: Message, state: FSMContext):
-    """Legacy-подтверждение сохранения результата AI-анализа."""
+    """Обрабатывает reply-отмену предпросмотра текстового AI-анализа."""
     text = (message.text or "").strip()
 
     if text in MAIN_MENU_BUTTON_ALIASES:
@@ -3510,66 +3578,90 @@ async def handle_ai_confirm(message: Message, state: FSMContext):
         await go_main_menu(message, state)
         return
 
-    if text == "⬅️ Назад":
-        await state.set_state(MealEntryStates.waiting_for_ai_food_input)
-        push_menu_stack(message.bot, kbju_add_menu)
-        await message.answer("Ок, отправь описание приёма пищи ещё раз.", reply_markup=kbju_add_menu)
-        return
-
     if text == "❌ Отмена":
-        await state.set_state(MealEntryStates.waiting_for_ai_food_input)
-        await state.update_data(ai_pending_meal=None)
-        push_menu_stack(message.bot, kbju_add_menu)
-        await message.answer("Отменил сохранение. Можешь отправить новый текст.", reply_markup=kbju_add_menu)
+        await state.clear()
+        push_menu_stack(message.bot, kbju_menu)
+        await message.answer("Ок, черновик удалён. Ничего не сохранил.", reply_markup=kbju_menu)
         return
 
-    if text != "💾 Сохранить":
-        await message.answer("Выбери действие кнопкой: сохранить, отмена или назад.")
-        return
+    await message.answer("Проверь данные и выбери действие: ✅ Сохранить, ✏️ Редактировать или ❌ Отмена.")
 
+
+@router.callback_query(lambda c: c.data == "save_ai_meal_draft")
+async def save_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет подтверждённый черновик текстового AI-анализа в выбранный приём пищи."""
+    await callback.answer()
     data = await state.get_data()
     pending = data.get("ai_pending_meal") or {}
-    total = pending.get("total") or {}
     items = pending.get("items") or []
+    total = _collect_ai_draft_totals(items)
     raw_query = pending.get("raw_query") or "[AI-анализ]"
-
-    user_id = str(message.from_user.id)
-    meal_type = normalize_meal_type(pending.get("meal_type"), fallback=MealType.SNACK.value)
-    entry_date_str = pending.get("entry_date")
-    if entry_date_str and isinstance(entry_date_str, str):
-        try:
-            entry_date = date.fromisoformat(entry_date_str)
-        except ValueError:
-            parsed = parse_date(entry_date_str)
-            entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
-    else:
+    user_id = str(callback.from_user.id)
+    meal_type = normalize_meal_type(pending.get("meal_type") or data.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date_str = pending.get("entry_date") or data.get("entry_date")
+    try:
+        entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
+    except ValueError:
         entry_date = date.today()
 
+    _, api_details = _build_meal_update_payload(items)
     saved_meal = MealRepository.save_meal(
         user_id=user_id,
         raw_query=raw_query,
-        calories=float(total.get("calories", 0)),
-        protein=float(total.get("protein", 0)),
-        fat=float(total.get("fat", 0)),
-        carbs=float(total.get("carbs", 0)),
+        calories=total["calories"],
+        protein=total["protein"],
+        fat=total["fat"],
+        carbs=total["carbs"],
         entry_date=entry_date,
-        products_json=json.dumps(items),
+        products_json=json.dumps(items, ensure_ascii=False),
+        api_details=api_details,
         meal_type=meal_type,
+        is_manually_corrected=bool(any(bool(p.get("is_manually_corrected")) for p in items)),
     )
+    if not hasattr(callback.message.bot, "last_meal_ids"):
+        callback.message.bot.last_meal_ids = {}
+    callback.message.bot.last_meal_ids[user_id] = saved_meal.id
 
-    if not hasattr(message.bot, "last_meal_ids"):
-        message.bot.last_meal_ids = {}
-    message.bot.last_meal_ids[user_id] = saved_meal.id
-
+    await state.update_data(ai_pending_meal=None)
     await _keep_meal_entry_open_after_save(
-        message,
+        callback.message,
         state,
         user_id=user_id,
         entry_date=entry_date,
         meal_type=meal_type,
-        intro_lines=["✅ Сохранил продукт через AI-анализ."],
+        intro_lines=["✅ <b>Продукт сохранён.</b>"],
+        parse_mode="HTML",
     )
 
+
+@router.callback_query(lambda c: c.data == "edit_ai_meal_draft")
+async def edit_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
+    """Открывает существующий редактор продукта для FSM-черновика AI-анализа."""
+    await callback.answer()
+    data = await state.get_data()
+    pending = data.get("ai_pending_meal") or {}
+    products = pending.get("items") or []
+    if not products:
+        await callback.answer("Не нашёл продукты для редактирования", show_alert=True)
+        return
+    await state.update_data(
+        ai_text_draft_mode=True,
+        saved_products=products,
+        weight_drafts={},
+        kbju_drafts={},
+        editing_product_idx=0 if len(products) == 1 else None,
+    )
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    if len(products) == 1:
+        await callback.message.answer(
+            _render_product_actions_text(products[0]),
+            reply_markup=_build_product_actions_keyboard(0),
+        )
+    else:
+        await callback.message.answer(
+            "<b>✏️ Выбери продукт для редактирования:</b>",
+            reply_markup=_build_weight_products_keyboard(products),
+        )
 
 @router.message(lambda m: m.text == "📋 Анализ этикетки")
 async def kbju_add_via_label(message: Message, state: FSMContext):
@@ -5410,6 +5502,18 @@ async def meal_weight_done(callback: CallbackQuery, state: FSMContext):
         fallback=MealType.SNACK.value,
     )
 
+    if data.get("ai_text_draft_mode"):
+        pending = data.get("ai_pending_meal") or {}
+        await state.update_data(
+            ai_pending_meal={**pending, "items": data.get("saved_products") or []},
+            ai_text_draft_mode=False,
+            meal_id=None,
+            weight_drafts={},
+            kbju_drafts={},
+        )
+        await _send_ai_meal_preview(callback.message, state)
+        return
+
     await state.clear()
     await callback.message.answer("✅ Изменения выполнены")
 
@@ -5524,10 +5628,34 @@ async def meal_product_name_input_value(message: Message, state: FSMContext):
     if "name_ru" in product:
         product["name_ru"] = new_name
 
+    if data.get("ai_text_draft_mode"):
+        pending = data.get("ai_pending_meal") or {}
+        await state.set_state(MealEntryStates.editing_meal_weight)
+        await state.update_data(
+            saved_products=saved_products,
+            ai_pending_meal={**pending, "items": saved_products},
+            editing_product_idx=product_idx,
+        )
+        await message.answer("✅ Название продукта обновлено")
+        await message.answer(
+            _render_product_actions_text(product),
+            reply_markup=_build_product_actions_keyboard(product_idx),
+        )
+        return
+
+
     source_meal_id = int(product.get("_source_meal_id") or meal_id or 0)
     if not source_meal_id:
         await message.answer("❌ Не удалось определить запись для обновления.")
         await state.set_state(MealEntryStates.editing_meal_weight)
+        return
+
+    if not source_meal_id:
+        await callback.answer("Не удалось определить запись для удаления", show_alert=True)
+        return
+
+    if not source_meal_id:
+        await callback.answer("Не удалось определить запись для удаления", show_alert=True)
         return
 
     source_products = [
@@ -5944,6 +6072,22 @@ async def _save_kbju_changes_for_product(
         await callback.answer("Не удалось обновить КБЖУ", show_alert=True)
         return False
 
+    if data.get("ai_text_draft_mode"):
+        kbju_drafts.pop(str(product_idx), None)
+        pending = data.get("ai_pending_meal") or {}
+        await state.set_state(MealEntryStates.edit_kbju_menu)
+        await state.update_data(
+            saved_products=saved_products,
+            kbju_drafts=kbju_drafts,
+            ai_pending_meal={**pending, "items": saved_products},
+        )
+        await callback.message.edit_text(
+            _render_kbju_editor_text(product),
+            reply_markup=_build_kbju_editor_keyboard(product_idx),
+        )
+        await callback.answer("✅ КБЖУ обновлены в черновике")
+        return True
+
     source_meal_id = int(product.get("_source_meal_id") or meal_id or 0)
     if not source_meal_id:
         await callback.answer("Не удалось определить запись для обновления", show_alert=True)
@@ -6024,6 +6168,21 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
 
     if not _apply_product_weight(product, draft_weight):
         await callback.answer("Не удалось пересчитать КБЖУ", show_alert=True)
+        return
+
+    if data.get("ai_text_draft_mode"):
+        drafts.pop(str(product_idx), None)
+        pending = data.get("ai_pending_meal") or {}
+        await state.update_data(
+            saved_products=saved_products,
+            weight_drafts=drafts,
+            ai_pending_meal={**pending, "items": saved_products},
+        )
+        await callback.answer("✅ Вес обновлён в черновике")
+        await callback.message.edit_text(
+            "<b>✏️ Выбери продукт для редактирования:</b>",
+            reply_markup=_build_weight_products_keyboard(saved_products),
+        )
         return
 
     source_meal_id = int(product.get("_source_meal_id") or meal_id or 0)
@@ -6117,9 +6276,6 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Не удалось удалить продукт", show_alert=True)
         return
     source_meal_id = int(saved_products[product_idx].get("_source_meal_id") or meal_id or 0)
-    if not source_meal_id:
-        await callback.answer("Не удалось определить запись для удаления", show_alert=True)
-        return
 
     saved_products.pop(product_idx)
     drafts = {
@@ -6127,6 +6283,24 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
         for idx, value in drafts.items()
         if int(idx) != product_idx
     }
+
+    if data.get("ai_text_draft_mode"):
+        pending = data.get("ai_pending_meal") or {}
+        await state.update_data(
+            saved_products=saved_products,
+            weight_drafts=drafts,
+            ai_pending_meal={**pending, "items": saved_products},
+        )
+        if not saved_products:
+            await state.clear()
+            await callback.message.answer("Черновик пуст. Отменил добавление.", reply_markup=kbju_menu)
+        else:
+            await callback.message.edit_text(
+                "<b>✏️ Выбери продукт для редактирования:</b>",
+                reply_markup=_build_weight_products_keyboard(saved_products),
+            )
+            await callback.message.answer("✅ Продукт удалён из черновика")
+        return
 
     source_products = [
         _strip_source_meta(p)
