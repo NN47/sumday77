@@ -3723,6 +3723,10 @@ async def edit_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
     await state.set_state(MealEntryStates.editing_meal_weight)
     if len(products) == 1:
         await callback.message.answer(
+            "⬇️ Убираю нижнюю клавиатуру на время редактирования",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await callback.message.answer(
             _render_product_actions_text(products[0]),
             reply_markup=_build_product_actions_keyboard(0),
         )
@@ -5429,6 +5433,10 @@ async def edit_last_meal(message: Message, state: FSMContext):
 
     if initial_product_idx is not None:
         await message.answer(
+            "⬇️ Убираю нижнюю клавиатуру на время редактирования",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await message.answer(
             _render_product_actions_text(products[initial_product_idx]),
             reply_markup=_build_product_actions_keyboard(initial_product_idx),
         )
@@ -5493,6 +5501,10 @@ async def _start_meal_edit_flow(
     await state.set_state(MealEntryStates.editing_meal_weight)
 
     if initial_product_idx is not None:
+        await message.answer(
+            "⬇️ Убираю нижнюю клавиатуру на время редактирования",
+            reply_markup=ReplyKeyboardRemove(),
+        )
         await message.answer(
             _render_product_actions_text(products[initial_product_idx]),
             reply_markup=_build_product_actions_keyboard(initial_product_idx),
@@ -5774,7 +5786,6 @@ async def handle_meal_weight_edit(message: Message, state: FSMContext):
             drafts.pop(str(product_idx), None)
             await state.set_state(MealEntryStates.editing_meal_weight)
             await state.update_data(weight_drafts=drafts, editing_product_idx=product_idx)
-            await message.answer("⬇️ Возвращаю стандартную клавиатуру", reply_markup=main_menu)
             await message.answer(
                 _render_product_actions_text(saved_products[product_idx]),
                 reply_markup=_build_product_actions_keyboard(product_idx),
@@ -5950,7 +5961,7 @@ async def meal_product_name_input_start(callback: CallbackQuery, state: FSMConte
     await state.update_data(editing_product_idx=product_idx)
     await callback.message.answer(
         f'Введи новое название для продукта "{html.escape(str(product_name))}":',
-        reply_markup=_build_weight_editor_reply_keyboard(),
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -5965,14 +5976,13 @@ async def meal_product_name_input_value(message: Message, state: FSMContext):
         if product_idx is not None and 0 <= product_idx < len(saved_products):
             await state.set_state(MealEntryStates.editing_meal_weight)
             await state.update_data(editing_product_idx=product_idx)
-            await message.answer("⬇️ Возвращаю стандартную клавиатуру", reply_markup=main_menu)
             await message.answer(
                 _render_product_actions_text(saved_products[product_idx]),
                 reply_markup=_build_product_actions_keyboard(product_idx),
             )
             return
         await state.set_state(MealEntryStates.editing_meal_weight)
-        await message.answer("Редактирование названия отменено.", reply_markup=main_menu)
+        await message.answer("Редактирование названия отменено.")
         return
     if not new_name:
         await message.answer("Пожалуйста, введи непустое название продукта.")
@@ -6003,7 +6013,7 @@ async def meal_product_name_input_value(message: Message, state: FSMContext):
             ai_pending_meal={**pending, "items": saved_products},
             editing_product_idx=product_idx,
         )
-        await message.answer("✅ Название продукта обновлено", reply_markup=main_menu)
+        await message.answer("✅ Название продукта обновлено")
         await message.answer(
             _render_product_actions_text(product),
             reply_markup=_build_product_actions_keyboard(product_idx),
@@ -6057,7 +6067,6 @@ async def meal_product_name_input_value(message: Message, state: FSMContext):
     await state.update_data(saved_products=saved_products, editing_product_idx=product_idx)
     await message.answer(
         "✅ Название продукта обновлено",
-        reply_markup=main_menu,
     )
     await message.answer(
         _render_product_actions_text(product),
@@ -6088,10 +6097,6 @@ async def meal_product_open_weight_editor(callback: CallbackQuery, state: FSMCon
         _render_weight_editor_text(product, draft_weight=draft_weight),
         reply_markup=_build_weight_editor_keyboard(product_idx, has_changes=False),
     )
-    await callback.message.answer(
-        "Для отмены изменения веса нажми «❌ Отмена».",
-        reply_markup=_build_weight_editor_reply_keyboard(),
-    )
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_pact_kbju:"))
@@ -6111,10 +6116,6 @@ async def meal_product_open_kbju_editor(callback: CallbackQuery, state: FSMConte
     await callback.message.edit_text(
         _render_kbju_editor_text(product, draft=draft),
         reply_markup=_build_kbju_editor_keyboard(product_idx),
-    )
-    await callback.message.answer(
-        "Для отмены ручной правки КБЖУ нажми «❌ Отмена».",
-        reply_markup=_build_weight_editor_reply_keyboard(),
     )
 
 
@@ -6165,7 +6166,7 @@ async def meal_weight_manual_input_start(callback: CallbackQuery, state: FSMCont
     await state.update_data(editing_product_idx=product_idx)
     await callback.message.answer(
         f'Введи новый вес для продукта "{product_name}" в граммах:',
-        reply_markup=_build_weight_editor_reply_keyboard(),
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -6181,7 +6182,6 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
             drafts.pop(str(product_idx), None)
             await state.set_state(MealEntryStates.editing_meal_weight)
             await state.update_data(weight_drafts=drafts, editing_product_idx=product_idx)
-            await message.answer("⬇️ Возвращаю стандартную клавиатуру", reply_markup=main_menu)
             await message.answer(
                 _render_product_actions_text(saved_products[product_idx]),
                 reply_markup=_build_product_actions_keyboard(product_idx),
@@ -6277,7 +6277,6 @@ async def handle_meal_kbju_edit(message: Message, state: FSMContext):
         if product_idx is not None and 0 <= product_idx < len(saved_products):
             await state.set_state(MealEntryStates.editing_meal_weight)
             await state.update_data(editing_product_idx=product_idx)
-            await message.answer("⬇️ Возвращаю стандартную клавиатуру", reply_markup=main_menu)
             await message.answer(
                 _render_product_actions_text(saved_products[product_idx]),
                 reply_markup=_build_product_actions_keyboard(product_idx),
@@ -6314,10 +6313,6 @@ async def meal_kbju_edit_single_field_start(callback: CallbackQuery, state: FSMC
     await callback.message.edit_text(
         _render_kbju_field_editor_text(product, field, current_value),
         reply_markup=_build_kbju_field_editor_keyboard(product_idx, field),
-    )
-    await callback.message.answer(
-        "Для отмены изменения значения нажми «❌ Отмена».",
-        reply_markup=_build_weight_editor_reply_keyboard(),
     )
 
 
@@ -6359,10 +6354,6 @@ async def meal_kbju_edit_single_field_manual_start(callback: CallbackQuery, stat
             inline_keyboard=[[InlineKeyboardButton(text="↩️ Назад", callback_data=f"meal_kfback:{product_idx}")]]
         ),
     )
-    await callback.message.answer(
-        "Для отмены ручного ввода нажми «❌ Отмена».",
-        reply_markup=_build_weight_editor_reply_keyboard(),
-    )
 
 
 @router.message(MealEntryStates.edit_kbju_field)
@@ -6385,7 +6376,7 @@ async def handle_meal_kbju_field_edit(message: Message, state: FSMContext):
         return
 
     await state.set_state(MealEntryStates.editing_meal_weight)
-    await message.answer("Редактирование значения отменено.", reply_markup=main_menu)
+    await message.answer("Редактирование значения отменено.")
 
 
 @router.message(MealEntryStates.edit_kbju_manual_input)
@@ -6442,7 +6433,8 @@ async def meal_kbju_edit_all_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "Введи 4 значения в формате:\n"
         "ккал белки жиры углеводы\n"
-        "Пример: 120 14 5 3"
+        "Пример: 120 14 5 3",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
