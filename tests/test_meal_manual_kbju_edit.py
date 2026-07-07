@@ -257,3 +257,21 @@ def test_custom_product_value_editor_sends_single_inline_editor():
     assert "Сколько продукта" in message.answer.await_args.args[0]
     assert kwargs["parse_mode"] == "HTML"
     assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "custom_vchg:amount:-100"
+
+
+def test_weight_editor_keyboard_hides_save_until_weight_changes():
+    keyboard = _build_weight_editor_keyboard(0, has_changes=False)
+    texts = [button.text for row in keyboard.inline_keyboard for button in row]
+
+    assert "✅ Сохранить" not in texts
+    assert "❌ Отмена" not in texts
+    assert "🗑 Удалить" in texts
+    assert "⬅️ Назад" in texts
+
+
+def test_weight_editor_keyboard_shows_save_after_weight_change():
+    keyboard = _build_weight_editor_keyboard(0, has_changes=True)
+    texts = [button.text for row in keyboard.inline_keyboard for button in row]
+
+    assert "✅ Сохранить" in texts
+    assert "❌ Отмена" not in texts
