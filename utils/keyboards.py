@@ -235,7 +235,6 @@ steps_menu = ReplyKeyboardMarkup(
 steps_confirmation_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="✅ Сохранить"), KeyboardButton(text="✏️ Изменить")],
-        [KeyboardButton(text="🗑 Удалить шаги")],
         [KeyboardButton(text="⬅️ Назад")],
     ],
     resize_keyboard=True,

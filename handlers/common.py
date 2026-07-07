@@ -201,6 +201,14 @@ async def quick_steps_add(callback: CallbackQuery, state: FSMContext):
     await open_steps_flow(callback.message, state)
 
 
+@router.callback_query(lambda c: c.data == "quick_water_300")
+async def quick_water_300(callback: CallbackQuery, state: FSMContext):
+    """Быстро добавляет 300 мл воды из верхних быстрых действий."""
+    from handlers.water import add_quick_water_amount
+
+    await add_quick_water_amount(callback, state, 300.0)
+
+
 @router.callback_query(lambda c: c.data == "quick_weight")
 async def quick_weight(callback: CallbackQuery, state: FSMContext):
     """Быстрое открытие ввода веса."""

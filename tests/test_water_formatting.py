@@ -9,7 +9,12 @@ if str(ROOT_PATH) not in sys.path:
     sys.path.insert(0, str(ROOT_PATH))
 
 from handlers.water import build_water_added_text
-from utils.keyboards import steps_menu, water_quick_add_inline
+from utils.keyboards import (
+    quick_actions_inline,
+    steps_confirmation_menu,
+    steps_menu,
+    water_quick_add_inline,
+)
 
 
 def test_build_water_added_text_bolds_confirmation_and_labels():
@@ -59,3 +64,17 @@ def test_steps_menu_numeric_rows_have_four_buttons():
     assert all(len(row) == 4 for row in numeric_rows)
     assert [button.text for button in numeric_rows[0]] == ["500", "1000", "1500", "2000"]
     assert [button.text for button in numeric_rows[-1]] == ["18500", "19000", "19500", "20000"]
+
+
+def test_steps_confirmation_menu_has_no_delete_steps_button():
+    buttons = [button.text for row in steps_confirmation_menu.keyboard for button in row]
+
+    assert "🗑 Удалить шаги" not in buttons
+    assert buttons == ["✅ Сохранить", "✏️ Изменить", "⬅️ Назад"]
+
+
+def test_quick_actions_water_button_keeps_legacy_callback_supported_by_common_handler():
+    water_button = quick_actions_inline.inline_keyboard[0][3]
+
+    assert water_button.text == "💧+300"
+    assert water_button.callback_data == "quick_water_300"
