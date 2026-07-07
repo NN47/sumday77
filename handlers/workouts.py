@@ -83,13 +83,29 @@ def _entry_date_from_state_data(data: dict) -> date:
     return date.today()
 
 
+def _format_activity_count(workout) -> str:
+    """Форматирует введённое значение для строки упражнения."""
+    variant = workout.variant or ""
+    variant_lower = variant.lower()
+    count = workout.count or 0
+
+    if variant_lower in {"минуты", "мин"}:
+        return f"{int(count)} мин"
+
+    formatted_count = str(int(count)) if float(count).is_integer() else f"{count:g}"
+    if variant and variant not in {"reps", "Повторения"}:
+        return f"{variant}: {formatted_count}"
+    return f"{formatted_count} повторений"
+
+
 def _format_today_activity_overview(user_id: str) -> str:
-    """Форматирует краткую сводку главного экрана активности за сегодня."""
+    """Форматирует сводку главного экрана активности за сегодня с деталями упражнений."""
     workouts = WorkoutRepository.get_workouts_for_day(user_id, date.today())
     steps = 0
     steps_kcal = 0.0
     workouts_count = 0
     workouts_kcal = 0.0
+    workout_details = []
 
     for workout in workouts:
         exercise = _normalize_exercise_name(workout.exercise)
@@ -102,14 +118,17 @@ def _format_today_activity_overview(user_id: str) -> str:
             continue
         workouts_count += 1
         workouts_kcal += calories
+        workout_details.append(f"• {exercise}: {_format_activity_count(workout)} (~{calories:.0f} ккал)")
 
     total_kcal = steps_kcal + workouts_kcal
     steps_text = f"{steps:,}".replace(",", " ")
-    return (
-        f"👣 Шаги: {steps_text} (~{steps_kcal:.0f} ккал)\n"
-        f"💪 Тренировки: {workouts_count} записей (~{workouts_kcal:.0f} ккал)\n"
-        f"🔥 Сожжено за день: ~{total_kcal:.0f} ккал"
-    )
+    lines = [
+        f"👣 Шаги: {steps_text} (~{steps_kcal:.0f} ккал)",
+        f"💪 Тренировки: {workouts_count} записей (~{workouts_kcal:.0f} ккал)",
+    ]
+    lines.extend(workout_details)
+    lines.append(f"🔥 Сожжено за день: ~{total_kcal:.0f} ккал")
+    return "\n".join(lines)
 
 
 async def _send_activity_main_screen(message: Message, user_id: str):
