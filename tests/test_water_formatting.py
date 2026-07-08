@@ -78,3 +78,45 @@ def test_quick_actions_water_button_keeps_legacy_callback_supported_by_common_ha
 
     assert water_button.text == "💧+300"
     assert water_button.callback_data == "quick_water_300"
+
+
+def test_build_quick_water_notification_text_matches_callback_toast():
+    from handlers.water import build_quick_water_notification_text
+
+    assert build_quick_water_notification_text(300) == "✅ Добавил 300 мл воды"
+    assert build_quick_water_notification_text(-300) == "✅ Убрал 300 мл воды"
+
+
+def test_add_quick_water_amount_sends_callback_notification(monkeypatch):
+    import asyncio
+    import handlers.water as water
+
+    answers = []
+    sent_messages = []
+
+    class DummyFromUser:
+        id = 42
+
+    class DummyCallback:
+        from_user = DummyFromUser()
+        message = object()
+
+        async def answer(self, text=None, **kwargs):
+            answers.append(text)
+
+    class DummyState:
+        async def clear(self):
+            pass
+
+    async def fake_send_or_edit_quick_water_message(message, user_id, text):
+        sent_messages.append((message, user_id, text))
+
+    monkeypatch.setattr(water.WaterRepository, "save_water_entry", lambda *args, **kwargs: None)
+    monkeypatch.setattr(water.WaterRepository, "get_daily_total", lambda *args, **kwargs: 300.0)
+    monkeypatch.setattr(water, "get_water_recommended", lambda user_id: 2000.0)
+    monkeypatch.setattr(water, "send_or_edit_quick_water_message", fake_send_or_edit_quick_water_message)
+
+    asyncio.run(water.add_quick_water_amount(DummyCallback(), DummyState(), 300.0))
+
+    assert answers == ["✅ Добавил 300 мл воды"]
+    assert sent_messages
