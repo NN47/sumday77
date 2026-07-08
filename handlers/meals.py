@@ -358,11 +358,11 @@ def _build_photo_analysis_confirm_menu(items: list[dict] | None = None) -> Inlin
 
 
 def _build_food_photo_clarification_menu() -> InlineKeyboardMarkup:
-    """Строит inline-меню выбора уточнения перед анализом фото еды."""
+    """Строит inline-меню запуска анализа фото еды без уточнения или отмены."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✍️ Добавить уточнение", callback_data="food_photo_add_comment")],
-            [InlineKeyboardButton(text="⏭ Анализировать без уточнения", callback_data="food_photo_analyze_now")],
+            [InlineKeyboardButton(text="⏭️ Анализировать без уточнения", callback_data="food_photo_analyze_now")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="food_photo_cancel")],
         ]
     )
 
@@ -3905,17 +3905,19 @@ async def _handle_food_photo_analysis(
 
 @router.message(MealEntryStates.waiting_for_photo, F.photo)
 async def handle_photo_input(message: Message, state: FSMContext):
-    """Сохраняет фото еды и предлагает добавить уточнение перед анализом."""
+    """Сохраняет фото еды и сразу ждёт уточнение перед анализом."""
     photo = message.photo[-1]
     await state.update_data(food_photo_file_id=photo.file_id, food_photo_comment=None)
+    await state.set_state(MealEntryStates.waiting_for_food_photo_comment)
     await message.answer(
-        "📷 Фото получено\n\n"
-        "Хотите добавить уточнение о блюде?\n"
+        "📷 Фото получено.\n\n"
+        "Если хотите, можете сразу написать уточнение к блюду одним сообщением.\n\n"
         "Например:\n"
         "• общий вес 500 г\n"
         "• помидоры, огурцы, фета, авокадо, лук\n"
         "• съел половину порции\n"
-        "• без масла / с майонезом / со сметаной",
+        "• без масла / с майонезом / со сметаной\n\n"
+        "Если уточнений нет — нажмите «⏭️ Анализировать без уточнения».",
         reply_markup=_build_food_photo_clarification_menu(),
     )
 
@@ -3953,20 +3955,25 @@ async def _run_pending_food_photo_analysis(
 async def analyze_food_photo_without_comment(callback: CallbackQuery, state: FSMContext):
     """Запускает анализ сохранённого фото без дополнительного контекста."""
     await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
     await _run_pending_food_photo_analysis(callback.message, state)
 
 
-@router.callback_query(lambda c: c.data == "food_photo_add_comment")
-async def request_food_photo_comment(callback: CallbackQuery, state: FSMContext):
-    """Переводит пользователя в состояние ожидания уточнения к фото еды."""
-    await state.set_state(MealEntryStates.waiting_for_food_photo_comment)
+@router.callback_query(lambda c: c.data == "food_photo_cancel")
+async def cancel_pending_food_photo_analysis(callback: CallbackQuery, state: FSMContext):
+    """Отменяет ожидание уточнения к фото еды через inline-кнопку."""
     await callback.answer()
-    await callback.message.answer(
-        "✍️ Напишите уточнение к блюду одним сообщением.\n\n"
-        "Например: «общий вес 500 г, съел половину, салат с фетой и без масла».\n"
-        "Чтобы отменить анализ, нажмите «❌ Отмена».",
-        reply_markup=_build_photo_analysis_cancel_menu(),
+    await callback.message.edit_reply_markup(reply_markup=None)
+    data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(
+        meal_type=meal_type,
+        pending_add_method=None,
+        food_photo_file_id=None,
+        food_photo_comment=None,
     )
+    await _show_input_methods(callback.message, state, user_id=str(callback.from_user.id))
 
 
 @router.message(MealEntryStates.waiting_for_food_photo_comment)
