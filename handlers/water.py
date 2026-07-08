@@ -27,12 +27,18 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def build_quick_water_notification_text(amount: float) -> str:
+    """Форматирует короткое уведомление после быстрого изменения воды."""
+    action = "Добавил" if amount > 0 else "Убрал"
+    return f"✅ {action} {abs(amount):.0f} мл воды"
+
+
 def build_water_added_text(amount: float, daily_total: float, recommended: float, bar: str) -> str:
     """Форматирует HTML-подтверждение корректировки воды."""
     progress = round((daily_total / recommended) * 100) if recommended > 0 else 0
-    action = "Добавил" if amount > 0 else "Убрал"
+    notification_text = build_quick_water_notification_text(amount)
     return (
-        f"<b>✅ {action} {abs(amount):.0f} мл воды</b>\n\n"
+        f"<b>{notification_text}</b>\n\n"
         f"<b>💧 Всего за сегодня</b>: {daily_total:.0f} мл\n"
         f"<b>🎯 Норма</b>: {recommended:.0f} мл\n"
         f"<b>📈 Прогресс</b>: {progress}%\n"
@@ -145,7 +151,6 @@ async def quick_add_water_250(message: Message, state: FSMContext):
 
 async def add_quick_water_amount(callback: CallbackQuery, state: FSMContext, amount: float) -> None:
     """Добавляет воду из callback-кнопки быстрого действия."""
-    await callback.answer()
     message = callback.message
     user_id = str(callback.from_user.id)
     logger.info(f"User {user_id} used quick water {amount:+.0f} inline button")
@@ -160,6 +165,7 @@ async def add_quick_water_amount(callback: CallbackQuery, state: FSMContext, amo
     bar = build_water_progress_bar(daily_total, recommended)
     text = build_water_added_text(amount, daily_total, recommended, bar)
 
+    await callback.answer(build_quick_water_notification_text(amount))
     await send_or_edit_quick_water_message(message, user_id, text)
 
 
