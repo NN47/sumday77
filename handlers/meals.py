@@ -435,11 +435,16 @@ def _build_photo_analysis_cancel_menu() -> ReplyKeyboardMarkup:
 
 
 async def _send_photo_analysis_confirmation(message: Message, items: list[dict]) -> None:
-    """Показывает результат анализа с inline-кнопками без дополнительной подсказки внизу."""
+    """Показывает результат анализа с inline-кнопками и нижней кнопкой полной отмены."""
     await message.answer(
         _format_photo_analysis_confirmation_text(items),
         reply_markup=_build_photo_analysis_confirm_menu(items),
         parse_mode="HTML",
+    )
+    await message.answer(
+        "⬇️ Кнопки управления",
+        reply_markup=_build_photo_analysis_cancel_menu(),
+        disable_notification=True,
     )
 
 
@@ -4025,20 +4030,10 @@ async def handle_openai_food_non_photo(message: Message, state: FSMContext):
 
 
 async def _cancel_photo_analysis_confirmation(message: Message, state: FSMContext, data: dict):
-    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    entry_date = data.get("entry_date") or date.today().isoformat()
-    await state.set_state(MealEntryStates.choosing_meal_type)
-    await state.update_data(
-        entry_date=entry_date,
-        meal_type=meal_type,
-        photo_analysis_items=None,
-        photo_analysis_raw_query=None,
-        photo_analysis_provider=None,
-        photo_analysis_editing_idx=None,
-        photo_total_weight_draft_items=None,
-        photo_total_weight_original_items=None,
-    )
-    await message.answer("❌ Добавление еды отменено.", reply_markup=kbju_add_menu)
+    """Полностью выходит из сценария анализа блюда по фото и возвращает главное меню."""
+    await state.clear()
+    push_menu_stack(message.bot, main_menu)
+    await message.answer("❌ Анализ блюда отменён.", reply_markup=main_menu)
 
 
 async def _save_photo_analysis_confirmation(message: Message, state: FSMContext, user_id: str, data: dict):
@@ -4420,10 +4415,6 @@ async def handle_photo_analysis_confirmation(message: Message, state: FSMContext
         await _cancel_photo_analysis_confirmation(message, state, data)
         return
 
-    await message.answer(
-        "Используйте inline-кнопки под результатом: выберите продукт для редактирования "
-        "или нажмите ✅ Сохранить."
-    )
     return
 
 
