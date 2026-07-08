@@ -78,3 +78,23 @@ def test_quick_actions_water_button_keeps_legacy_callback_supported_by_common_ha
 
     assert water_button.text == "💧+300"
     assert water_button.callback_data == "quick_water_300"
+
+
+def test_quick_water_main_menu_forces_new_confirmation_message(monkeypatch):
+    from handlers import common
+    import handlers.water as water_module
+
+    calls = []
+
+    async def fake_add_quick_water_amount(callback, state, amount, *, force_new_message=False):
+        calls.append((callback, state, amount, force_new_message))
+
+    monkeypatch.setattr(water_module, "add_quick_water_amount", fake_add_quick_water_amount)
+
+    callback = object()
+    state = object()
+
+    import asyncio
+    asyncio.run(common.quick_water_300(callback, state))
+
+    assert calls == [(callback, state, 300.0, True)]
