@@ -128,7 +128,7 @@ def test_photo_delete_last_product_shows_empty_message_and_no_save_button():
     )
 
 
-def test_send_photo_analysis_confirmation_attaches_inline_without_cancel_hint_message():
+def test_send_photo_analysis_confirmation_attaches_inline_and_cancel_reply_keyboard():
     message = _build_message()
     items = [{"name": "Йогурт манго", "grams": 120, "kcal": 90}]
 
@@ -136,11 +136,36 @@ def test_send_photo_analysis_confirmation_attaches_inline_without_cancel_hint_me
         asyncio.run(meals._send_photo_analysis_confirmation(message, items))
 
     push_stack.assert_not_called()
-    assert message.answer.await_count == 1
-    result_call = message.answer.await_args_list[0]
+    assert message.answer.await_count == 2
+    result_call, controls_call = message.answer.await_args_list
     assert result_call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "edit_photo_food_item:0"
     assert [button.callback_data for button in result_call.kwargs["reply_markup"].inline_keyboard[-1]] == ["photo_total_weight", "save_photo_food_analysis"]
     assert "Для отмены" not in result_call.args[0]
+    assert controls_call.args[0] == "⬇️ Кнопки управления"
+    assert [[button.text for button in row] for row in controls_call.kwargs["reply_markup"].keyboard] == [["❌ Отмена"]]
+
+
+def test_photo_analysis_cancel_clears_state_and_returns_main_menu():
+    message = _build_message()
+    state = _DummyState()
+    state._data = {
+        "meal_type": meals.MealType.SNACK.value,
+        "photo_analysis_items": [{"name": "Яблоко"}],
+        "photo_analysis_raw_query": "raw",
+        "photo_analysis_provider": "gemini",
+        "photo_analysis_editing_idx": 0,
+        "photo_total_weight_draft_items": [{"name": "Яблоко"}],
+        "photo_total_weight_original_items": [{"name": "Яблоко"}],
+    }
+
+    with patch("handlers.meals.push_menu_stack") as push_stack:
+        asyncio.run(meals._cancel_photo_analysis_confirmation(message, state, state._data))
+
+    state.clear.assert_awaited_once()
+    state.set_state.assert_not_awaited()
+    push_stack.assert_called_once_with(message.bot, meals.main_menu)
+    assert message.answer.await_args.args[0] == "❌ Анализ блюда отменён."
+    assert message.answer.await_args.kwargs["reply_markup"] == meals.main_menu
 
 
 def test_photo_analysis_cancel_menu_is_regular_bottom_keyboard():
