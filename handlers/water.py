@@ -40,9 +40,15 @@ def build_water_added_text(amount: float, daily_total: float, recommended: float
     )
 
 
-async def send_or_edit_quick_water_message(message: Message, user_id: str, text: str) -> Message:
+async def send_or_edit_quick_water_message(
+    message: Message,
+    user_id: str,
+    text: str,
+    *,
+    allow_edit: bool = True,
+) -> Message:
     """Обновляет актуальное сообщение быстрого добавления воды или создаёт новое."""
-    saved_message = QuickWaterMessageRepository.get_message(user_id)
+    saved_message = QuickWaterMessageRepository.get_message(user_id) if allow_edit else None
 
     if saved_message:
         try:
@@ -143,7 +149,13 @@ async def quick_add_water_250(message: Message, state: FSMContext):
     await send_or_edit_quick_water_message(message, user_id, text)
 
 
-async def add_quick_water_amount(callback: CallbackQuery, state: FSMContext, amount: float) -> None:
+async def add_quick_water_amount(
+    callback: CallbackQuery,
+    state: FSMContext,
+    amount: float,
+    *,
+    force_new_message: bool = False,
+) -> None:
     """Добавляет воду из callback-кнопки быстрого действия."""
     await callback.answer()
     message = callback.message
@@ -160,7 +172,12 @@ async def add_quick_water_amount(callback: CallbackQuery, state: FSMContext, amo
     bar = build_water_progress_bar(daily_total, recommended)
     text = build_water_added_text(amount, daily_total, recommended, bar)
 
-    await send_or_edit_quick_water_message(message, user_id, text)
+    await send_or_edit_quick_water_message(
+        message,
+        user_id,
+        text,
+        allow_edit=not force_new_message,
+    )
 
 
 @router.callback_query(lambda c: c.data in {"quick_water_250", "quick_water_300"})

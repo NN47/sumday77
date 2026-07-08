@@ -206,7 +206,7 @@ async def quick_water_300(callback: CallbackQuery, state: FSMContext):
     """Быстро добавляет 300 мл воды из верхних быстрых действий."""
     from handlers.water import add_quick_water_amount
 
-    await add_quick_water_amount(callback, state, 300.0)
+    await add_quick_water_amount(callback, state, 300.0, force_new_message=True)
 
 
 @router.callback_query(lambda c: c.data == "quick_weight")
