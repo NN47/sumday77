@@ -6,7 +6,7 @@ from utils.progress_formatters import format_progress_block
 
 
 class ProgressFormatterActivityAdjustmentTests(unittest.TestCase):
-    def test_uses_counted_activity_for_corrected_goal_and_shows_both_lines(self):
+    def test_uses_counted_activity_for_corrected_goal_without_technical_breakdown(self):
         settings = SimpleNamespace(
             calories=2000.0,
             protein=120.0,
@@ -31,8 +31,10 @@ class ProgressFormatterActivityAdjustmentTests(unittest.TestCase):
         ):
             text = format_progress_block("1")
 
-        self.assertIn("Активность всего:</b> ~517 ккал", text)
-        self.assertIn("Учтено в норме:</b> ~372 ккал", text)
+        self.assertNotIn("Активность всего:", text)
+        self.assertNotIn("Учтено в норме:", text)
+        self.assertNotIn("Базовая норма:", text)
+        self.assertNotIn("Цель:", text)
         self.assertIn("Скорректированная норма:</b> 2372 ккал", text)
         self.assertIn("🔥 <b>Калории</b>: 1500/2372 ккал (63%)", text)
         self.assertIn("💪 <b>Белки</b>: 100/142 г (70%)", text)
@@ -64,7 +66,7 @@ class ProgressFormatterActivityAdjustmentTests(unittest.TestCase):
         ):
             text = format_progress_block("1")
 
-        self.assertIn("Учтено в норме:</b> ~68 ккал", text)
+        self.assertNotIn("Учтено в норме:", text)
         self.assertIn("Скорректированная норма:</b> 2068 ккал", text)
 
 

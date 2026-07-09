@@ -28,7 +28,7 @@ from utils.keyboards import (
 )
 from states.user_states import WorkoutStates
 from database.repositories import WorkoutRepository, AnalyticsRepository
-from database.repositories import CustomWorkoutExerciseRepository
+from database.repositories import CustomWorkoutExerciseRepository, MealRepository
 from utils.workout_utils import calculate_workout_calories
 from utils.validators import parse_date
 from utils.formatters import format_count_with_unit
@@ -121,13 +121,33 @@ def _format_today_activity_overview(user_id: str) -> str:
         workout_details.append(f"• {exercise}: {_format_activity_count(workout)} (~{calories:.0f} ккал)")
 
     total_kcal = steps_kcal + workouts_kcal
+    settings = MealRepository.get_kbju_settings(user_id)
+    activity_key = (settings.activity or "").strip().lower() if settings else ""
+    from utils.progress_formatters import LIFESTYLE_ACTIVITY_COEFFICIENTS
+
+    lifestyle_coef = LIFESTYLE_ACTIVITY_COEFFICIENTS.get(
+        activity_key,
+        LIFESTYLE_ACTIVITY_COEFFICIENTS["medium"],
+    )
+    counted_kcal = round(total_kcal * lifestyle_coef) if settings else 0
+
     steps_text = f"{steps:,}".replace(",", " ")
     lines = [
+        "🏃 Активность за день",
+        "",
         f"👣 Шаги: {steps_text} (~{steps_kcal:.0f} ккал)",
         f"💪 Тренировки: {workouts_count} записей (~{workouts_kcal:.0f} ккал)",
     ]
     lines.extend(workout_details)
-    lines.append(f"🔥 Сожжено за день: ~{total_kcal:.0f} ккал")
+    lines.extend([
+        "",
+        f"🔥 Всего сожжено: ~{total_kcal:.0f} ккал",
+        "",
+        f"📌 Учтено в дневной норме: ~{counted_kcal:.0f} ккал",
+        "",
+        "ℹ️ Почему учтено не всё?",
+        "Чтобы не завышать дневную норму питания, Sumday77 учитывает только часть активности.",
+    ])
     return "\n".join(lines)
 
 
@@ -136,7 +156,7 @@ async def _send_activity_main_screen(message: Message, user_id: str):
     workouts_text = _format_today_activity_overview(user_id)
     push_menu_stack(message.bot, training_menu)
     await message.answer(
-        f"🚴 Активность за сегодня\n\n{workouts_text}\n\nВыберите действие:",
+        f"{workouts_text}\n\nВыберите действие:",
         reply_markup=training_menu,
         parse_mode="HTML",
     )
