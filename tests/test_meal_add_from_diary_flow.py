@@ -190,7 +190,7 @@ def test_show_input_methods_sends_add_menu():
     assert message.answer.await_count == 2
     first_call, second_call = message.answer.await_args_list
     assert first_call.args[0].startswith("Теперь выбери способ добавления приёма пищи.\n\n")
-    assert "💡 Уже добавлял этот продукт? Нажми «📦 Мои продукты» ниже." in first_call.args[0]
+    assert "💡 Если уже добавлял этот продукт — нажми «📦 Мои продукты»." in first_call.args[0]
     inline_keyboard = first_call.kwargs["reply_markup"].inline_keyboard
     assert [[button.text for button in row] for row in inline_keyboard] == [["📦 Мои продукты"]]
     assert inline_keyboard[0][0].callback_data == "meal_entry_my_products:snack:1"
@@ -221,14 +221,14 @@ def test_show_input_methods_points_to_my_product_products_when_available():
     assert message.answer.await_count == 2
     methods_text = message.answer.await_args_list[0].args[0]
     assert methods_text.startswith("Теперь выбери способ добавления приёма пищи.\n\n")
-    assert "💡 Уже добавлял этот продукт? Нажми «📦 Мои продукты» ниже." in methods_text
+    assert "💡 Если уже добавлял этот продукт — нажми «📦 Мои продукты»." in methods_text
     inline_keyboard = message.answer.await_args_list[0].kwargs["reply_markup"].inline_keyboard
     assert [[button.text for button in row] for row in inline_keyboard] == [["📦 Мои продукты"]]
     assert inline_keyboard[0][0].callback_data == "meal_entry_my_products:snack:1"
-    assert "• 📝 Ввести приём пищи текстом (AI-анализ)" in methods_text
-    assert "• 📷 Анализ еды по фото" in methods_text
-    assert "• 📋 Анализ этикетки" in methods_text
-    assert "• ✍️ Внести вручную" in methods_text
+    assert "• 📝 Ввести приём пищи текстом (AI-анализ)" not in methods_text
+    assert "• 📷 Анализ еды по фото" not in methods_text
+    assert "• 📋 Анализ этикетки" not in methods_text
+    assert "• ✍️ Внести вручную" not in methods_text
 
 
 def test_add_meal_from_diary_block_sets_context_and_opens_methods():

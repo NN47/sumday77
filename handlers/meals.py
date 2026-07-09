@@ -1833,11 +1833,7 @@ async def _show_input_methods(message: Message, state: FSMContext, *, user_id: s
     meal_type = normalize_meal_type((await state.get_data()).get("meal_type"), fallback=MealType.SNACK.value)
     text = (
         "Теперь выбери способ добавления приёма пищи.\n\n"
-        "💡 Уже добавлял этот продукт? Нажми «📦 Мои продукты» ниже.\n\n"
-        "• 📝 Ввести приём пищи текстом (AI-анализ)\n"
-        "• 📷 Анализ еды по фото\n"
-        "• 📋 Анализ этикетки\n"
-        "• ✍️ Внести вручную"
+        "💡 Если уже добавлял этот продукт — нажми «📦 Мои продукты»."
     )
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(text, reply_markup=_build_my_products_entry_keyboard(meal_type))
