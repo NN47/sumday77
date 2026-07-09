@@ -141,7 +141,14 @@ class DeepSeekService:
                 raise DeepSeekServiceTemporaryError(str(exc)) from exc
             raise DeepSeekServiceError(str(exc)) from exc
 
-    def analyze_activity_prompt(self, prompt: str, *, user_id: str | int | None = None) -> str:
+    def analyze_activity_prompt(
+        self,
+        prompt: str,
+        *,
+        user_id: str | int | None = None,
+        system_prompt: str | None = None,
+        feature: str = "activity_analysis",
+    ) -> str:
         """Отправляет промпт анализа активности в DeepSeek и возвращает текстовый ответ."""
         if not prompt:
             raise ValueError("Prompt is empty")
@@ -156,7 +163,7 @@ class DeepSeekService:
                 messages=[
                     {
                         "role": "system",
-                        "content": "Ты фитнес-ассистент. Следуй инструкциям пользователя и верни только итоговый анализ.",
+                        "content": system_prompt or "Ты фитнес-ассистент. Следуй инструкциям пользователя и верни только итоговый анализ.",
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -171,7 +178,7 @@ class DeepSeekService:
             if not content:
                 log_ai_usage(
                     provider="deepseek",
-                    feature="activity_analysis",
+                    feature=feature,
                     model=DEEPSEEK_MODEL,
                     status="error",
                     user_id=user_id,
@@ -187,7 +194,7 @@ class DeepSeekService:
 
             log_ai_usage(
                 provider="deepseek",
-                feature="activity_analysis",
+                feature=feature,
                 model=DEEPSEEK_MODEL,
                 status="success",
                 user_id=user_id,
@@ -207,7 +214,7 @@ class DeepSeekService:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             log_ai_usage(
                 provider="deepseek",
-                feature="activity_analysis",
+                feature=feature,
                 model=DEEPSEEK_MODEL,
                 status="error",
                 user_id=user_id,

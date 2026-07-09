@@ -13,6 +13,7 @@ from utils.keyboards import (
     activity_analysis_menu,
     push_menu_stack,
     ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT,
+    ACTIVITY_ANALYSIS_DETAILED_DEEPSEEK_BUTTON_ALIASES,
     ACTIVITY_ANALYSIS_MONTH_BUTTON_ALIASES,
     ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES,
     ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES,
@@ -45,6 +46,7 @@ from services.ai.gigachat import (
     GigaChatServiceConfigError,
 )
 from services.error_logging_service import log_app_error
+from services.extended_activity_analysis_service import AnalysisPeriod, extended_activity_analysis_service
 from utils.telegram_text import split_telegram_message
 from services.notification_scheduler import (
     EVENING_ANALYSIS_REMIND_PREFIX,
@@ -1443,6 +1445,49 @@ async def remind_evening_activity_analysis_later(callback: CallbackQuery):
         return
     await callback.message.answer("⏰ Хорошо, напомню позже.")
 
+
+
+
+@router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_DETAILED_DEEPSEEK_BUTTON_ALIASES)
+async def analyze_activity_day_detailed_deepseek(message: Message):
+    """Подробный AI-анализ дня через DeepSeek на расширенном контексте."""
+    user_id = str(message.from_user.id)
+    today = date.today()
+    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, today)
+    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
+    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
+    await message.answer("🧠 Готовлю подробный AI-анализ дня...")
+    try:
+        analysis = await extended_activity_analysis_service.generate(
+            user_id,
+            AnalysisPeriod(start_date=today, end_date=today, label="за день"),
+        )
+        ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="detailed_deepseek")
+        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
+    except Exception as e:
+        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
+        log_app_error(
+            source="deepseek",
+            error=e,
+            user_id=user_id,
+            context="detailed_daily_analysis",
+            extra={"handler": "analyze_activity_day_detailed_deepseek"},
+        )
+        push_menu_stack(message.bot, activity_analysis_menu)
+        await message.answer(
+            "⚠️ Не удалось подготовить подробный AI-анализ. Попробуй немного позже.",
+            reply_markup=activity_analysis_menu,
+        )
+        return
+
+    push_menu_stack(message.bot, activity_analysis_menu)
+    chunks = split_telegram_message(analysis, limit=3900)
+    for idx, chunk in enumerate(chunks, start=1):
+        await message.answer(
+            chunk,
+            parse_mode="HTML",
+            reply_markup=activity_analysis_menu if idx == len(chunks) else None,
+        )
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES)
 async def analyze_activity_day_gigachat(message: Message):
