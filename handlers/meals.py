@@ -603,18 +603,6 @@ def _format_photo_weight_editor_text(item: dict) -> str:
     )
 
 
-def _format_photo_saved_confirmation(meal_type: str, items: list[dict], totals: dict) -> str:
-    """Форматирует короткое подтверждение сохранения анализа фото."""
-    lines = [
-        f"✅ <b>Добавлено в {display_meal_type(meal_type).lower()}</b>",
-        "",
-    ]
-    for item in items:
-        lines.append(f"• {html.escape(str(item.get('name') or 'Продукт'))} — {_safe_float(item.get('grams')):.0f} г")
-    lines.extend(["", f"🔥 <b>Итого:</b> {totals['calories']:.0f} ккал"])
-    return "\n".join(lines)
-
-
 def _calculate_label_totals(kbju_per_100g: dict | None, weight_grams: float) -> tuple[dict, dict]:
     """Возвращает итоговые КБЖУ и значения на 100 г для выбранного веса."""
     kbju_per_100g = kbju_per_100g or {}
@@ -4091,8 +4079,6 @@ async def _save_photo_analysis_confirmation(message: Message, state: FSMContext,
         user_id=user_id,
         entry_date=entry_date,
         meal_type=meal_type,
-        intro_lines=[_format_photo_saved_confirmation(meal_type, items, totals_for_db)],
-        parse_mode="HTML",
     )
 
 
