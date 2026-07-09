@@ -1526,3 +1526,49 @@ def test_openai_label_waiting_accepts_meal_type_button_without_photo_error():
     assert "Выбрано: 🍲 Обед" in answer_text
     assert "Теперь отправь фото" in answer_text
     assert "Пожалуйста, отправь фото этикетки" not in answer_text
+
+
+def test_render_calendar_day_meals_shows_kbju_reply_controls_and_remembers_date():
+    message = _build_message()
+    message.answer.return_value = SimpleNamespace(message_id=42)
+    target_date = date(2026, 4, 9)
+    meal = SimpleNamespace(
+        id=8,
+        raw_query="Омлет",
+        description="Омлет",
+        products_json='[{"name":"Омлет","grams":120,"kcal":180,"protein":14,"fat":12,"carbs":3}]',
+        calories=180,
+        protein=14,
+        fat=12,
+        carbs=3,
+        meal_type=meals.MealType.BREAKFAST.value,
+    )
+
+    with patch("handlers.meals.MealRepository.get_meals_for_date", return_value=[meal]), patch(
+        "handlers.meals.MealRepository.get_daily_totals",
+        return_value={"calories": 180, "protein_g": 14, "fat_total_g": 12, "carbohydrates_total_g": 3},
+    ), patch("handlers.meals.MealRepository.get_kbju_settings", return_value=None), patch(
+        "handlers.meals.push_menu_stack"
+    ) as push_stack:
+        asyncio.run(meals._render_day_meals_messages(message, "12345", target_date, include_back=True))
+
+    assert message.bot.selected_food_diary_dates["12345"] == target_date.isoformat()
+    push_stack.assert_called_with(message.bot, meals.kbju_menu)
+    assert message.answer.await_args_list[-1].args[0] == "⬇️ Кнопки управления"
+    assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_menu
+
+
+def test_add_meal_reply_button_uses_selected_calendar_day():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    message.bot.selected_food_diary_dates = {"12345": "2026-04-09"}
+    state = _DummyState()
+    state.get_state = AsyncMock(return_value=None)
+
+    with patch("handlers.meals.reset_user_state") as reset_state, patch(
+        "handlers.meals.start_kbju_add_flow", new=AsyncMock()
+    ) as start_flow:
+        asyncio.run(meals.calories_add(message, state))
+
+    reset_state.assert_called_once_with(message)
+    start_flow.assert_awaited_once_with(message, date(2026, 4, 9), state)

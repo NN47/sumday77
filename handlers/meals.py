@@ -105,6 +105,27 @@ ADD_METHOD_TEXTS = {
 }
 
 
+def _get_selected_food_diary_dates(bot) -> dict:
+    """Хранит выбранную дату дневника питания для reply-кнопок пользователя."""
+    if not hasattr(bot, "selected_food_diary_dates"):
+        bot.selected_food_diary_dates = {}
+    return bot.selected_food_diary_dates
+
+
+def _set_selected_food_diary_date(bot, user_id: str, target_date: date) -> None:
+    _get_selected_food_diary_dates(bot)[user_id] = target_date.isoformat()
+
+
+def _get_selected_food_diary_date(bot, user_id: str) -> date:
+    selected_date = _get_selected_food_diary_dates(bot).get(user_id)
+    if selected_date:
+        try:
+            return date.fromisoformat(selected_date)
+        except ValueError:
+            pass
+    return date.today()
+
+
 def _format_kbju_summary_block(totals: dict, *, bold_values: bool = False) -> str:
     """Форматирует блок КБЖУ с акцентом на названиях показателей."""
     value_template = "<b>{value}</b>" if bold_values else "{value}"
@@ -1402,6 +1423,7 @@ async def _render_day_meals_messages(
         build_daily_totals_keyboard,
     )
 
+    _set_selected_food_diary_date(message.bot, user_id, target_date)
     meals = MealRepository.get_meals_for_date(user_id, target_date)
     daily_totals = MealRepository.get_daily_totals(user_id, target_date)
     settings = MealRepository.get_kbju_settings(user_id)
@@ -1441,6 +1463,9 @@ async def _render_day_meals_messages(
             text=empty_text,
             inline_keyboard=keyboard,
         )
+        if include_back:
+            push_menu_stack(message.bot, kbju_menu)
+            await message.answer("⬇️ Кнопки управления", reply_markup=kbju_menu)
         return
 
     meal_types_to_update = (
@@ -1497,6 +1522,8 @@ async def _render_day_meals_messages(
         text=summary_text,
         inline_keyboard=build_daily_totals_keyboard(target_date, include_back=include_back),
     )
+    push_menu_stack(message.bot, kbju_menu)
+    await message.answer("⬇️ Кнопки управления", reply_markup=kbju_menu)
 
 
 async def _send_ai_error_message(message: Message, error: Exception) -> None:
@@ -2629,7 +2656,9 @@ async def calories_add(message: Message, state: FSMContext):
         return  # Пропускаем обработку, чтобы более специфичный обработчик в supplements.py мог обработать
     
     reset_user_state(message)
-    await start_kbju_add_flow(message, date.today(), state)
+    user_id = str(message.from_user.id)
+    entry_date = _get_selected_food_diary_date(message.bot, user_id)
+    await start_kbju_add_flow(message, entry_date, state)
 
 
 async def start_kbju_add_flow(message: Message, entry_date: date, state: FSMContext):
