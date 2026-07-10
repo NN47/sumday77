@@ -70,14 +70,15 @@ def build_water_progress_bar(current: float, target: float, length: int = 10) ->
 
 
 
-def format_progress_block(user_id: str) -> str:
-    """Форматирует блок прогресса КБЖУ."""
+def format_progress_block(user_id: str, entry_date: date | None = None) -> str:
+    """Форматирует блок прогресса КБЖУ за выбранный день."""
     settings = MealRepository.get_kbju_settings(user_id)
     if not settings:
         return "🍱 Настрой цель по КБЖУ через «🎯 Цель / Норма КБЖУ», чтобы я показывал прогресс."
     
-    totals = MealRepository.get_daily_totals(user_id, date.today())
-    activity_total = get_daily_workout_calories(user_id, date.today())
+    progress_date = entry_date or date.today()
+    totals = MealRepository.get_daily_totals(user_id, progress_date)
+    activity_total = get_daily_workout_calories(user_id, progress_date)
     lifestyle_coef = LIFESTYLE_ACTIVITY_COEFFICIENTS.get(
         (settings.activity or "").strip().lower(),
         LIFESTYLE_ACTIVITY_COEFFICIENTS["medium"],
@@ -102,9 +103,19 @@ def format_progress_block(user_id: str) -> str:
         bar = build_progress_bar(current, target)
         return f"{label}: {current:.0f}/{target:.0f} {unit} ({percent}%)\n{bar}"
     
-    lines = [f"✅ <b>Скорректированная норма:</b> {adjusted_calories_target:.0f} ккал"]
+    eaten_calories = totals["calories"]
+    calories_left = max(adjusted_calories_target - eaten_calories, 0)
+    calories_over = max(eaten_calories - adjusted_calories_target, 0)
+
+    lines = [
+        f"🍽 <b>Съедено:</b> {eaten_calories:.0f} ккал",
+        f"🎯 <b>Осталось:</b> {calories_left:.0f} ккал",
+    ]
+    if calories_over > 0:
+        lines.append(f"⚠️ <b>Превышение:</b> {calories_over:.0f} ккал")
+    lines.append(f"🔥 <b>Сожжено:</b> {activity_total:.0f} ккал")
     lines.append("")
-    lines.append(line("🔥 <b>Калории</b>", totals["calories"], adjusted_calories_target, "ккал"))
+    lines.append(line("🔥 <b>Калории</b>", eaten_calories, adjusted_calories_target, "ккал"))
     lines.append(line("💪 <b>Белки</b>", totals.get("protein_g", totals.get("protein", 0)), adjusted_protein_target, "г"))
     lines.append(line("🥑 <b>Жиры</b>", totals.get("fat_total_g", totals.get("fat", 0)), adjusted_fat_target, "г"))
     lines.append(line("🍩 <b>Углеводы</b>", totals.get("carbohydrates_total_g", totals.get("carbs", 0)), adjusted_carbs_target, "г"))

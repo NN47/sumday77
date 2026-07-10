@@ -10,7 +10,6 @@ from utils.keyboards import main_menu, push_menu_stack, quick_actions_inline
 from utils.progress_formatters import (
     format_progress_block,
     format_water_progress_block,
-    format_today_workouts_block,
     get_today_summary_text,
 )
 from database.session import get_db_session
@@ -62,7 +61,6 @@ async def start(message: Message, state: FSMContext):
     # Формируем приветствие с прогрессом
     progress_text = format_progress_block(user_id)
     water_progress_text = format_water_progress_block(user_id)
-    workouts_text = format_today_workouts_block(user_id, include_date=False)
     today_line = f"📅 <b>{date.today().strftime('%d.%m.%Y')}</b>"
     recommendations_link = await _build_recommendations_link(message)
     
@@ -84,7 +82,7 @@ async def start(message: Message, state: FSMContext):
             f"{today_line}\n\n"
             f"{welcome_intro}\n"
             f"{recommendations_link}\n\n"
-            f"{workouts_text}\n\n{progress_text}\n\n{water_progress_text}"
+            f"{progress_text}\n\n{water_progress_text}"
         )
     else:
         # Для существующих пользователей показываем краткий дайджест
@@ -97,13 +95,13 @@ async def start(message: Message, state: FSMContext):
                 f"{today_line}\n\n"
                 f"{summary_text}\n\n"
                 f"{recommendations_link}\n\n"
-                f"{workouts_text}\n\n{progress_text}\n\n{water_progress_text}"
+                f"{progress_text}\n\n{water_progress_text}"
             )
         else:
             welcome_text = (
                 f"{today_line}\n\n"
                 f"{recommendations_link}\n\n"
-                f"{workouts_text}\n\n{progress_text}\n\n{water_progress_text}"
+                f"{progress_text}\n\n{water_progress_text}"
             )
     
     push_menu_stack(message.bot, main_menu)
