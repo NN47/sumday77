@@ -42,3 +42,16 @@ def test_activity_overview_shows_exercise_details_separately_from_steps():
     assert "🔥 Всего сожжено: ~287 ккал" in text
     assert "📌 Учтено в дневной норме: ~207 ккал" in text
     assert "ℹ️ Почему учтено не всё?" in text
+
+
+def test_activity_overview_shows_sup_boarding_duration_and_calories():
+    workouts = [workout("🏄 Сапбординг", 80, 557, "Минуты")]
+    settings = SimpleNamespace(activity="low")
+
+    with (
+        patch("handlers.workouts.WorkoutRepository.get_workouts_for_day", return_value=workouts),
+        patch("handlers.workouts.MealRepository.get_kbju_settings", return_value=settings),
+    ):
+        text = _format_today_activity_overview("user-id")
+
+    assert "• 🏄 Сапбординг: 80 мин (~557 ккал)" in text
