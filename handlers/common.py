@@ -103,7 +103,6 @@ async def go_main_menu(message: Message, state: FSMContext):
     from utils.progress_formatters import (
         format_progress_block,
         format_water_progress_block,
-        format_today_workouts_block,
     )
     
     user_id = str(message.from_user.id)
@@ -116,13 +115,12 @@ async def go_main_menu(message: Message, state: FSMContext):
     # Формируем сообщение с прогрессом
     progress_text = format_progress_block(user_id)
     water_progress_text = format_water_progress_block(user_id)
-    workouts_text = format_today_workouts_block(user_id, include_date=False)
     recommendations_link = await _build_recommendations_link(message)
 
     today_line = f"📅 <b>{date.today().strftime('%d.%m.%Y')}</b>"
     welcome_text = (
         f"{today_line}\n\n{recommendations_link}\n\n"
-        f"{workouts_text}\n\n{progress_text}\n\n{water_progress_text}"
+        f"{progress_text}\n\n{water_progress_text}"
     )
     
     push_menu_stack(message.bot, main_menu)
