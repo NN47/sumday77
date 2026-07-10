@@ -40,8 +40,28 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 REPS_EXERCISES = {"Отжимания", "Подтягивания", "Приседания", "Пресс", "Берпи"}
-DURATION_EXERCISES = {"Планка", "Йога", "Бег", "Силовая тренировка", "Скакалка", "Велосипед", "Пробежка"}
+DURATION_EXERCISES = {
+    "Планка",
+    "Йога",
+    "Бег",
+    "Силовая тренировка",
+    "Скакалка",
+    "Велосипед",
+    "Пробежка",
+    "🏄 Сапбординг",
+}
 STEPS_EXERCISES = {"Шаги", "Ходьба", "Шаги (Ходьба)"}
+SUP_BOARDING_EXERCISE = "🏄 Сапбординг"
+EXERCISE_SEARCH_SYNONYMS = {
+    SUP_BOARDING_EXERCISE: (
+        "сап",
+        "sup",
+        "сапбординг",
+        "сапсерфинг",
+        "гребля на сапе",
+        "катание на сапе",
+    ),
+}
 
 
 def _normalize_exercise_name(exercise: str) -> str:
@@ -51,6 +71,12 @@ def _normalize_exercise_name(exercise: str) -> str:
         "Ходьба": "Шаги",
     }
     return aliases.get(exercise, exercise)
+
+
+def _exercise_search_tokens(exercise: str) -> tuple[str, ...]:
+    """Возвращает название активности и синонимы для поиска."""
+    normalized = _normalize_exercise_name(exercise)
+    return (normalized, *EXERCISE_SEARCH_SYNONYMS.get(normalized, ()))
 
 
 def _exercise_input_type(exercise: str) -> str:
@@ -679,7 +705,11 @@ async def search_exercise(message: Message, state: FSMContext):
     """Поиск упражнений по подстроке."""
     query = (message.text or "").strip().lower()
     all_exercises = sorted({_normalize_exercise_name(ex) for ex in (bodyweight_exercises + weighted_exercises + frequent_exercises)})
-    matches = [ex for ex in all_exercises if query and query in ex.lower()]
+    matches = [
+        ex
+        for ex in all_exercises
+        if query and any(query in token.lower() for token in _exercise_search_tokens(ex))
+    ]
     await state.set_state(WorkoutStates.choosing_exercise)
     if not matches:
         push_menu_stack(message.bot, exercise_picker_menu)
@@ -815,17 +845,87 @@ async def handle_duration_input(message: Message, state: FSMContext):
     exercise = data.get("exercise")
     user_id = str(message.from_user.id)
     calories = calculate_workout_calories(user_id, exercise, "Минуты", minutes)
+    if exercise == SUP_BOARDING_EXERCISE:
+        await state.update_data(duration_minutes=minutes, duration_calories=calories, variant="Минуты")
+        await state.set_state(WorkoutStates.confirming_duration)
+        push_menu_stack(message.bot, steps_confirmation_menu)
+        await message.answer(
+            f"🏄 Сапбординг\n"
+            f"⏱ {_format_minutes(minutes)} мин\n"
+            f"🔥 Примерный расход: ~{calories:.0f} ккал",
+            reply_markup=steps_confirmation_menu,
+        )
+        return
+
     WorkoutRepository.save_workout(
         user_id=user_id,
         exercise=exercise,
         count=minutes,
-        entry_date=date.today(),
+        entry_date=_entry_date_from_state_data(data),
         variant="Минуты",
         calories=calories,
     )
     await state.clear()
     await message.answer(
         f"✅ Записал!\n💪 {exercise}\n⏱ {_format_minutes(minutes)} мин\n🔥 ~{calories:.0f}\n📅 сегодня",
+        reply_markup=add_another_exercise_menu,
+    )
+
+
+@router.message(WorkoutStates.confirming_duration)
+async def confirm_duration_workout(message: Message, state: FSMContext):
+    """Подтверждает сохранение активности, введённой по длительности."""
+    data = await state.get_data()
+    exercise = data.get("exercise")
+    minutes = float(data.get("duration_minutes", 0) or 0)
+    calories = float(data.get("duration_calories", 0) or 0)
+    user_id = str(message.from_user.id)
+
+    if message.text == "✏️ Изменить":
+        await state.set_state(WorkoutStates.entering_duration)
+        push_menu_stack(message.bot, duration_menu)
+        await message.answer(
+            f"Введи длительность для {exercise} в минутах или выбери предложенное время:",
+            reply_markup=duration_menu,
+        )
+        return
+    if message.text == "⬅️ Назад":
+        await state.set_state(WorkoutStates.entering_duration)
+        push_menu_stack(message.bot, duration_menu)
+        await message.answer(
+            f"Введи длительность для {exercise} в минутах или выбери предложенное время:",
+            reply_markup=duration_menu,
+        )
+        return
+    if message.text in MAIN_MENU_BUTTON_ALIASES:
+        from handlers.common import go_main_menu
+        await go_main_menu(message, state)
+        return
+    if message.text != "✅ Сохранить":
+        await message.answer("Выбери действие кнопкой ниже.")
+        return
+    if not exercise or minutes <= 0:
+        await message.answer("❌ Ошибка: данные потеряны. Начни добавление активности заново.")
+        await state.clear()
+        push_menu_stack(message.bot, training_menu)
+        await message.answer("Выбери действие:", reply_markup=training_menu)
+        return
+
+    entry_date = _entry_date_from_state_data(data)
+    WorkoutRepository.save_workout(
+        user_id=user_id,
+        exercise=exercise,
+        count=minutes,
+        entry_date=entry_date,
+        variant="Минуты",
+        calories=calories,
+    )
+    AnalyticsRepository.track_event(user_id, "add_workout", section="activity")
+    await state.clear()
+
+    date_label = "сегодня" if entry_date == date.today() else entry_date.strftime("%d.%m.%Y")
+    await message.answer(
+        f"✅ Записал!\n💪 {exercise}\n⏱ {_format_minutes(minutes)} мин\n🔥 ~{calories:.0f} ккал\n📅 {date_label}",
         reply_markup=add_another_exercise_menu,
     )
 

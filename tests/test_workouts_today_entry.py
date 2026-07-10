@@ -185,3 +185,20 @@ def test_recent_exercise_inline_pick_continues_to_duration_input():
     state.set_state.assert_any_await(workouts.WorkoutStates.entering_duration)
     callback.message.answer.assert_awaited_once()
     assert "Введи длительность для Бег" in callback.message.answer.await_args.args[0]
+
+
+def test_sup_boarding_is_available_in_all_exercises_and_uses_duration_input():
+    from utils.keyboards import bodyweight_exercises
+
+    assert "🏄 Сапбординг" in bodyweight_exercises
+    assert workouts._exercise_input_type("🏄 Сапбординг") == "duration"
+
+
+def test_sup_boarding_search_matches_synonyms():
+    tokens = tuple(token.lower() for token in workouts._exercise_search_tokens("🏄 Сапбординг"))
+
+    assert "🏄 сапбординг" in tokens
+    assert "sup" in tokens
+    assert "сапсерфинг" in tokens
+    assert "гребля на сапе" in tokens
+    assert "катание на сапе" in tokens

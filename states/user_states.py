@@ -48,6 +48,7 @@ class WorkoutStates(StatesGroup):
     choosing_exercise = State()
     entering_custom_exercise = State()
     entering_duration = State()
+    confirming_duration = State()
     entering_steps = State()
     confirming_steps = State()
     browsing_my_product_exercises = State()
