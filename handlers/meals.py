@@ -859,7 +859,7 @@ def _get_custom_product_items(user_id: str, limit: int = 64) -> list[MyProductIt
     return _expand_my_products(custom_meals, limit=limit)
 
 
-def _format_my_products_text(my_product_meals: list[MyProductItem], page: int, *, title: str = "📦 <b>Мои продукты") -> str:
+def _format_my_products_text(my_product_meals: list[MyProductItem], page: int, *, title: str = "🕒 <b>Недавние продукты") -> str:
     start_idx = (page - 1) * MY_PRODUCTS_PAGE_SIZE
     lines: list[str] = [f"{title} • страница {page}</b>", ""]
     for offset, item in enumerate(my_product_meals, start=start_idx + 1):
@@ -922,9 +922,9 @@ def _build_my_products_keyboard(
 
     nav_row: list[InlineKeyboardButton] = []
     if has_prev:
-        nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_products_page:{meal_type}:{page-1}"))
+        nav_row.append(InlineKeyboardButton(text="⬅️ Предыдущая страница", callback_data=f"my_products_page:{meal_type}:{page-1}"))
     if has_next:
-        nav_row.append(InlineKeyboardButton(text="➡️ Показать ещё", callback_data=f"my_products_page:{meal_type}:{page+1}"))
+        nav_row.append(InlineKeyboardButton(text="➡️ Следующая страница", callback_data=f"my_products_page:{meal_type}:{page+1}"))
     if nav_row:
         rows.append(nav_row)
 
@@ -2001,7 +2001,7 @@ async def _show_my_products_page(
         my_products_source_filter=source_filter,
         in_my_products_section=True,
     )
-    title = MY_PRODUCTS_SOURCE_FILTERS.get(source_filter or "", {}).get("title", "📦 <b>Мои продукты")
+    title = MY_PRODUCTS_SOURCE_FILTERS.get(source_filter or "", {}).get("title", "🕒 <b>Недавние продукты")
     text = _format_my_products_text(page_items, page, title=title)
     reply_markup = _build_my_products_keyboard(
         page_items,

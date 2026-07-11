@@ -480,8 +480,8 @@ def test_meal_entry_my_products_inline_button_opens_my_product_products_page():
 
     callback.answer.assert_awaited_once()
     assert state._data["meal_type"] == meals.MealType.DINNER.value
-    text = callback.message.answer.await_args.args[0]
-    assert "📦 <b>Мои продукты • страница 1</b>" in text
+    text = callback.message.answer.await_args_list[0].args[0]
+    assert "🕒 <b>Недавние продукты • страница 1</b>" in text
     assert callback.message.answer.await_args.kwargs["parse_mode"] == "HTML"
 
 
@@ -797,7 +797,7 @@ def test_format_my_products_text_uses_meal_report_bold_style_and_escapes_html():
 
     text = meals._format_my_products_text([item], page=1)
 
-    assert "📦 <b>Мои продукты • страница 1</b>" in text
+    assert "🕒 <b>Недавние продукты • страница 1</b>" in text
     assert "1️⃣ <b>Салат &lt;Курочка&gt;</b>" in text
     assert "<b>120 г • 67 ккал</b>" in text
     assert "<i>Б 3.1 / Ж 5.3 / У 1.7</i>" in text
@@ -960,6 +960,10 @@ def test_my_product_meals_keyboard_uses_full_emoji_numbers_on_later_pages():
     assert keyboard.inline_keyboard[1][0].text.startswith("🔟 ")
     assert keyboard.inline_keyboard[2][0].text.startswith("1️⃣1️⃣ ")
     assert keyboard.inline_keyboard[3][0].text.startswith("1️⃣2️⃣ ")
+    assert [button.text for button in keyboard.inline_keyboard[4]] == [
+        "⬅️ Предыдущая страница",
+        "➡️ Следующая страница",
+    ]
     assert keyboard.inline_keyboard[-1][0].text == "🔎 Поиск продукта"
 
 
