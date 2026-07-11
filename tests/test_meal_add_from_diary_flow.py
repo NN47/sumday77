@@ -181,8 +181,8 @@ def test_show_input_methods_sends_add_menu():
     state = _DummyState()
 
     with patch("handlers.meals.push_menu_stack") as push_stack, patch(
-        "handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]
-    ):
+        "handlers.meals.MealRepository.get_meals_for_date", return_value=[]
+    ), patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]):
         asyncio.run(meals._show_input_methods(message, state))
 
     state.set_state.assert_awaited_once_with(meals.MealEntryStates.choosing_meal_type)
@@ -214,8 +214,8 @@ def test_show_input_methods_points_to_my_product_products_when_available():
     )
 
     with patch("handlers.meals.push_menu_stack"), patch(
-        "handlers.meals.MealRepository.get_recent_unique_meals", return_value=[meal]
-    ):
+        "handlers.meals.MealRepository.get_meals_for_date", return_value=[]
+    ), patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[meal]):
         asyncio.run(meals._show_input_methods(message, state))
 
     assert message.answer.await_count == 2
@@ -230,6 +230,50 @@ def test_show_input_methods_points_to_my_product_products_when_available():
     assert "• 📋 Анализ этикетки" not in methods_text
     assert "• ✍️ Внести вручную" not in methods_text
 
+
+
+def test_reopening_filled_meal_from_diary_shows_existing_products_before_new_add():
+    target_date = date(2026, 4, 8)
+    callback = _build_callback(f"add_meal:snack:{target_date.isoformat()}")
+    state = _DummyState()
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Яблоко",
+        description="Яблоко",
+        products_json='[{"name":"Яблоко","grams":180,"kcal":94,"protein":0.5,"fat":0.3,"carbs":25.0}]',
+        calories=94,
+        protein=0.5,
+        fat=0.3,
+        carbs=25.0,
+        meal_type=meals.MealType.SNACK.value,
+    )
+
+    with patch("handlers.meals.push_menu_stack") as push_stack, patch(
+        "handlers.meals.MealRepository.get_meals_for_date", return_value=[meal]
+    ) as get_meals:
+        asyncio.run(meals.add_meal_from_diary_block(callback, state))
+
+    callback.answer.assert_awaited_once()
+    get_meals.assert_called_once_with("12345", target_date)
+    assert state._data["meal_type"] == meals.MealType.SNACK.value
+    assert state._data["entry_date"] == target_date.isoformat()
+    assert state._data["meal_entry_open"] is True
+    push_stack.assert_called_once_with(callback.message.bot, meals.kbju_add_menu)
+    assert callback.message.answer.await_count == 3
+    current_meal_text = callback.message.answer.await_args_list[1].args[0]
+    assert "🍱 <b>Уже в этом приёме пищи</b>" in current_meal_text
+    assert "📅 <b>Дата:</b> 08.04.2026" in current_meal_text
+    assert "🍎 <b>Перекус • 94 ккал</b>" in current_meal_text
+    assert "• <b>Яблоко</b> (180 г)" in current_meal_text
+    assert "<b>Итого перекус:</b>" in current_meal_text
+    keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [["✏️ Редактировать", "📦 Мои продукты"]]
+    assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
+        ["edit_meal:snack:2026-04-08", "meal_entry_my_products:snack:1"]
+    ]
+    add_menu_call = callback.message.answer.await_args_list[2]
+    assert add_menu_call.args[0] == "Можно добавить ещё продукт в этот приём пищи или завершить его."
+    assert add_menu_call.kwargs["reply_markup"] == meals.kbju_add_menu
 
 def test_add_meal_from_diary_block_sets_context_and_opens_methods():
     target_date = date.today().isoformat()
