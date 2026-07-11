@@ -54,7 +54,7 @@ _WEIGHT_QUICK_DELTAS_BY_LABEL = {
 _WEIGHT_QUICK_DELTAS_BY_LABEL.update({"-1": -1.0, "+1": 1.0})
 
 
-def _build_weight_quick_adjust_keyboard(_base_weight: float) -> InlineKeyboardMarkup:
+def _build_weight_quick_adjust_keyboard(_base_weight: float, *, has_changes: bool = False) -> InlineKeyboardMarkup:
     """Инлайн-клавиатура быстрых изменений веса относительно текущего черновика."""
     delta_rows = [
         [-1.0, -0.5, 0.5, 1.0],
@@ -73,16 +73,10 @@ def _build_weight_quick_adjust_keyboard(_base_weight: float) -> InlineKeyboardMa
             ]
         )
 
-    keyboard.extend(
-        [
-            [InlineKeyboardButton(text="✍️ Ввести вручную", callback_data="weight_manual")],
-            [InlineKeyboardButton(text="✅ Сохранить", callback_data="weight_save")],
-            [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="weight_back"),
-                InlineKeyboardButton(text="❌ Отмена", callback_data="weight_cancel"),
-            ],
-        ]
-    )
+    keyboard.append([InlineKeyboardButton(text="✍️ Ввести вручную", callback_data="weight_manual")])
+    if has_changes:
+        keyboard.append([InlineKeyboardButton(text="✅ Сохранить", callback_data="weight_save")])
+    keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="weight_cancel")])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -719,16 +713,30 @@ async def _remember_weight_editor_message(state: FSMContext, sent_message):
         await state.update_data(weight_editor_message_id=message_id)
 
 
-async def _send_weight_editor_message(message: Message, state: FSMContext, text: str, base_weight: float):
-    """Отправляет стартовый экран редактора веса и запоминает его message_id."""
+async def _send_weight_editor_message(
+    message: Message,
+    state: FSMContext,
+    text: str,
+    base_weight: float,
+    *,
+    has_changes: bool = False,
+):
+    """Отправляет экран редактора веса и запоминает его message_id."""
     sent_message = await message.answer(
         text,
-        reply_markup=_build_weight_quick_adjust_keyboard(base_weight),
+        reply_markup=_build_weight_quick_adjust_keyboard(base_weight, has_changes=has_changes),
     )
     await _remember_weight_editor_message(state, sent_message)
 
 
-async def _update_weight_editor_from_message(message: Message, state: FSMContext, text: str, base_weight: float):
+async def _update_weight_editor_from_message(
+    message: Message,
+    state: FSMContext,
+    text: str,
+    base_weight: float,
+    *,
+    has_changes: bool = False,
+):
     """Обновляет сохранённое сообщение редактора веса или создаёт новое, если старого нет."""
     data = await state.get_data()
     editor_message_id = data.get("weight_editor_message_id")
@@ -738,13 +746,13 @@ async def _update_weight_editor_from_message(message: Message, state: FSMContext
                 chat_id=message.chat.id,
                 message_id=editor_message_id,
                 text=text,
-                reply_markup=_build_weight_quick_adjust_keyboard(base_weight),
+                reply_markup=_build_weight_quick_adjust_keyboard(base_weight, has_changes=has_changes),
             )
             return
         except Exception as e:
             logger.warning("Could not edit weight editor message %s: %s", editor_message_id, e)
 
-    await _send_weight_editor_message(message, state, text, base_weight)
+    await _send_weight_editor_message(message, state, text, base_weight, has_changes=has_changes)
 
 
 def _parse_weight_delta_callback(callback_data: str) -> Optional[float]:
@@ -967,6 +975,7 @@ async def _apply_weight_value_to_editor(
             current_weight_value,
         ),
         weight_value,
+        has_changes=True,
     )
 
 
@@ -1082,7 +1091,7 @@ async def handle_weight_inline_manual(callback: CallbackQuery, state: FSMContext
         )
     await callback.message.edit_text(
         text,
-        reply_markup=_build_weight_quick_adjust_keyboard(base_weight),
+        reply_markup=_build_weight_quick_adjust_keyboard(base_weight, has_changes=draft_weight is not None),
     )
 
 
@@ -1095,14 +1104,20 @@ async def handle_weight_inline_save(callback: CallbackQuery, state: FSMContext):
     await _save_weight_draft(callback.message, state, str(callback.from_user.id), data)
 
 
-@router.callback_query(lambda c: c.data in {"weight_back", "weight_cancel"})
+@router.callback_query(lambda c: c.data == "weight_cancel")
 async def handle_weight_inline_cancel(callback: CallbackQuery, state: FSMContext):
-    """Закрывает инлайн-редактор веса."""
+    """Закрывает быстрый редактор веса и возвращает главное меню."""
     await callback.answer()
     await state.clear()
-    push_menu_stack(callback.message.bot, weight_menu)
-    await callback.message.edit_text("Ввод веса отменён. Выбери действие ниже:")
-    await callback.message.answer("Выбери действие:", reply_markup=weight_menu)
+    push_menu_stack(callback.message.bot, main_menu)
+
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logger.warning("Could not delete weight editor message %s: %s", callback.message.message_id, e)
+        await callback.message.edit_text("Ввод веса отменён.")
+
+    await callback.message.answer("Главное меню", reply_markup=main_menu)
 
 
 @router.message(WeightStates.confirming_weight)
