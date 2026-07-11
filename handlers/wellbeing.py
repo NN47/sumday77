@@ -3,6 +3,7 @@ import logging
 from datetime import date
 
 from aiogram import Router
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -13,6 +14,7 @@ from utils.calendar_utils import build_notes_calendar_keyboard, show_calendar_ba
 from utils.keyboards import (
     WELLBEING_AND_PROCEDURES_BUTTON_TEXT,
     LEGACY_WELLBEING_AND_PROCEDURES_BUTTON_TEXT,
+    MAIN_MENU_BUTTON_ALIASES,
     main_menu,
     notes_main_menu,
     notes_rating_menu,
@@ -24,11 +26,11 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 RATING_LABELS = {
-    5: "😄 Отлично",
+    5: "😁 Отлично",
     4: "🙂 Нормально",
     3: "😐 Средне",
     2: "😞 Плохо",
-    1: "😫 Очень тяжёлый",
+    1: "😫 Очень тяжело",
 }
 
 FACTOR_LABELS = {
@@ -63,6 +65,7 @@ RATING_TEXT_TO_VALUE = {text: value for value, text in RATING_LABELS.items()}
 
 
 @router.message(
+    StateFilter(None),
     lambda m: m.text in {WELLBEING_AND_PROCEDURES_BUTTON_TEXT, LEGACY_WELLBEING_AND_PROCEDURES_BUTTON_TEXT}
 )
 async def open_notes_section(message: Message, state: FSMContext):
@@ -91,8 +94,7 @@ async def show_notes_day(message: Message, user_id: str, target_date: date):
         text = (
             "📝 Заметки дня\n\n"
             "Здесь ты можешь коротко отметить самочувствие, важные события и настроение за день 💛\n\n"
-            "Эти заметки учитываются в ИИ-анализе, чтобы рекомендации были точнее.\n\n"
-            "📝 Как прошёл день?"
+            "Эти заметки учитываются в ИИ-анализе, чтобы рекомендации были точнее."
         )
         keyboard = notes_main_menu
 
@@ -105,7 +107,8 @@ def build_factors_keyboard(selected: list[str]) -> InlineKeyboardMarkup:
         label = FACTOR_LABELS[factor_key]
         prefix = "✅ " if factor_key in selected else ""
         rows.append([InlineKeyboardButton(text=f"{prefix}{label}", callback_data=callback_name)])
-    rows.append([InlineKeyboardButton(text="✅ Продолжить", callback_data="done_factors")])
+    if selected:
+        rows.append([InlineKeyboardButton(text="✅ Продолжить", callback_data="done_factors")])
     rows.append([InlineKeyboardButton(text="⏭ Пропустить", callback_data="skip_factors")])
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_rating")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -132,7 +135,7 @@ async def start_note_flow(message: Message, state: FSMContext, target_date: date
     )
 
     await message.answer(
-        "📝 Как прошёл день?\n\nВыбери вариант:",
+        "📝 Как ты себя чувствуешь?\n\nВыбери вариант:",
         reply_markup=notes_rating_menu,
     )
 
@@ -143,7 +146,7 @@ async def edit_or_add_note(callback: CallbackQuery, state: FSMContext):
     await start_note_flow(callback.message, state, date.today(), user_id=str(callback.from_user.id))
 
 
-@router.message(lambda m: m.text in {"➕ Добавить запись", "✏️ Изменить"})
+@router.message(StateFilter(None), lambda m: m.text in {"➕ Добавить запись", "✏️ Изменить"})
 async def edit_or_add_note_message(message: Message, state: FSMContext):
     await start_note_flow(message, state, date.today(), user_id=str(message.from_user.id))
 
@@ -155,7 +158,7 @@ async def edit_note_from_calendar(callback: CallbackQuery, state: FSMContext):
     await start_note_flow(callback.message, state, target_date, user_id=str(callback.from_user.id))
 
 
-@router.callback_query(lambda c: c.data.startswith("note_rate_"))
+@router.callback_query(WellbeingStates.note_rating, lambda c: c.data.startswith("note_rate_"))
 async def select_rating(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     rating = int(callback.data.rsplit("_", 1)[1])
@@ -163,8 +166,8 @@ async def select_rating(callback: CallbackQuery, state: FSMContext):
     await state.update_data(day_rating=rating, factors=data.get("factors", []))
     await state.set_state(WellbeingStates.note_factors)
     await callback.message.answer(
-        "Что повлияло на день? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
-        reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", []))),
+        "Что повлияло на самочувствие? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
+        reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", [])), show_continue=bool(data.get("factors", []))),
     )
 
 
@@ -175,12 +178,12 @@ async def select_rating_message(message: Message, state: FSMContext):
     await state.update_data(day_rating=rating, factors=data.get("factors", []))
     await state.set_state(WellbeingStates.note_factors)
     await message.answer(
-        "Что повлияло на день? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
-        reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", []))),
+        "Что повлияло на самочувствие? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
+        reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", [])), show_continue=bool(data.get("factors", []))),
     )
 
 
-@router.callback_query(lambda c: c.data in FACTOR_CALLBACK_TO_KEY)
+@router.callback_query(WellbeingStates.note_factors, lambda c: c.data in FACTOR_CALLBACK_TO_KEY)
 async def toggle_factor(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     factor = FACTOR_CALLBACK_TO_KEY[callback.data]
@@ -192,7 +195,7 @@ async def toggle_factor(callback: CallbackQuery, state: FSMContext):
         selected.append(factor)
     await state.update_data(factors=selected)
     await callback.message.answer(
-        "Что повлияло на день? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
+        "Что повлияло на самочувствие? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
         reply_markup=build_factors_keyboard(selected),
     )
 
@@ -206,6 +209,16 @@ def _build_factor_labels(selected: list[str]) -> list[str]:
     for custom_factor in custom_factors:
         labels.append(f"✅ ✍️ {custom_factor}")
     return labels
+
+
+@router.message(
+    StateFilter(WellbeingStates.note_rating, WellbeingStates.note_factors, WellbeingStates.note_text),
+    lambda m: (m.text or "").strip() in MAIN_MENU_BUTTON_ALIASES,
+)
+async def cancel_note_flow_to_main_menu(message: Message, state: FSMContext):
+    """Прерывает создание заметки и очищает временные данные."""
+    await state.clear()
+    await message.answer("Возврат в меню.", reply_markup=main_menu)
 
 
 @router.message(WellbeingStates.note_factors)
@@ -228,7 +241,7 @@ async def toggle_factor_message(message: Message, state: FSMContext):
         return
     if text == "⬅️ Назад":
         await state.set_state(WellbeingStates.note_rating)
-        await message.answer("📝 Как прошёл день?\n\nВыбери вариант:", reply_markup=notes_rating_menu)
+        await message.answer("📝 Как ты себя чувствуешь?\n\nВыбери вариант:", reply_markup=notes_rating_menu)
         return
     if text == "✍️ Свой вариант":
         await message.answer("Напиши свой фактор одним сообщением, и я добавлю его в список.")
@@ -253,8 +266,8 @@ async def toggle_factor_message(message: Message, state: FSMContext):
         selected.append(factor)
     await state.update_data(factors=selected)
     await message.answer(
-        "Что повлияло на день? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
-        reply_markup=build_notes_factors_menu(_build_factor_labels(selected)),
+        "Что повлияло на самочувствие? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
+        reply_markup=build_notes_factors_menu(_build_factor_labels(selected), show_continue=bool(selected)),
     )
 
 
@@ -264,7 +277,7 @@ async def note_rating_back(message: Message, state: FSMContext):
     await show_notes_day(message, str(message.from_user.id), date.today())
 
 
-@router.callback_query(lambda c: c.data in {"done_factors", "skip_factors"})
+@router.callback_query(WellbeingStates.note_factors, lambda c: c.data in {"done_factors", "skip_factors"})
 async def done_factors_step(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     if callback.data == "skip_factors":
@@ -316,7 +329,7 @@ async def persist_note(message: Message, state: FSMContext, user_id: str | None 
     await message.answer(msg, reply_markup=notes_main_menu)
 
 
-@router.callback_query(lambda c: c.data in {"save_note", "skip_note"})
+@router.callback_query(WellbeingStates.note_text, lambda c: c.data in {"save_note", "skip_note"})
 async def finalize_note(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     if callback.data == "skip_note":
@@ -331,21 +344,21 @@ async def finalize_note_message(message: Message, state: FSMContext):
     await persist_note(message, state, user_id=str(message.from_user.id))
 
 
-@router.callback_query(lambda c: c.data == "back_to_rating")
+@router.callback_query(WellbeingStates.note_factors, lambda c: c.data == "back_to_rating")
 async def back_to_rating(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(WellbeingStates.note_rating)
-    await callback.message.answer("📝 Как прошёл день?\n\nВыбери вариант:", reply_markup=notes_rating_menu)
+    await callback.message.answer("📝 Как ты себя чувствуешь?\n\nВыбери вариант:", reply_markup=notes_rating_menu)
 
 
-@router.callback_query(lambda c: c.data == "back_to_factors")
+@router.callback_query(WellbeingStates.note_text, lambda c: c.data == "back_to_factors")
 async def back_to_factors(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
     await state.set_state(WellbeingStates.note_factors)
     await callback.message.answer(
-        "Что повлияло на день? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
-        reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", []))),
+        "Что повлияло на самочувствие? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
+        reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", [])), show_continue=bool(data.get("factors", []))),
     )
 
 
@@ -432,8 +445,8 @@ async def note_text_back(message: Message, state: FSMContext):
     data = await state.get_data()
     await state.set_state(WellbeingStates.note_factors)
     await message.answer(
-        "Что повлияло на день? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
-        reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", []))),
+        "Что повлияло на самочувствие? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
+        reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", [])), show_continue=bool(data.get("factors", []))),
     )
 
 
