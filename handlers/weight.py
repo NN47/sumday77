@@ -18,6 +18,7 @@ from utils.keyboards import (
     push_menu_stack,
     main_menu_button,
     other_day_menu,
+    quick_actions_inline,
 )
 from database.repositories import WeightRepository, AnalyticsRepository
 from states.user_states import WeightStates
@@ -36,6 +37,10 @@ router = Router()
 
 
 WEIGHT_QUICK_DELTAS = (-1.0, -0.5, 0.5, 1.0, -0.2, -0.1, 0.1, 0.2)
+WEIGHT_SOURCE_QUICK_ADD = "quick_add"
+WEIGHT_SOURCE_WEIGHT_SECTION = "weight_section"
+WEIGHT_SOURCE_CALENDAR = "calendar"
+
 
 
 def _format_weight_delta_button(delta_kg: float) -> str:
@@ -614,7 +619,12 @@ def format_measurements_summary(measurements) -> str:
     return ", ".join(parts) if parts else "нет данных"
 
 
-async def start_add_weight_for_user(message: Message, state: FSMContext, user_id: str):
+async def start_add_weight_for_user(
+    message: Message,
+    state: FSMContext,
+    user_id: str,
+    source: str = WEIGHT_SOURCE_WEIGHT_SECTION,
+):
     """Начинает процесс добавления веса за сегодня для указанного пользователя."""
     logger.info(f"User {user_id} started adding weight for today")
 
@@ -630,6 +640,7 @@ async def start_add_weight_for_user(message: Message, state: FSMContext, user_id
             entry_date=target_date.isoformat(),
             weight_id=existing_weight.id,
             quick_base_weight=base_weight or 70.0,
+            weight_entry_source=source,
         )
         await state.set_state(WeightStates.entering_weight)
         await _send_weight_editor_message(
@@ -650,6 +661,7 @@ async def start_add_weight_for_user(message: Message, state: FSMContext, user_id
             entry_date=target_date.isoformat(),
             weight_id=None,
             quick_base_weight=base_weight or 70.0,
+            weight_entry_source=source,
         )
         await state.set_state(WeightStates.entering_weight)
         await _send_weight_editor_message(
@@ -663,7 +675,12 @@ async def start_add_weight_for_user(message: Message, state: FSMContext, user_id
 @router.message(lambda m: m.text == "➕ Добавить вес")
 async def add_weight_start(message: Message, state: FSMContext):
     """Начинает процесс добавления веса за сегодня."""
-    await start_add_weight_for_user(message, state, str(message.from_user.id))
+    await start_add_weight_for_user(
+        message,
+        state,
+        str(message.from_user.id),
+        source=WEIGHT_SOURCE_WEIGHT_SECTION,
+    )
 
 
 @router.message(WeightStates.choosing_date_for_weight)
@@ -695,8 +712,13 @@ async def handle_weight_date_choice(message: Message, state: FSMContext):
             await message.answer("Выбери дату из меню или введи в формате ДД.ММ.ГГГГ")
             return
     
+    data = await state.get_data()
     base_weight = _resolve_base_weight(str(message.from_user.id))
-    await state.update_data(entry_date=target_date.isoformat(), quick_base_weight=base_weight or 70.0)
+    await state.update_data(
+        entry_date=target_date.isoformat(),
+        quick_base_weight=base_weight or 70.0,
+        weight_entry_source=data.get("weight_entry_source", WEIGHT_SOURCE_WEIGHT_SECTION),
+    )
     await state.set_state(WeightStates.entering_weight)
     await _send_weight_editor_message(
         message,
@@ -871,6 +893,71 @@ async def _show_weight_input_screen_from_state(message: Message, state: FSMConte
     )
 
 
+async def _send_main_menu_after_quick_weight(message: Message, user_id: str):
+    """Возвращает пользователя в главное меню после быстрого добавления веса."""
+    from utils.progress_formatters import (
+        format_progress_block,
+        format_water_progress_block,
+    )
+
+    progress_text = format_progress_block(user_id)
+    water_progress_text = format_water_progress_block(user_id)
+    today_line = f"📅 <b>{date.today().strftime('%d.%m.%Y')}</b>"
+    await message.answer(
+        f"{today_line}\n\n{progress_text}\n\n{water_progress_text}",
+        reply_markup=quick_actions_inline,
+        parse_mode="HTML",
+    )
+    await message.answer("⬇️ Кнопки управления", reply_markup=main_menu, disable_notification=True)
+
+
+async def _return_after_weight_cancel(
+    message: Message,
+    state: FSMContext,
+    source: str | None,
+    user_id: str | None = None,
+):
+    """Возвращает пользователя в нужный раздел после отмены ввода веса."""
+    await state.clear()
+    if source == WEIGHT_SOURCE_QUICK_ADD:
+        push_menu_stack(message.bot, main_menu)
+        await message.answer("Ввод веса отменён.")
+        await _send_main_menu_after_quick_weight(message, user_id or str(message.chat.id))
+        return
+
+    push_menu_stack(message.bot, weight_menu)
+    await message.answer("Выбери действие:", reply_markup=weight_menu)
+
+
+async def _show_weight_saved_result(
+    message: Message,
+    state: FSMContext,
+    user_id: str,
+    source: str | None,
+    success_text: str,
+    *,
+    entry_date: date,
+    updated_weight=None,
+):
+    """Показывает результат сохранения и возвращает в сценарий, из которого открыли редактор."""
+    await state.clear()
+    if source == WEIGHT_SOURCE_QUICK_ADD:
+        push_menu_stack(message.bot, main_menu)
+        await message.answer(success_text)
+        await _send_main_menu_after_quick_weight(message, user_id)
+        return
+
+    if source == WEIGHT_SOURCE_CALENDAR and updated_weight is not None:
+        await message.answer(
+            success_text,
+            reply_markup=build_weight_day_actions_keyboard(updated_weight, entry_date),
+        )
+        return
+
+    push_menu_stack(message.bot, weight_menu)
+    await message.answer(success_text, reply_markup=weight_menu)
+
+
 async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, data: dict):
     """Сохраняет черновик веса из FSM."""
     weight_value = data.get("draft_weight_value")
@@ -884,27 +971,32 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
     previous_weight_value = data.get("draft_previous_weight_value")
     previous_weight_value = _to_float_weight(previous_weight_value)
     stored_weight_value = f"{weight_value:.1f}"
+    source = data.get("weight_entry_source", WEIGHT_SOURCE_WEIGHT_SECTION)
 
     try:
         if weight_id:
             success = WeightRepository.update_weight(weight_id, user_id, stored_weight_value)
             if success:
                 logger.info(f"User {user_id} updated weight {weight_id}: {weight_value} kg on {entry_date}")
-                await state.clear()
                 delta_text = ""
                 if previous_weight_value is not None:
                     delta = weight_value - previous_weight_value
                     direction = "📉" if delta < 0 else "📈" if delta > 0 else "⚖️"
                     delta_text = f"\n\n<b>Изменение:</b>\n{delta:+.2f} кг с прошлой записи {direction}"
-                await message.answer(
-                    f"✅ <b>Вес обновлён!</b>\n\n"
-                    f"⚖️ <b>{weight_value:.1f} кг</b>\n"
-                    f"📅 {entry_date.strftime('%d.%m.%Y')}"
-                    f"{delta_text}",
-                    reply_markup=build_weight_day_actions_keyboard(
-                        WeightRepository.get_weight_for_date(user_id, entry_date),
-                        entry_date,
+                updated_weight = WeightRepository.get_weight_for_date(user_id, entry_date)
+                await _show_weight_saved_result(
+                    message,
+                    state,
+                    user_id,
+                    source,
+                    (
+                        f"✅ <b>Вес обновлён!</b>\n\n"
+                        f"⚖️ <b>{weight_value:.1f} кг</b>\n"
+                        f"📅 {entry_date.strftime('%d.%m.%Y')}"
+                        f"{delta_text}"
                     ),
+                    entry_date=entry_date,
+                    updated_weight=updated_weight,
                 )
             else:
                 await message.answer("⚠️ Не удалось обновить запись.")
@@ -914,8 +1006,6 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
             logger.info(f"User {user_id} saved weight: {weight_value} kg on {entry_date}")
             AnalyticsRepository.track_event(user_id, "add_weight", section="weight")
 
-            await state.clear()
-            push_menu_stack(message.bot, weight_menu)
             delta_text = "\n<b>Изменение:</b>\nНедостаточно данных"
             comment_text = ""
             if previous_weight_value is not None:
@@ -928,12 +1018,20 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
                     comment_text = "\n\n<b>Вес немного вырос.</b>\nОбрати внимание на питание и воду."
                 else:
                     comment_text = "\n\n<b>Вес без изменений.</b> Продолжай в том же ритме."
-            await message.answer(
-                f"✅ <b>Вес сохранён!</b>\n\n"
-                f"⚖️ <b>{weight_value:.1f} кг</b>"
-                f"{delta_text}"
-                f"{comment_text}",
-                reply_markup=weight_menu,
+            saved_weight = WeightRepository.get_weight_for_date(user_id, entry_date)
+            await _show_weight_saved_result(
+                message,
+                state,
+                user_id,
+                source,
+                (
+                    f"✅ <b>Вес сохранён!</b>\n\n"
+                    f"⚖️ <b>{weight_value:.1f} кг</b>"
+                    f"{delta_text}"
+                    f"{comment_text}"
+                ),
+                entry_date=entry_date,
+                updated_weight=saved_weight,
             )
     except Exception as e:
         logger.error(f"Error saving/updating weight: {e}", exc_info=True)
@@ -1007,9 +1105,12 @@ async def handle_weight_input(message: Message, state: FSMContext):
         return
 
     if text == "⬅️ Назад":
-        await state.clear()
-        push_menu_stack(message.bot, weight_menu)
-        await message.answer("Выбери действие:", reply_markup=weight_menu)
+        await _return_after_weight_cancel(
+            message,
+            state,
+            data.get("weight_entry_source", WEIGHT_SOURCE_WEIGHT_SECTION),
+            user_id,
+        )
         return
 
     if text == "✍️ Ввести вручную":
@@ -1108,8 +1209,7 @@ async def handle_weight_inline_save(callback: CallbackQuery, state: FSMContext):
 async def handle_weight_inline_cancel(callback: CallbackQuery, state: FSMContext):
     """Закрывает быстрый редактор веса и возвращает главное меню."""
     await callback.answer()
-    await state.clear()
-    push_menu_stack(callback.message.bot, main_menu)
+    data = await state.get_data()
 
     try:
         await callback.message.delete()
@@ -1117,7 +1217,12 @@ async def handle_weight_inline_cancel(callback: CallbackQuery, state: FSMContext
         logger.warning("Could not delete weight editor message %s: %s", callback.message.message_id, e)
         await callback.message.edit_text("Ввод веса отменён.")
 
-    await callback.message.answer("Главное меню", reply_markup=main_menu)
+    await _return_after_weight_cancel(
+        callback.message,
+        state,
+        data.get("weight_entry_source", WEIGHT_SOURCE_WEIGHT_SECTION),
+        str(callback.from_user.id),
+    )
 
 
 @router.message(WeightStates.confirming_weight)
@@ -1132,9 +1237,12 @@ async def handle_weight_confirmation(message: Message, state: FSMContext):
         return
 
     if text == "⬅️ Назад":
-        await state.clear()
-        push_menu_stack(message.bot, weight_menu)
-        await message.answer("Выбери действие:", reply_markup=weight_menu)
+        await _return_after_weight_cancel(
+            message,
+            state,
+            data.get("weight_entry_source", WEIGHT_SOURCE_WEIGHT_SECTION),
+            user_id,
+        )
         return
 
     if text != "✅ Сохранить":
@@ -1545,6 +1653,7 @@ async def add_weight_from_calendar(callback: CallbackQuery, state: FSMContext):
             entry_date=target_date.isoformat(),
             weight_id=existing_weight.id,
             quick_base_weight=base_weight or 70.0,
+            weight_entry_source=WEIGHT_SOURCE_CALENDAR,
         )
         await state.set_state(WeightStates.entering_weight)
         await _send_weight_editor_message(
@@ -1565,6 +1674,7 @@ async def add_weight_from_calendar(callback: CallbackQuery, state: FSMContext):
             entry_date=target_date.isoformat(),
             weight_id=None,
             quick_base_weight=base_weight or 70.0,
+            weight_entry_source=WEIGHT_SOURCE_CALENDAR,
         )
         await state.set_state(WeightStates.entering_weight)
         await _send_weight_editor_message(
@@ -1630,6 +1740,7 @@ async def edit_weight_from_calendar(callback: CallbackQuery, state: FSMContext):
         entry_date=target_date.isoformat(),
         weight_id=weight.id,
         quick_base_weight=base_weight or 70.0,
+        weight_entry_source=WEIGHT_SOURCE_CALENDAR,
     )
     await state.set_state(WeightStates.entering_weight)
     

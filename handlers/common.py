@@ -213,8 +213,13 @@ async def quick_weight(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     # В callback.message.from_user находится бот, поэтому явно передаём id пользователя,
     # который нажал кнопку. Иначе поиск последнего веса идёт по id бота и даёт "нет данных".
-    from handlers.weight import start_add_weight_for_user
-    await start_add_weight_for_user(callback.message, state, str(callback.from_user.id))
+    from handlers.weight import WEIGHT_SOURCE_QUICK_ADD, start_add_weight_for_user
+    await start_add_weight_for_user(
+        callback.message,
+        state,
+        str(callback.from_user.id),
+        source=WEIGHT_SOURCE_QUICK_ADD,
+    )
 
 
 @router.callback_query(lambda c: c.data == "quick_wellbeing")
