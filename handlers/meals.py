@@ -855,7 +855,15 @@ def _search_my_products(items: list[MyProductItem], query: str) -> list[MyProduc
     return [item for item in items if normalized_query in (item.title or "").casefold()]
 
 
-def _build_my_products_keyboard(my_product_meals: list[MyProductItem], meal_type: str, page: int, has_prev: bool, has_next: bool) -> InlineKeyboardMarkup:
+def _build_my_products_keyboard(
+    my_product_meals: list[MyProductItem],
+    meal_type: str,
+    page: int,
+    has_prev: bool,
+    has_next: bool,
+    *,
+    back_callback_data: str | None = None,
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for offset, item in enumerate(my_product_meals, start=1):
         title = _truncate_my_product_name(item.title)
@@ -879,6 +887,8 @@ def _build_my_products_keyboard(my_product_meals: list[MyProductItem], meal_type
         rows.append(nav_row)
 
     rows.append([InlineKeyboardButton(text="🔎 Поиск продукта", callback_data=f"my_products_search_start:{meal_type}")])
+    if back_callback_data:
+        rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback_data)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -1848,6 +1858,7 @@ async def _show_my_products_page(
     *,
     user_id: str | None = None,
     edit_message: bool = False,
+    back_callback_data: str | None = None,
 ) -> bool:
     user_id = user_id or str(message.from_user.id)
     source_meals = MealRepository.get_recent_unique_meals(user_id, limit=64)
@@ -1862,7 +1873,14 @@ async def _show_my_products_page(
     has_next = page < total_pages
     await state.update_data(my_products_page=page, meal_type=meal_type)
     text = _format_my_products_text(page_items, page)
-    reply_markup = _build_my_products_keyboard(page_items, meal_type, page, has_prev, has_next)
+    reply_markup = _build_my_products_keyboard(
+        page_items,
+        meal_type,
+        page,
+        has_prev,
+        has_next,
+        back_callback_data=back_callback_data,
+    )
     if edit_message:
         await message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
     else:
@@ -2152,17 +2170,53 @@ async def meal_entry_my_products(callback: CallbackQuery, state: FSMContext):
     except (TypeError, ValueError):
         page = 1
 
+    data = await state.get_data()
+    entry_date_raw = str(data.get("entry_date") or "").strip()
+    opened_from_current_meal = bool(entry_date_raw and data.get("meal_type") == meal_type)
+    if opened_from_current_meal:
+        await state.update_data(
+            my_products_return_to_meal_entry=True,
+            my_products_return_meal_type=meal_type,
+            my_products_return_entry_date=entry_date_raw,
+        )
+        await callback.message.answer("Открываю «Мои продукты».", reply_markup=ReplyKeyboardRemove())
+
     shown = await _show_my_products_page(
         callback.message,
         state,
         meal_type=meal_type,
         page=page,
         user_id=str(callback.from_user.id),
+        back_callback_data="my_products_back_to_current_meal" if opened_from_current_meal else None,
     )
     if not shown:
         await callback.message.answer(
             "Пока нет моих продуктов. Добавь продукт любым способом — он появится здесь."
         )
+
+
+@router.callback_query(lambda c: c.data == "my_products_back_to_current_meal")
+async def my_products_back_to_current_meal(callback: CallbackQuery, state: FSMContext):
+    """Возвращает из «Моих продуктов» в открытый текущий приём пищи."""
+    await callback.answer()
+    data = await state.get_data()
+    meal_type = normalize_meal_type(
+        data.get("my_products_return_meal_type") or data.get("meal_type"),
+        fallback=MealType.SNACK.value,
+    )
+    entry_date_raw = str(data.get("my_products_return_entry_date") or data.get("entry_date") or "").strip()
+    try:
+        entry_date = date.fromisoformat(entry_date_raw) if entry_date_raw else date.today()
+    except ValueError:
+        entry_date = date.today()
+
+    await _keep_meal_entry_open_after_save(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
+        entry_date=entry_date,
+        meal_type=meal_type,
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("my_products_search_start:"))
@@ -2330,6 +2384,12 @@ async def my_product_back(callback: CallbackQuery, state: FSMContext):
 async def my_products_page(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     _, meal_type, page_str = callback.data.split(":", maxsplit=2)
+    data = await state.get_data()
+    back_callback_data = (
+        "my_products_back_to_current_meal"
+        if data.get("my_products_return_to_meal_entry")
+        else None
+    )
     await _show_my_products_page(
         callback.message,
         state,
@@ -2337,6 +2397,7 @@ async def my_products_page(callback: CallbackQuery, state: FSMContext):
         page=int(page_str),
         user_id=str(callback.from_user.id),
         edit_message=True,
+        back_callback_data=back_callback_data,
     )
 
 
