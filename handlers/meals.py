@@ -1286,10 +1286,39 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
     await _return_to_food_diary(message, str(message.from_user.id), target_date)
 
 
+async def _restore_current_meal_entry_screen(
+    message: Message,
+    state: FSMContext,
+    data: dict | None = None,
+    *,
+    user_id: str | None = None,
+) -> None:
+    """Полностью восстанавливает экран текущего открытого приёма пищи."""
+    data = data if data is not None else await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date_str = data.get("entry_date")
+    try:
+        entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
+    except ValueError:
+        entry_date = date.today()
+
+    await _keep_meal_entry_open_after_save(
+        message,
+        state,
+        user_id=user_id or str(message.from_user.id),
+        entry_date=entry_date,
+        meal_type=meal_type,
+    )
+
+
 async def _return_to_add_methods_from_method_input(message: Message, state: FSMContext) -> None:
-    """Возвращает из выбранного способа ввода к меню способов добавления без анализа текста."""
+    """Возвращает из выбранного способа ввода без анализа текста."""
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    if data.get("meal_entry_open"):
+        await _restore_current_meal_entry_screen(message, state, data)
+        return
+
     await state.set_state(MealEntryStates.choosing_meal_type)
     await state.update_data(meal_type=meal_type, pending_add_method=None)
     await _show_input_methods(message, state, user_id=str(message.from_user.id))
@@ -2752,6 +2781,9 @@ async def handle_meal_type_menu_navigation(message: Message, state: FSMContext):
     if data.get("in_my_product_menu"):
         meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
         await state.update_data(in_my_product_menu=False, meal_type=meal_type, pending_add_method=None)
+        if data.get("meal_entry_open"):
+            await _restore_current_meal_entry_screen(message, state, data)
+            return
         await _show_input_methods(message, state, user_id=str(message.from_user.id))
         return
 
@@ -2890,8 +2922,12 @@ async def custom_product_back(callback: CallbackQuery, state: FSMContext):
     """Возвращает из «Моего продукта» к способам добавления."""
     await callback.answer()
     _, meal_type = callback.data.split(":", maxsplit=1)
+    data = await state.get_data()
     await state.set_state(MealEntryStates.choosing_meal_type)
-    await state.update_data(meal_type=meal_type, pending_add_method=None)
+    await state.update_data(meal_type=meal_type, pending_add_method=None, in_my_product_menu=False)
+    if data.get("meal_entry_open"):
+        await _restore_current_meal_entry_screen(callback.message, state, data, user_id=str(callback.from_user.id))
+        return
     await _show_input_methods(callback.message, state, user_id=str(callback.from_user.id))
 
 
@@ -3350,6 +3386,7 @@ async def _keep_meal_entry_open_after_save(
         entry_date=entry_date.isoformat(),
         meal_type=normalized_meal_type,
         pending_add_method=None,
+        meal_entry_open=True,
     )
 
     current_meal_items = [
