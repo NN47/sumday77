@@ -539,14 +539,12 @@ def test_my_product_menu_back_returns_to_add_methods():
     show_methods.assert_awaited_once_with(message, state, user_id="12345")
 
 
-def test_show_my_product_menu_keeps_add_methods_as_back_target():
+def test_show_my_product_menu_starts_custom_product_creation_for_legacy_callers():
     message = _build_message()
     message.from_user = SimpleNamespace(id=12345)
     state = _DummyState()
 
-    with patch("handlers.meals.push_menu_stack") as push_stack, patch(
-        "handlers.meals._get_custom_product_items", return_value=[]
-    ):
+    with patch("handlers.meals.push_menu_stack") as push_stack:
         asyncio.run(
             meals._show_my_product_menu(
                 message,
@@ -556,10 +554,58 @@ def test_show_my_product_menu_keeps_add_methods_as_back_target():
             )
         )
 
-    assert push_stack.call_args_list[0].args == (message.bot, meals.kbju_add_menu)
-    assert push_stack.call_args_list[1].args[0] is message.bot
-    assert message.answer.await_args.kwargs["reply_markup"] is push_stack.call_args_list[1].args[1]
+    push_stack.assert_called_once_with(message.bot, meals.kbju_add_menu)
+    state.set_state.assert_awaited_once_with(meals.MealEntryStates.custom_product_name)
+    assert state._data["meal_type"] == meals.MealType.SNACK.value
+    assert state._data["in_my_product_menu"] is False
+    assert "Выбери один из своих продуктов выше" not in message.answer.await_args.args[0]
 
+
+def test_manual_entry_starts_custom_product_creation_without_saved_products_menu():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    message.text = "✍️ Внести вручную"
+    state = _DummyState()
+    state._data["meal_type"] = meals.MealType.DINNER.value
+
+    with patch("handlers.meals._show_my_product_menu", new=AsyncMock()) as show_my_product, patch(
+        "handlers.meals.push_menu_stack"
+    ) as push_stack:
+        asyncio.run(meals.kbju_add_via_custom_product(message, state))
+
+    show_my_product.assert_not_awaited()
+    state.set_state.assert_awaited_once_with(meals.MealEntryStates.custom_product_name)
+    assert state._data["meal_type"] == meals.MealType.DINNER.value
+    assert state._data["custom_product"] == {}
+    assert state._data["pending_add_method"] is None
+    assert state._data["in_my_product_menu"] is False
+    push_stack.assert_called_once_with(message.bot, meals.kbju_add_menu)
+    message.answer.assert_awaited_once()
+    text = message.answer.await_args.args[0]
+    assert "Сейчас мы добавим твой продукт вручную" in text
+    assert "выбрать в разделе «📦 Мои продукты»" in text
+    assert "Выбери один из своих продуктов выше" not in text
+    assert "Создать продукт" not in text
+
+
+def test_custom_product_name_back_returns_to_add_methods_not_saved_products_menu():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    message.text = "⬅️ Назад"
+    state = _DummyState()
+    state._data["meal_type"] = meals.MealType.DINNER.value
+
+    with patch("handlers.meals._show_input_methods", new=AsyncMock()) as show_methods, patch(
+        "handlers.meals._show_my_product_menu", new=AsyncMock()
+    ) as show_my_product:
+        asyncio.run(meals.handle_custom_product_name(message, state))
+
+    show_my_product.assert_not_awaited()
+    state.set_state.assert_awaited_once_with(meals.MealEntryStates.choosing_meal_type)
+    assert state._data["custom_product"] == {}
+    assert state._data["pending_add_method"] is None
+    assert state._data["in_my_product_menu"] is False
+    show_methods.assert_awaited_once_with(message, state, user_id="12345")
 
 def test_meal_finish_button_returns_to_food_diary_for_entry_date():
     message = _build_message()

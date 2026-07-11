@@ -1020,8 +1020,26 @@ def _format_custom_product_name_step() -> str:
         1,
         "<b>Сейчас мы добавим твой продукт вручную.</b>\n\n"
         "Я по шагам попрошу <b>название</b>, затем <b>калории, белки, жиры, углеводы</b> "
-        "и <b>вес порции</b>. Так продукт сохранится, и в следующий раз его можно будет быстро выбрать из списка.\n\n"
+        "и <b>вес порции</b>. Так продукт сохранится, и в следующий раз его можно будет быстро "
+        "выбрать в разделе «📦 Мои продукты».\n\n"
         "<b>Для начала введи название продукта:</b>",
+    )
+
+
+async def _start_custom_product_creation(message: Message, state: FSMContext, *, meal_type: str) -> None:
+    """Сразу запускает мастер создания продукта вручную."""
+    await state.set_state(MealEntryStates.custom_product_name)
+    await state.update_data(
+        meal_type=meal_type,
+        custom_product={},
+        pending_add_method=None,
+        in_my_product_menu=False,
+    )
+    push_menu_stack(message.bot, kbju_add_menu)
+    await message.answer(
+        _format_custom_product_name_step(),
+        reply_markup=_build_custom_product_reply_keyboard(),
+        parse_mode="HTML",
     )
 
 
@@ -1308,39 +1326,8 @@ async def _show_my_product_menu(
     meal_type: str,
     user_id: str,
 ) -> None:
-    """Показывает продукты, созданные через «Внести вручную», и обычные кнопки действий."""
-    products = _get_custom_product_items(user_id, limit=64)
-    if products:
-        total_pages = max(1, math.ceil(len(products) / MY_PRODUCTS_PAGE_SIZE))
-        page = 1
-        page_items = products[:MY_PRODUCTS_PAGE_SIZE]
-        await message.answer(
-            _format_my_products_text(page_items, page, title="🧺 <b>Мои продукты"),
-            reply_markup=_build_custom_products_keyboard(
-                page_items,
-                meal_type,
-                page,
-                has_prev=False,
-                has_next=page < total_pages,
-            ),
-            parse_mode="HTML",
-        )
-        text = (
-            "<b>✍️ Внести вручную</b>\n\n"
-            "Выбери один из своих продуктов выше или создай новый продукт вручную."
-        )
-    else:
-        text = (
-            "<b>✍️ Внести вручную</b>\n\n"
-            "Здесь ты можешь сам внести свой продукт: название и КБЖУ на 100 г.\n"
-            "Нажми «➕ Создать продукт», чтобы добавить первый продукт."
-        )
-    await state.set_state(MealEntryStates.choosing_meal_type)
-    await state.update_data(meal_type=meal_type, pending_add_method=None, in_my_product_menu=True)
-    my_product_keyboard = _build_my_product_keyboard(meal_type)
-    push_menu_stack(message.bot, kbju_add_menu)
-    push_menu_stack(message.bot, my_product_keyboard)
-    await message.answer(text, reply_markup=my_product_keyboard, parse_mode="HTML")
+    """Совместимость со старыми вызовами: теперь «Внести вручную» сразу создаёт продукт."""
+    await _start_custom_product_creation(message, state, meal_type=meal_type)
 
 AI_TEMPORARY_UNAVAILABLE_TEXT = "Сервис AI сейчас временно перегружен. Попробуй ещё раз чуть позже."
 AI_QUOTA_UNAVAILABLE_TEXT = "⚠️ AI временно недоступен из-за лимита запросов."
@@ -3139,17 +3126,12 @@ async def kbju_add_via_gigachat(message: Message, state: FSMContext):
 
 @router.message(lambda m: m.text == "✍️ Внести вручную")
 async def kbju_add_via_custom_product(message: Message, state: FSMContext):
-    """Открывает выбор своего продукта или сценарий создания нового продукта."""
+    """Сразу запускает сценарий создания нового продукта вручную."""
     if not await _ensure_meal_type_selected(message, state, "custom"):
         return
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    await _show_my_product_menu(
-        message,
-        state,
-        meal_type=meal_type,
-        user_id=str(message.from_user.id),
-    )
+    await _start_custom_product_creation(message, state, meal_type=meal_type)
 
 
 @router.callback_query(lambda c: c.data.startswith("custom_product_back:"))
@@ -3333,9 +3315,9 @@ async def handle_custom_product_name(message: Message, state: FSMContext):
     if await _reroute_add_method_button_if_needed(message, state, text):
         return
     if text in BACK_BUTTON_TEXTS or text == "❌ Отмена":
-        data = await state.get_data()
-        meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-        await _show_my_product_menu(message, state, meal_type=meal_type, user_id=str(message.from_user.id))
+        await state.set_state(MealEntryStates.choosing_meal_type)
+        await state.update_data(custom_product={}, pending_add_method=None, in_my_product_menu=False)
+        await _show_input_methods(message, state, user_id=str(message.from_user.id))
         return
     if len(text) < 2:
         await message.answer("Название слишком короткое. Введите название продукта:", reply_markup=_build_custom_product_reply_keyboard())
@@ -3360,9 +3342,9 @@ async def _handle_custom_product_macro(
         await _go_to_previous_custom_product_step(message, state)
         return
     if text == "❌ Отмена":
-        data = await state.get_data()
-        meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-        await _show_my_product_menu(message, state, meal_type=meal_type, user_id=str(message.from_user.id))
+        await state.set_state(MealEntryStates.choosing_meal_type)
+        await state.update_data(custom_product={}, pending_add_method=None, in_my_product_menu=False)
+        await _show_input_methods(message, state, user_id=str(message.from_user.id))
         return
     value = _parse_non_negative_number(text)
     if value is None:
