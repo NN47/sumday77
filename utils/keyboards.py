@@ -129,24 +129,23 @@ notes_main_menu = ReplyKeyboardMarkup(
 
 notes_rating_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="😄 Отлично"), KeyboardButton(text="🙂 Нормально")],
+        [KeyboardButton(text="😁 Отлично"), KeyboardButton(text="🙂 Нормально")],
         [KeyboardButton(text="😐 Средне"), KeyboardButton(text="😞 Плохо")],
-        [KeyboardButton(text="😫 Очень тяжёлый")],
+        [KeyboardButton(text="😫 Очень тяжело")],
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,
 )
 
 
-def build_notes_factors_menu(factor_labels: list[str]) -> ReplyKeyboardMarkup:
+def build_notes_factors_menu(factor_labels: list[str], show_continue: bool = False) -> ReplyKeyboardMarkup:
     keyboard = [[KeyboardButton(text=label)] for label in factor_labels]
-    keyboard.extend(
-        [
-            [KeyboardButton(text="✍️ Свой вариант")],
-            [KeyboardButton(text="✅ Продолжить"), KeyboardButton(text="⏭ Пропустить")],
-            [KeyboardButton(text="⬅️ Назад"), main_menu_button],
-        ]
-    )
+    keyboard.append([KeyboardButton(text="✍️ Свой вариант")])
+    if show_continue:
+        keyboard.append([KeyboardButton(text="✅ Продолжить"), KeyboardButton(text="⏭ Пропустить")])
+    else:
+        keyboard.append([KeyboardButton(text="⏭ Пропустить")])
+    keyboard.append([KeyboardButton(text="⬅️ Назад"), main_menu_button])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
