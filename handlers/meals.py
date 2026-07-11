@@ -1867,9 +1867,38 @@ def _build_my_products_entry_keyboard(meal_type: str) -> InlineKeyboardMarkup:
 
 
 async def _show_input_methods(message: Message, state: FSMContext, *, user_id: str | None = None) -> None:
-    """Показывает меню способов добавления еды для уже выбранного типа приёма."""
+    """Показывает выбранный приём пищи или меню способов добавления еды."""
     await state.set_state(MealEntryStates.choosing_meal_type)
-    meal_type = normalize_meal_type((await state.get_data()).get("meal_type"), fallback=MealType.SNACK.value)
+    data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date_str = data.get("entry_date")
+    try:
+        entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
+    except ValueError:
+        entry_date = date.today()
+
+    current_meal_items = [
+        meal
+        for meal in MealRepository.get_meals_for_date(user_id or str(message.from_user.id), entry_date)
+        if normalize_meal_type(getattr(meal, "meal_type", None)) == meal_type
+    ]
+    if current_meal_items:
+        await _keep_meal_entry_open_after_save(
+            message,
+            state,
+            user_id=user_id or str(message.from_user.id),
+            entry_date=entry_date,
+            meal_type=meal_type,
+            current_meal_items=current_meal_items,
+        )
+        return
+
+    await state.update_data(
+        entry_date=entry_date.isoformat(),
+        meal_type=meal_type,
+        pending_add_method=None,
+        meal_entry_open=True,
+    )
     text = (
         "Теперь выбери способ добавления приёма пищи.\n\n"
         "💡 Если уже добавлял этот продукт — нажми «📦 Мои продукты»."
@@ -3439,6 +3468,7 @@ async def _keep_meal_entry_open_after_save(
     intro_lines: list[str] | None = None,
     parse_mode: str | None = None,
     show_my_product_before_intro: bool = False,
+    current_meal_items: list | None = None,
 ) -> None:
     """Оставляет пользователя внутри выбранного приёма пищи после сохранения продукта."""
     normalized_meal_type = normalize_meal_type(meal_type, fallback=MealType.SNACK.value)
@@ -3450,11 +3480,12 @@ async def _keep_meal_entry_open_after_save(
         meal_entry_open=True,
     )
 
-    current_meal_items = [
-        meal
-        for meal in MealRepository.get_meals_for_date(user_id, entry_date)
-        if normalize_meal_type(getattr(meal, "meal_type", None)) == normalized_meal_type
-    ]
+    if current_meal_items is None:
+        current_meal_items = [
+            meal
+            for meal in MealRepository.get_meals_for_date(user_id, entry_date)
+            if normalize_meal_type(getattr(meal, "meal_type", None)) == normalized_meal_type
+        ]
 
     if show_my_product_before_intro:
         await _show_my_products_page(
