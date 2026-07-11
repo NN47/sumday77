@@ -1572,3 +1572,79 @@ def test_add_meal_reply_button_uses_selected_calendar_day():
 
     reset_state.assert_called_once_with(message)
     start_flow.assert_awaited_once_with(message, date(2026, 4, 9), state)
+
+
+def test_back_from_ai_method_restores_open_meal_entry_screen():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    state = _DummyState()
+    state._data = {
+        "meal_type": meals.MealType.BREAKFAST.value,
+        "entry_date": "2026-04-08",
+        "meal_entry_open": True,
+    }
+    meal = SimpleNamespace(
+        id=11,
+        raw_query="Творог 150 г",
+        description=None,
+        products_json='[{"name":"Творог","grams":150,"kcal":180,"protein":24,"fat":7,"carbs":5}]',
+        calories=180,
+        protein=24,
+        fat=7,
+        carbs=5,
+        meal_type=meals.MealType.BREAKFAST.value,
+    )
+
+    with patch("handlers.meals.MealRepository.get_meals_for_date", return_value=[meal]), patch(
+        "handlers.meals.push_menu_stack"
+    ):
+        asyncio.run(meals._return_to_add_methods_from_method_input(message, state))
+
+    state.set_state.assert_awaited_with(meals.MealEntryStates.choosing_meal_type)
+    assert state._data["meal_type"] == meals.MealType.BREAKFAST.value
+    assert state._data["entry_date"] == "2026-04-08"
+    assert state._data["meal_entry_open"] is True
+    assert message.answer.await_count == 2
+    restored_text = message.answer.await_args_list[0].args[0]
+    assert "🍱 <b>Уже в этом приёме пищи</b>" in restored_text
+    assert "🍳 <b>Завтрак • 180 ккал</b>" in restored_text
+    assert "• <b>Творог</b> (150 г)" in restored_text
+    inline_keyboard = message.answer.await_args_list[0].kwargs["reply_markup"].inline_keyboard
+    assert [[button.text for button in row] for row in inline_keyboard] == [["✏️ Редактировать", "📦 Мои продукты"]]
+    assert message.answer.await_args_list[1].args[0] == "Можно добавить ещё продукт в этот приём пищи или завершить его."
+    assert message.answer.await_args_list[1].kwargs["reply_markup"] == meals.kbju_add_menu
+
+
+def test_back_from_manual_products_restores_open_meal_entry_screen():
+    message = _build_message()
+    message.text = "⬅️ Назад"
+    message.from_user = SimpleNamespace(id=12345)
+    state = _DummyState()
+    state._data = {
+        "meal_type": meals.MealType.LUNCH.value,
+        "entry_date": "2026-04-09",
+        "meal_entry_open": True,
+        "in_my_product_menu": True,
+    }
+    meal = SimpleNamespace(
+        id=12,
+        raw_query="Суп 300 г",
+        description=None,
+        products_json='[{"name":"Суп","grams":300,"kcal":210,"protein":10,"fat":8,"carbs":25}]',
+        calories=210,
+        protein=10,
+        fat=8,
+        carbs=25,
+        meal_type=meals.MealType.LUNCH.value,
+    )
+
+    with patch("handlers.meals.MealRepository.get_meals_for_date", return_value=[meal]), patch(
+        "handlers.meals.push_menu_stack"
+    ):
+        asyncio.run(meals.handle_meal_type_menu_navigation(message, state))
+
+    assert state._data["in_my_product_menu"] is False
+    restored_text = message.answer.await_args_list[0].args[0]
+    assert "🍱 <b>Уже в этом приёме пищи</b>" in restored_text
+    assert "🍲 <b>Обед • 210 ккал</b>" in restored_text
+    assert message.answer.await_args_list[1].args[0] == "Можно добавить ещё продукт в этот приём пищи или завершить его."
