@@ -106,6 +106,26 @@ class Meal(Base):
     date = Column(Date, default=date.today)
 
 
+class MealCompletionComment(Base):
+    """Короткий AI-комментарий к завершённому приёму пищи."""
+    __tablename__ = "meal_completion_comments"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    meal_id = Column(Integer, nullable=False, unique=True, index=True)
+    date = Column(Date, nullable=False, index=True)
+    meal_type = Column(String, nullable=False, index=True)
+    comment_text = Column(Text, nullable=True)
+    model = Column(String, nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    estimated_cost_usd = Column(Float, nullable=True)
+    status = Column(String, nullable=False, default="success", index=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
 class KbjuSettings(Base):
     """Модель настроек КБЖУ."""
     __tablename__ = "kbju_settings"
