@@ -26,12 +26,17 @@ from utils.keyboards import (
 )
 from states.user_states import WorkoutStates
 from database.repositories import WorkoutRepository, AnalyticsRepository
-from database.repositories import CustomWorkoutExerciseRepository, MealRepository
+from database.repositories import CustomWorkoutExerciseRepository
 from utils.workout_utils import calculate_workout_calories
 from utils.validators import parse_date
 from utils.formatters import format_count_with_unit
 from utils.calendar_utils import build_workout_calendar_keyboard, show_calendar_back_button
-from utils.workout_formatters import build_day_actions_keyboard
+from utils.workout_formatters import (
+    build_day_actions_keyboard,
+    format_activity_summary,
+    format_activity_edit_button,
+    is_steps_workout,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,83 +112,68 @@ def _entry_date_from_state_data(data: dict) -> date:
     return date.today()
 
 
-def _format_activity_count(workout) -> str:
-    """Форматирует введённое значение для строки упражнения."""
-    variant = workout.variant or ""
-    variant_lower = variant.lower()
-    count = workout.count or 0
 
-    if variant_lower in {"минуты", "мин"}:
-        return f"{int(count)} мин"
-
-    formatted_count = str(int(count)) if float(count).is_integer() else f"{count:g}"
-    if variant and variant not in {"reps", "Повторения"}:
-        return f"{variant}: {formatted_count}"
-    return f"{formatted_count} повторений"
-
-
-def _format_today_activity_overview(user_id: str) -> str:
-    """Форматирует сводку главного экрана активности за сегодня с деталями упражнений."""
-    workouts = WorkoutRepository.get_workouts_for_day(user_id, date.today())
+def _format_activity_overview(user_id: str, target_date: date) -> tuple[str, list]:
+    """Форматирует компактную сводку активности за выбранный день."""
+    workouts = WorkoutRepository.get_workouts_for_day(user_id, target_date)
     steps = 0
     steps_kcal = 0.0
-    workouts_count = 0
-    workouts_kcal = 0.0
-    workout_details = []
+    activities = []
+    activities_kcal = 0.0
 
     for workout in workouts:
-        exercise = _normalize_exercise_name(workout.exercise)
         calories = workout.calories or calculate_workout_calories(
             user_id, workout.exercise, workout.variant, workout.count
         )
-        if exercise == "Шаги" or "шаг" in (workout.variant or "").lower():
+        if is_steps_workout(workout):
             steps += int(workout.count or 0)
             steps_kcal += calories
             continue
-        workouts_count += 1
-        workouts_kcal += calories
-        workout_details.append(f"• {exercise}: {_format_activity_count(workout)} (~{calories:.0f} ккал)")
-
-    total_kcal = steps_kcal + workouts_kcal
-    settings = MealRepository.get_kbju_settings(user_id)
-    activity_key = (settings.activity or "").strip().lower() if settings else ""
-    from utils.progress_formatters import LIFESTYLE_ACTIVITY_COEFFICIENTS
-
-    lifestyle_coef = LIFESTYLE_ACTIVITY_COEFFICIENTS.get(
-        activity_key,
-        LIFESTYLE_ACTIVITY_COEFFICIENTS["medium"],
-    )
-    counted_kcal = round(total_kcal * lifestyle_coef) if settings else 0
+        activities.append(workout)
+        activities_kcal += calories
 
     steps_text = f"{steps:,}".replace(",", " ")
     lines = [
         "🏃 Активность за день",
         "",
         f"👣 Шаги: {steps_text} (~{steps_kcal:.0f} ккал)",
-        f"💪 Тренировки: {workouts_count} записей (~{workouts_kcal:.0f} ккал)",
+        "",
     ]
-    lines.extend(workout_details)
-    lines.extend([
-        "",
-        f"🔥 Всего сожжено: ~{total_kcal:.0f} ккал",
-        "",
-        f"📌 Учтено в дневной норме: ~{counted_kcal:.0f} ккал",
-        "",
-        "ℹ️ Почему учтено не всё?",
-        "Чтобы не завышать дневную норму питания, Sumday77 учитывает только часть активности.",
-    ])
-    return "\n".join(lines)
+
+    if activities:
+        lines.append("🏃 Активность:")
+        lines.extend(f"• {format_activity_summary(activity, user_id)}" for activity in activities)
+    else:
+        lines.append("🏃 Активность: пока не добавлена")
+
+    total_kcal = steps_kcal + activities_kcal
+    lines.extend(["", f"🔥 Всего сожжено: ~{total_kcal:.0f} ккал"])
+    return "\n".join(lines), activities
 
 
-async def _send_activity_main_screen(message: Message, user_id: str):
+def _format_today_activity_overview(user_id: str) -> str:
+    """Форматирует сводку главного экрана активности за сегодня."""
+    return _format_activity_overview(user_id, date.today())[0]
+
+
+def _build_activity_report_inline(activities: list, target_date: date) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if activities:
+        rows.append([InlineKeyboardButton(text="✏️ Редактировать активность", callback_data=f"wrk_edit_menu:{target_date.isoformat()}")])
+    rows.append([InlineKeyboardButton(text="👣 Шаги", callback_data=f"wrk_steps:{target_date.isoformat()}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+async def _send_activity_main_screen(message: Message, user_id: str, target_date: date | None = None):
     """Отправляет главный экран раздела активности."""
-    workouts_text = _format_today_activity_overview(user_id)
+    report_date = target_date or date.today()
+    workouts_text, activities = _format_activity_overview(user_id, report_date)
     push_menu_stack(message.bot, training_menu)
     await message.answer(
-        f"{workouts_text}\n\nВыберите действие:",
-        reply_markup=training_menu,
+        workouts_text,
+        reply_markup=_build_activity_report_inline(activities, report_date),
         parse_mode="HTML",
     )
+    await message.answer("Выберите действие:", reply_markup=training_menu)
 
 
 
@@ -344,18 +334,25 @@ async def quick_today_workout(message: Message, state: FSMContext):
     await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
 
 
-@router.message(lambda m: m.text == "👣 Шаги")
-async def open_steps_flow(message: Message, state: FSMContext):
-    """Быстрый сценарий добавления шагов."""
+async def start_steps_flow(message: Message, state: FSMContext, user_id: str, target_date: date | None = None):
+    """Общий сценарий добавления или изменения шагов."""
+    entry_date = target_date or date.today()
     await state.update_data(
-        entry_date=date.today().isoformat(),
+        entry_date=entry_date.isoformat(),
         exercise="Шаги",
         variant="Количество шагов",
         back_target="training_menu",
     )
     await state.set_state(WorkoutStates.entering_steps)
     push_menu_stack(message.bot, steps_menu)
-    await message.answer("Введи количество шагов за сегодня:", reply_markup=steps_menu)
+    date_label = "сегодня" if entry_date == date.today() else entry_date.strftime("%d.%m.%Y")
+    await message.answer(f"Введи количество шагов за {date_label}:", reply_markup=steps_menu)
+
+
+@router.message(lambda m: m.text == "👣 Шаги")
+async def open_steps_flow(message: Message, state: FSMContext):
+    """Быстрый сценарий добавления шагов."""
+    await start_steps_flow(message, state, str(message.from_user.id), date.today())
 
 
 @router.callback_query(lambda c: c.data == "quick_today_workout")
@@ -635,6 +632,48 @@ async def add_workout_from_calendar(callback: CallbackQuery, state: FSMContext):
     await start_exercise_selection(callback.message, state, target_date)
 
 
+
+
+@router.callback_query(lambda c: c.data.startswith("wrk_steps:"))
+async def open_steps_flow_from_activity_report(callback: CallbackQuery, state: FSMContext):
+    """Открывает общий сценарий шагов из inline-кнопки отчёта активности."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    target_date = date.fromisoformat(parts[1]) if len(parts) > 1 else date.today()
+    await start_steps_flow(callback.message, state, str(callback.from_user.id), target_date)
+
+
+@router.callback_query(lambda c: c.data.startswith("wrk_edit_menu:"))
+async def show_activity_edit_menu(callback: CallbackQuery):
+    """Показывает список обычных активностей выбранного дня для редактирования."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    target_date = date.fromisoformat(parts[1]) if len(parts) > 1 else date.today()
+    user_id = str(callback.from_user.id)
+    activities = [
+        workout
+        for workout in WorkoutRepository.get_workouts_for_day(user_id, target_date)
+        if not is_steps_workout(workout)
+    ]
+    if not activities:
+        await callback.message.answer("🏃 Активность: пока не добавлена")
+        await _send_activity_main_screen(callback.message, user_id, target_date)
+        return
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=format_activity_edit_button(activity),
+                callback_data=f"wrk_edit:{activity.id}:{target_date.isoformat()}",
+            )
+        ]
+        for activity in activities
+    ]
+    await callback.message.answer(
+        "✏️ Выбери активность для редактирования:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
 @router.callback_query(lambda c: c.data.startswith("wrk_edit:"))
 async def edit_workout(callback: CallbackQuery, state: FSMContext):
     """Начинает редактирование тренировки."""
@@ -714,7 +753,7 @@ async def handle_workout_edit_count(message: Message, state: FSMContext):
             f"📊 {formatted_count}\n"
             f"🔥 ~{calories:.0f} ккал"
         )
-        await show_day_workouts(message, user_id, target_date)
+        await _send_activity_main_screen(message, user_id, target_date)
     else:
         await message.answer("❌ Не удалось обновить тренировку. Попробуйте позже.")
         await state.clear()
@@ -732,7 +771,7 @@ async def delete_workout_from_calendar(callback: CallbackQuery):
     success = WorkoutRepository.delete_workout(workout_id, user_id)
     if success:
         await callback.message.answer("✅ Тренировка удалена")
-        await show_day_workouts(callback.message, user_id, target_date)
+        await _send_activity_main_screen(callback.message, user_id, target_date)
     else:
         await callback.message.answer("❌ Не удалось удалить тренировку")
 
@@ -836,7 +875,7 @@ async def confirm_steps(message: Message, state: FSMContext):
     data = await state.get_data()
     steps = int(data.get("steps", 0))
     calories = float(data.get("steps_calories", 0))
-    today = date.today()
+    target_date = _entry_date_from_state_data(data)
 
     if message.text == "✏️ Изменить":
         await state.set_state(WorkoutStates.entering_steps)
@@ -853,7 +892,7 @@ async def confirm_steps(message: Message, state: FSMContext):
         await go_main_menu(message, state)
         return
 
-    step_entries = [w for w in WorkoutRepository.get_workouts_for_day(user_id, today) if _normalize_exercise_name(w.exercise) == "Шаги"]
+    step_entries = [w for w in WorkoutRepository.get_workouts_for_day(user_id, target_date) if _normalize_exercise_name(w.exercise) == "Шаги"]
 
     if message.text != "✅ Сохранить":
         await message.answer("Выбери действие кнопкой ниже.")
@@ -869,17 +908,15 @@ async def confirm_steps(message: Message, state: FSMContext):
             user_id=user_id,
             exercise="Шаги",
             count=steps,
-            entry_date=today,
+            entry_date=target_date,
             variant="Количество шагов",
             calories=calories,
         )
     AnalyticsRepository.track_event(user_id, "add_steps", section="activity")
 
     await state.clear()
-    from utils.progress_formatters import format_today_workouts_block
-    workouts_text = format_today_workouts_block(user_id, include_date=False, include_exercise_details=True)
-    push_menu_stack(message.bot, training_menu)
-    await message.answer(f"✅ Шаги сохранены!\n\n{workouts_text}", reply_markup=training_menu, parse_mode="HTML")
+    await message.answer("✅ Шаги сохранены!")
+    await _send_activity_main_screen(message, user_id, target_date)
 
 
 @router.message(WorkoutStates.entering_duration)
