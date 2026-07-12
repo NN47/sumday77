@@ -1409,12 +1409,64 @@ def _format_product_line(item: dict) -> str:
     return f"- {name}: {grams:.0f} г, {kcal:.0f} ккал, Б {protein:.1f} г, Ж {fat:.1f} г, У {carbs:.1f} г"
 
 
-def _build_meal_completion_prompt(user_id: str, meal, target_date: date) -> str:
-    products = []
+def _extract_meal_products(meal) -> list[dict]:
+    """Возвращает нормализованный список продуктов из одной записи Meal."""
     try:
-        products = json.loads(meal.products_json or "[]")
+        parsed = json.loads(getattr(meal, "products_json", None) or "[]")
     except (TypeError, json.JSONDecodeError):
-        products = []
+        parsed = []
+    if not isinstance(parsed, list):
+        parsed = []
+    products: list[dict] = []
+    for item in parsed:
+        if isinstance(item, dict):
+            products.append(item)
+    if not products:
+        products.append(
+            {
+                "name": getattr(meal, "description", None) or getattr(meal, "raw_query", None) or "приём пищи",
+                "grams": 0,
+                "kcal": float(getattr(meal, "calories", 0) or 0),
+                "protein": float(getattr(meal, "protein", 0) or 0),
+                "fat": float(getattr(meal, "fat", 0) or 0),
+                "carbs": float(getattr(meal, "carbs", 0) or 0),
+            }
+        )
+    return products
+
+
+def _load_completed_meal_context(user_id: str, meal_id: int) -> tuple[object | None, date, list[object], list[dict], dict]:
+    """Загружает из БД весь текущий приём пищи по якорной записи meal_id."""
+    anchor_meal = MealRepository.get_meal_by_id(meal_id, user_id)
+    if not anchor_meal:
+        return None, date.today(), [], [], {"calories": 0.0, "protein": 0.0, "fat": 0.0, "carbs": 0.0}
+
+    target_date = getattr(anchor_meal, "date", None) or date.today()
+    meal_type = normalize_meal_type(getattr(anchor_meal, "meal_type", None), fallback=MealType.SNACK.value)
+    meal_rows = MealRepository.get_meals_for_type_for_date(user_id, target_date, meal_type)
+    products: list[dict] = []
+    for meal_row in meal_rows:
+        products.extend(_extract_meal_products(meal_row))
+
+    totals = {
+        "calories": sum(float(getattr(meal_row, "calories", 0) or 0) for meal_row in meal_rows),
+        "protein": sum(float(getattr(meal_row, "protein", 0) or 0) for meal_row in meal_rows),
+        "fat": sum(float(getattr(meal_row, "fat", 0) or 0) for meal_row in meal_rows),
+        "carbs": sum(float(getattr(meal_row, "carbs", 0) or 0) for meal_row in meal_rows),
+    }
+    return anchor_meal, target_date, meal_rows, products, totals
+
+
+def _build_meal_completion_prompt(user_id: str, meal, target_date: date, products: list[dict] | None = None, meal_totals: dict | None = None) -> str:
+    if products is None:
+        products = _extract_meal_products(meal)
+    if meal_totals is None:
+        meal_totals = {
+            "calories": float(getattr(meal, "calories", 0) or 0),
+            "protein": float(getattr(meal, "protein", 0) or 0),
+            "fat": float(getattr(meal, "fat", 0) or 0),
+            "carbs": float(getattr(meal, "carbs", 0) or 0),
+        }
     settings = MealRepository.get_kbju_settings(user_id)
     totals = MealRepository.get_daily_totals(user_id, target_date)
     workouts = WorkoutRepository.get_workouts_for_day(user_id, target_date)
@@ -1433,9 +1485,10 @@ def _build_meal_completion_prompt(user_id: str, meal, target_date: date) -> str:
     return (
         f"Тип приёма пищи: {display_meal_type(meal.meal_type)}\n"
         f"Дата: {target_date.isoformat()}\n"
+        f"Количество продуктов в завершённом приёме: {len(products)}\n"
         f"Время приёма пищи: не сохраняется отдельно\n\n"
         f"Продукты:\n{product_lines}\n\n"
-        f"Итог приёма: {float(meal.calories or 0):.0f} ккал, Б {float(meal.protein or 0):.1f}, Ж {float(meal.fat or 0):.1f}, У {float(meal.carbs or 0):.1f}\n"
+        f"Итог приёма: {meal_totals['calories']:.0f} ккал, Б {meal_totals['protein']:.1f}, Ж {meal_totals['fat']:.1f}, У {meal_totals['carbs']:.1f}\n"
         f"Цель пользователя: {goal}\n"
         f"Дневная норма: {norm}\n"
         f"Уже съедено за день после этого приёма: {totals['calories']:.0f} ккал, Б {totals['protein']:.1f}, Ж {totals['fat']:.1f}, У {totals['carbs']:.1f}\n"
@@ -1449,45 +1502,94 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
     """Завершает заполнение текущего приёма пищи и показывает короткий комментарий перед дневником."""
     data = await state.get_data()
     user_id = str(message.from_user.id)
-    entry_date_str = data.get("entry_date")
+    fallback_date_str = data.get("entry_date")
     try:
-        target_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
+        fallback_date = date.fromisoformat(fallback_date_str) if isinstance(fallback_date_str, str) else date.today()
     except ValueError:
-        target_date = date.today()
+        fallback_date = date.today()
 
     meal_id = getattr(message.bot, "last_meal_ids", {}).get(user_id)
-    meal = MealRepository.get_meal_by_id(int(meal_id), user_id) if meal_id else None
+    meal_id = int(meal_id) if meal_id else None
     await state.clear()
+    if not meal_id:
+        await message.answer("✅ Приём пищи завершён.", reply_markup=ReplyKeyboardRemove())
+        await _return_to_food_diary(message, user_id, fallback_date)
+        return
+
+    meal, target_date, meal_rows, products, meal_totals = _load_completed_meal_context(user_id, meal_id)
     if not meal:
-        await _return_to_food_diary(message, user_id, target_date)
+        await message.answer("✅ Приём пищи завершён.", reply_markup=ReplyKeyboardRemove())
+        await _return_to_food_diary(message, user_id, fallback_date)
         return
 
     existing = MealCompletionCommentRepository.get_by_meal(user_id, meal.id)
     if existing and existing.status == "success" and existing.comment_text:
-        await message.answer(existing.comment_text, parse_mode="HTML", reply_markup=_meal_comment_keyboard(meal.id, target_date))
+        loading = await message.answer("🧠 Смотрю, что получилось...", reply_markup=ReplyKeyboardRemove())
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=loading.message_id,
+                text=existing.comment_text,
+                parse_mode="HTML",
+                reply_markup=_meal_comment_keyboard(meal.id, target_date),
+            )
+        except TelegramBadRequest:
+            await message.answer(existing.comment_text, parse_mode="HTML", reply_markup=_meal_comment_keyboard(meal.id, target_date))
         return
 
     if not hasattr(message.bot, "meal_comment_in_progress"):
         message.bot.meal_comment_in_progress = set()
     in_progress_key = (user_id, meal.id)
     if in_progress_key in message.bot.meal_comment_in_progress:
-        await message.answer("🧠 Смотрю, что получилось...")
+        await message.answer("🧠 Смотрю, что получилось...", reply_markup=ReplyKeyboardRemove())
         return
     message.bot.meal_comment_in_progress.add(in_progress_key)
 
-    loading = await message.answer("🧠 Смотрю, что получилось...")
+    loading = await message.answer("🧠 Смотрю, что получилось...", reply_markup=ReplyKeyboardRemove())
     text = MEAL_COMMENT_FALLBACK_TEXT
     metadata = {}
     status = "error"
     error_message = None
+    prompt = ""
+    product_names = [str(item.get("name") or item.get("product") or "продукт") for item in products]
     try:
-        prompt = _build_meal_completion_prompt(user_id, meal, target_date)
+        if len(meal_rows) > 1 and len(products) <= 1:
+            raise ValueError(
+                f"Incomplete meal completion context: meal_rows={len(meal_rows)}, products={len(products)}"
+            )
+        prompt = _build_meal_completion_prompt(user_id, meal, target_date, products, meal_totals)
+        logger.info(
+            "meal_completion_comment meal_id=%s meal_type=%s product_count=%s product_names=%s calories=%.0f protein=%.1f fat=%.1f carbs=%.1f context_size=%s status=requesting",
+            meal.id,
+            meal.meal_type,
+            len(products),
+            product_names,
+            meal_totals["calories"],
+            meal_totals["protein"],
+            meal_totals["fat"],
+            meal_totals["carbs"],
+            len(prompt),
+        )
         raw_text, metadata = await asyncio.wait_for(asyncio.to_thread(deepseek_service.generate_meal_completion_comment, prompt, user_id=user_id, system_prompt=MEAL_COMPLETION_COMMENT_SYSTEM_PROMPT), timeout=75.0)
         text = _sanitize_meal_comment_html(raw_text)
         status = "success"
     except Exception as exc:  # не блокируем завершение приёма пищи
         logger.warning("Meal completion comment failed for meal %s: %s", meal.id, exc)
         error_message = str(exc)
+    finally:
+        logger.info(
+            "meal_completion_comment meal_id=%s meal_type=%s product_count=%s product_names=%s calories=%.0f protein=%.1f fat=%.1f carbs=%.1f context_size=%s status=%s",
+            meal.id,
+            meal.meal_type,
+            len(products),
+            product_names,
+            meal_totals["calories"],
+            meal_totals["protein"],
+            meal_totals["fat"],
+            meal_totals["carbs"],
+            len(prompt),
+            status,
+        )
     MealCompletionCommentRepository.save(user_id, meal.id, target_date, meal.meal_type, comment_text=text if status == "success" else None, model=metadata.get("model") or DEEPSEEK_MODEL, status=status, input_tokens=metadata.get("input_tokens"), output_tokens=metadata.get("output_tokens"), total_tokens=metadata.get("total_tokens"), estimated_cost_usd=metadata.get("estimated_cost_usd"), error_message=error_message)
     message.bot.meal_comment_in_progress.discard(in_progress_key)
     try:
