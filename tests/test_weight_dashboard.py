@@ -232,6 +232,30 @@ def test_weight_input_keeps_quick_buttons_and_requires_save_before_repository_wr
     assert "Новый вес" not in text
 
 
+def test_weight_input_from_quick_add_uses_compact_draft_text():
+    from handlers.weight import WEIGHT_SOURCE_QUICK_ADD, handle_weight_input
+
+    message = DummyMessage()
+    state = DummyState({
+        "entry_date": date(2026, 7, 12).isoformat(),
+        "quick_base_weight": 76.1,
+        "weight_entry_source": WEIGHT_SOURCE_QUICK_ADD,
+    })
+    message.text = "+0,5"
+
+    with patch("handlers.weight.WeightRepository.get_weights", return_value=[weight_entry(76.0, date(2026, 7, 11), 1)]):
+        asyncio.run(handle_weight_input(message, state))
+
+    text, _ = message.answers[-1]
+    assert text == (
+        "<b>Предыдущая запись:</b>\n"
+        "📅 11.07.2026\n"
+        "⚖️ 76.0 кг\n\n"
+        "<b>Изменение с предыдущей записи:</b> +0.6 кг 📈\n\n"
+        "⚖️ <b>Вес сейчас:</b> 76.6 кг"
+    )
+
+
 def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
     from handlers.weight import handle_weight_input
 

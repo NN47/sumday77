@@ -179,12 +179,12 @@ def _format_weight_draft_text(
     *,
     save_hint: str = "Можно ещё изменить вес кнопками ниже или нажать <b>✅ Сохранить</b>.",
     title: str = "",
+    compact_quick_add: bool = False,
 ) -> str:
     """Формирует сообщение о черновом весе после быстрой правки."""
-    current_weight_lines = [
-        f"⚖️ <b>Вес сейчас:</b> {weight_value:.1f} кг",
-        f"📅 <b>Дата:</b> {entry_date.strftime('%d.%m.%Y')}",
-    ]
+    current_weight_lines = [f"⚖️ <b>Вес сейчас:</b> {weight_value:.1f} кг"]
+    if not compact_quick_add:
+        current_weight_lines.append(f"📅 <b>Дата:</b> {entry_date.strftime('%d.%m.%Y')}")
 
     lines = [title.rstrip()] if title else []
 
@@ -197,18 +197,33 @@ def _format_weight_draft_text(
         ])
     else:
         delta = weight_value - previous_weight_value
-        lines.extend([
+        previous_weight_lines = [
             "<b>Предыдущая запись:</b>",
             f"⚖️ {previous_weight_value:.1f} кг",
             f"📅 {previous_weight_date.strftime('%d.%m.%Y')}",
-            "",
-            *current_weight_lines,
+        ]
+        if compact_quick_add:
+            previous_weight_lines = [
+                "<b>Предыдущая запись:</b>",
+                f"📅 {previous_weight_date.strftime('%d.%m.%Y')}",
+                f"⚖️ {previous_weight_value:.1f} кг",
+            ]
+        lines.extend([
+            *previous_weight_lines,
             "",
             f"<b>Изменение с предыдущей записи:</b> {_format_weight_delta(delta)}",
+            "",
+            *current_weight_lines,
         ])
 
-    lines.extend(["", save_hint])
+    if save_hint:
+        lines.extend(["", save_hint])
     return "\n".join(lines)
+
+
+def _is_quick_add_weight_source(data: dict) -> bool:
+    """Проверяет, открыт ли редактор из быстрой кнопки добавления веса."""
+    return data.get("weight_entry_source") == WEIGHT_SOURCE_QUICK_ADD
 
 
 def _resolve_base_weight(user_id: str, existing_weight_value: Optional[str | float] = None) -> Optional[float]:
@@ -1052,6 +1067,7 @@ async def _apply_weight_value_to_editor(
     weight_id = data.get("weight_id")
     previous_weight_value, previous_weight_date = _find_previous_weight_entry(user_id, entry_date, weight_id)
     current_weight_value = _resolve_current_weight_value_for_draft(user_id, entry_date, weight_id, data)
+    is_quick_add = _is_quick_add_weight_source(data)
 
     await state.update_data(
         draft_weight_value=weight_value,
@@ -1071,6 +1087,8 @@ async def _apply_weight_value_to_editor(
             previous_weight_value,
             previous_weight_date,
             current_weight_value,
+            compact_quick_add=is_quick_add,
+            save_hint="" if is_quick_add else "Можно ещё изменить вес кнопками ниже или нажать <b>✅ Сохранить</b>.",
         ),
         weight_value,
         has_changes=True,
@@ -1173,6 +1191,7 @@ async def handle_weight_inline_manual(callback: CallbackQuery, state: FSMContext
     previous_weight_value = _to_float_weight(data.get("draft_previous_weight_value"))
     previous_weight_date = _resolve_optional_weight_date(data.get("draft_previous_weight_date"))
     current_weight_value = _to_float_weight(data.get("draft_current_weight_value"))
+    is_quick_add = _is_quick_add_weight_source(data)
     if draft_weight is not None:
         draft_text = _format_weight_draft_text(
             draft_weight,
@@ -1180,6 +1199,8 @@ async def handle_weight_inline_manual(callback: CallbackQuery, state: FSMContext
             previous_weight_value,
             previous_weight_date,
             current_weight_value,
+            compact_quick_add=is_quick_add,
+            save_hint="" if is_quick_add else "Можно ещё изменить вес кнопками ниже или нажать <b>✅ Сохранить</b>.",
         )
         text = (
             f"{draft_text}\n\n"
