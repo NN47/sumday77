@@ -11,16 +11,14 @@ from utils.keyboards import (
     TRAINING_BUTTON_TEXT,
     LEGACY_TRAINING_BUTTON_TEXT,
     training_menu,
-    exercise_picker_menu,
+    activity_category_menu,
+    search_back_menu,
+    ACTIVITY_CATEGORIES,
     steps_menu,
     steps_confirmation_menu,
     duration_menu,
     plank_duration_menu,
     count_menu,
-    bodyweight_exercises,
-    weighted_exercises,
-    frequent_exercises,
-    build_exercise_selection_menu,
     push_menu_stack,
     add_another_set_menu,
     add_another_exercise_menu,
@@ -189,49 +187,132 @@ async def _send_activity_main_screen(message: Message, user_id: str):
 
 
 
-def _get_recent_exercises(user_id: str, limit: int = 8) -> list[str]:
-    """Возвращает уникальные недавно добавленные активности пользователя."""
+def _activity_id(exercise: str) -> str:
+    normalized = _normalize_exercise_name(exercise)
+    for index, catalog_exercise in enumerate(_all_catalog_exercises()):
+        if _search_key(catalog_exercise) == _search_key(normalized):
+            return f"ex{index}"
+    return ""
+
+
+def _activity_by_id(activity_id: str) -> str | None:
+    if not activity_id.startswith("ex"):
+        return None
+    try:
+        index = int(activity_id[2:])
+    except ValueError:
+        return None
+    exercises = _all_catalog_exercises()
+    if 0 <= index < len(exercises):
+        return exercises[index]
+    return None
+
+
+def _all_catalog_exercises() -> list[str]:
+    seen: set[str] = set()
+    exercises: list[str] = []
+    for category in ACTIVITY_CATEGORIES.values():
+        for exercise in category["activities"]:
+            name = _normalize_exercise_name(exercise).strip()
+            if not name or name in STEPS_EXERCISES or name.casefold() in seen:
+                continue
+            seen.add(name.casefold())
+            exercises.append(name)
+    return exercises
+
+
+def _search_key(text: str) -> str:
+    return (text or "").casefold().replace("ё", "е")
+
+
+def _paginate(items: list[str], page: int, per_page: int = 8) -> tuple[list[str], int]:
+    max_page = max((len(items) - 1) // per_page, 0)
+    page = min(max(page, 0), max_page)
+    return items[page * per_page : (page + 1) * per_page], page
+
+
+def _get_recent_exercises(user_id: str, limit: int | None = None) -> list[str]:
+    """Возвращает уникальные недавно добавленные активности пользователя без шагов."""
     workouts = WorkoutRepository.get_workouts_for_period(
         user_id,
-        date.today() - timedelta(days=30),
+        date.today() - timedelta(days=365),
         date.today(),
     )
+    catalog = {_search_key(ex) for ex in _all_catalog_exercises()}
     recent: list[str] = []
     seen: set[str] = set()
     for workout in reversed(workouts):
         name = _normalize_exercise_name(workout.exercise).strip()
-        key = name.casefold()
-        if not name or key in seen:
+        key = _search_key(name)
+        if not name or name in STEPS_EXERCISES or "шаг" in (workout.variant or "").casefold() or key in seen:
+            continue
+        if key not in catalog:
             continue
         seen.add(key)
         recent.append(name)
-        if len(recent) >= limit:
+        if limit is not None and len(recent) >= limit:
             break
     return recent
 
 
-def _build_recent_exercises_keyboard(recent_exercises: list[str]) -> InlineKeyboardMarkup:
-    """Строит inline-кнопки для быстрого выбора недавней активности."""
-    rows: list[list[InlineKeyboardButton]] = []
-    for index, exercise in enumerate(recent_exercises):
-        rows.append([InlineKeyboardButton(text=exercise, callback_data=f"wrk_recent_pick:{index}")])
+def _build_activity_inline(exercises: list[str], prefix: str, page: int, has_prev: bool, has_next: bool, *, numbered: bool = False) -> InlineKeyboardMarkup:
+    numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
+    rows = [[InlineKeyboardButton(text=f"{numbers[i]} {ex}" if numbered and i < len(numbers) else ex, callback_data=f"wrk_pick:{_activity_id(ex)}")] for i, ex in enumerate(exercises)]
+    nav = []
+    if has_prev:
+        nav.append(InlineKeyboardButton(text="⬅️ Предыдущая страница", callback_data=f"{prefix}:{page - 1}"))
+    if has_next:
+        nav.append(InlineKeyboardButton(text="➡️ Следующая страница", callback_data=f"{prefix}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🔍 Поиск упражнения", callback_data="wrk_search")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _show_recent_exercises_hint(message: Message, state: FSMContext, user_id: str) -> bool:
-    """Показывает недавние активности отдельным сообщением над основным меню."""
-    recent_exercises = _get_recent_exercises(user_id)
-    if not recent_exercises:
-        await state.update_data(recent_exercises=[])
-        return False
-
-    await state.update_data(recent_exercises=recent_exercises)
+async def _send_add_activity_screen(message: Message, state: FSMContext, user_id: str, page: int = 0) -> None:
+    recent = _get_recent_exercises(user_id)
+    page_items, page = _paginate(recent, page)
+    await state.update_data(add_activity_screen="main", recent_exercises=recent, recent_page=page)
+    if page_items:
+        numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
+        text = "⭐ Недавние активности:\n\n" + "\n".join(f"{numbers[i]} {ex}" for i, ex in enumerate(page_items))
+    else:
+        text = "⭐ Недавних активностей пока нет.\n\nНайди упражнение через поиск или выбери категорию ниже."
     await message.answer(
-        "🕘 <b>Недавно добавленные активности</b>",
-        reply_markup=_build_recent_exercises_keyboard(recent_exercises),
-        parse_mode="HTML",
+        text,
+        reply_markup=_build_activity_inline(page_items, "wrk_recent_page", page, page > 0, (page + 1) * 8 < len(recent), numbered=True),
     )
-    return True
+    push_menu_stack(message.bot, activity_category_menu)
+    await message.answer("📂 Или выбери категорию:", reply_markup=activity_category_menu)
+
+
+async def _show_category(message: Message, state: FSMContext, category_id: str, page: int = 0) -> None:
+    category = ACTIVITY_CATEGORIES[category_id]
+    exercises = [_normalize_exercise_name(ex) for ex in category["activities"] if _normalize_exercise_name(ex) not in STEPS_EXERCISES]
+    page_items, page = _paginate(exercises, page)
+    await state.update_data(add_activity_screen="category", category_id=category_id, category_page=page)
+    await message.answer(
+        f"{category['title']}\n\nВыбери упражнение:",
+        reply_markup=_build_activity_inline(page_items, f"wrk_cat_page:{category_id}", page, page > 0, (page + 1) * 8 < len(exercises)),
+    )
+
+
+async def _show_search_results(message: Message, state: FSMContext, query: str, page: int = 0) -> None:
+    matches = [
+        ex for ex in sorted(_all_catalog_exercises())
+        if query and any(_search_key(query) in _search_key(token) for token in _exercise_search_tokens(ex))
+    ]
+    page_items, page = _paginate(matches, page)
+    await state.update_data(add_activity_screen="search", search_query=query, search_results=matches, search_page=page)
+    if not matches:
+        await message.answer(f"По запросу «{query}» ничего не найдено.\n\nПопробуй изменить запрос.", reply_markup=search_back_menu)
+        await state.set_state(WorkoutStates.searching_exercise)
+        return
+    await state.set_state(WorkoutStates.choosing_exercise)
+    await message.answer(
+        f"🔍 Результаты поиска по запросу «{query}»:",
+        reply_markup=_build_activity_inline(page_items, "wrk_search_page", page, page > 0, (page + 1) * 8 < len(matches)),
+    )
 
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
     """Сбрасывает состояние пользователя."""
@@ -296,22 +377,13 @@ async def start_exercise_selection(
     state: FSMContext,
     target_date: date | None = None,
 ):
-    """Открывает выбор упражнения для записи тренировки."""
+    """Открывает новый каталог добавления активности."""
     entry_date = target_date or date.today()
     await state.update_data(entry_date=entry_date.isoformat())
     await state.set_state(WorkoutStates.choosing_exercise)
-    recent_shown = await _show_recent_exercises_hint(message, state, str(message.from_user.id))
-    push_menu_stack(message.bot, exercise_picker_menu)
-    prompt = "<b>Выбери из кнопок ниже или из недавних сверху ☝️</b>" if recent_shown else "Выбери активность:"
-    if entry_date == date.today():
-        text = prompt
-    else:
-        text = f"📅 Дата: {entry_date.strftime('%d.%m.%Y')}\n\n{prompt}"
-    await message.answer(
-        text,
-        reply_markup=exercise_picker_menu,
-        parse_mode="HTML",
-    )
+    if entry_date != date.today():
+        await message.answer(f"📅 Дата: {entry_date.strftime('%d.%m.%Y')}")
+    await _send_add_activity_screen(message, state, str(message.from_user.id))
 
 
 @router.message(lambda m: m.text == "➕ Добавить активность")
@@ -481,22 +553,46 @@ async def _continue_with_selected_exercise(message: Message, state: FSMContext, 
     await message.answer("Выбери количество повторений:", reply_markup=count_menu)
 
 
-@router.callback_query(lambda c: c.data.startswith("wrk_recent_pick:"))
-async def pick_recent_exercise(callback: CallbackQuery, state: FSMContext):
-    """Выбирает активность из верхнего inline-блока недавних."""
+@router.callback_query(lambda c: c.data and c.data.startswith("wrk_pick:"))
+async def pick_catalog_exercise(callback: CallbackQuery, state: FSMContext):
+    """Выбирает упражнение по стабильному callback id."""
     await callback.answer()
-    data = await state.get_data()
-    recent_exercises = data.get("recent_exercises") or []
-    try:
-        index = int(callback.data.split(":", maxsplit=1)[1])
-    except (ValueError, IndexError, AttributeError):
+    activity_id = callback.data.split(":", maxsplit=1)[1]
+    exercise = _activity_by_id(activity_id)
+    if not exercise:
         await callback.message.answer("❌ Не удалось выбрать активность. Попробуй открыть добавление заново.")
         return
-    if index < 0 or index >= len(recent_exercises):
-        await callback.message.answer("❌ Эта недавняя активность уже недоступна. Открой добавление заново.")
-        return
+    await _continue_with_selected_exercise(callback.message, state, exercise)
 
-    await _continue_with_selected_exercise(callback.message, state, recent_exercises[index])
+
+@router.callback_query(lambda c: c.data and c.data.startswith("wrk_recent_page:"))
+async def paginate_recent_exercises(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    page = int(callback.data.rsplit(":", maxsplit=1)[1])
+    await _send_add_activity_screen(callback.message, state, str(callback.from_user.id), page)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("wrk_cat_page:"))
+async def paginate_category_exercises(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    _, _, category_id, page_text = callback.data.split(":")
+    await _show_category(callback.message, state, category_id, int(page_text))
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("wrk_search_page:"))
+async def paginate_search_exercises(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    page = int(callback.data.rsplit(":", maxsplit=1)[1])
+    await _show_search_results(callback.message, state, data.get("search_query", ""), page)
+
+
+@router.callback_query(lambda c: c.data == "wrk_search")
+async def start_exercise_search(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(WorkoutStates.searching_exercise)
+    push_menu_stack(callback.message.bot, search_back_menu)
+    await callback.message.answer("🔍 Введи название упражнения или его часть:", reply_markup=search_back_menu)
 
 
 @router.callback_query(lambda c: c.data.startswith("cal_nav:"))
@@ -643,84 +739,54 @@ async def delete_workout_from_calendar(callback: CallbackQuery):
 
 @router.message(WorkoutStates.choosing_exercise)
 async def choose_exercise(message: Message, state: FSMContext):
-    """Обрабатывает выбор упражнения."""
-    exercise = message.text
-    data = await state.get_data()
+    """Обрабатывает reply-навигацию нового каталога активности."""
+    text = message.text or ""
+    category_by_title = {data["title"]: key for key, data in ACTIVITY_CATEGORIES.items()}
 
-    if exercise in {"⬅️ Назад", "◀️ Назад"}:
-        # После просмотра полного списка упражнений по кнопке
-        # "📂 Все упражнения" возвращаем пользователя сразу в меню тренировок.
-        if data.get("exercise_list_mode") == "all":
-            await state.clear()
-            await _send_activity_main_screen(message, str(message.from_user.id))
-            return
-
-        await state.clear()
-        await _send_activity_main_screen(message, str(message.from_user.id))
-        return
-
-    if exercise in {"🕘 Недавние", "🕒 Недавние", "📂 Все упражнения"}:
-        user_id = str(message.from_user.id)
-        workouts = WorkoutRepository.get_workouts_for_period(user_id, date.today() - timedelta(days=30), date.today())
-        recent = []
-        for w in reversed(workouts):
-            name = _normalize_exercise_name(w.exercise)
-            if name not in recent:
-                recent.append(name)
-            if len(recent) >= 10:
-                break
-        if exercise == "📂 Все упражнения":
-            all_exercises = sorted({_normalize_exercise_name(ex) for ex in (bodyweight_exercises + weighted_exercises)})
-            recent = [ex for ex in all_exercises if ex != "Другое"]
-            await state.update_data(exercise_list_mode="all")
-        else:
-            await state.update_data(exercise_list_mode="recent")
-        if not recent:
-            recent = frequent_exercises
-        exercise_menu = build_exercise_selection_menu(recent)
-        push_menu_stack(message.bot, exercise_menu)
-        await message.answer("Выбери упражнение из списка:", reply_markup=exercise_menu)
-        return
-
-    if exercise == "🔎 Поиск упражнения":
-        await state.set_state(WorkoutStates.searching_exercise)
-        await message.answer("Введи часть названия упражнения:")
-        return
-
-    known_exercises = set(bodyweight_exercises + weighted_exercises + frequent_exercises) | {"Бег", "Силовая тренировка", "Велосипед", "Шаги"}
-    if exercise in MAIN_MENU_BUTTON_ALIASES:
+    if text in MAIN_MENU_BUTTON_ALIASES:
         from handlers.common import go_main_menu
         await go_main_menu(message, state)
         return
 
-    if exercise not in known_exercises:
-        await message.answer("Выбери упражнение из меню")
+    if text in {"⬅️ Назад", "◀️ Назад"}:
+        data = await state.get_data()
+        if data.get("add_activity_screen") in {"category", "search"}:
+            await _send_add_activity_screen(message, state, str(message.from_user.id))
+            return
+        await state.clear()
+        await _send_activity_main_screen(message, str(message.from_user.id))
         return
 
-    await _continue_with_selected_exercise(message, state, exercise)
+    if text in category_by_title:
+        await _show_category(message, state, category_by_title[text])
+        return
+
+    if text == "🔍 Поиск упражнения":
+        await state.set_state(WorkoutStates.searching_exercise)
+        push_menu_stack(message.bot, search_back_menu)
+        await message.answer("🔍 Введи название упражнения или его часть:", reply_markup=search_back_menu)
+        return
+
+    if text in _all_catalog_exercises():
+        await _continue_with_selected_exercise(message, state, text)
+        return
+
+    await message.answer("Выбери категорию ниже или нажми «🔍 Поиск упражнения».", reply_markup=activity_category_menu)
 
 
 @router.message(WorkoutStates.searching_exercise)
 async def search_exercise(message: Message, state: FSMContext):
-    """Поиск упражнений по подстроке."""
-    query = (message.text or "").strip().lower()
-    all_exercises = sorted({_normalize_exercise_name(ex) for ex in (bodyweight_exercises + weighted_exercises + frequent_exercises)})
-    matches = [
-        ex
-        for ex in all_exercises
-        if query and any(query in token.lower() for token in _exercise_search_tokens(ex))
-    ]
-    await state.set_state(WorkoutStates.choosing_exercise)
-    if not matches:
-        push_menu_stack(message.bot, exercise_picker_menu)
-        await message.answer("Ничего не нашёл. Выбери упражнение из меню:", reply_markup=exercise_picker_menu)
+    """Поиск упражнений по подстроке без учета регистра и ё/е."""
+    text = (message.text or "").strip()
+    if text in MAIN_MENU_BUTTON_ALIASES:
+        from handlers.common import go_main_menu
+        await go_main_menu(message, state)
         return
-    matched_exercises_menu = build_exercise_selection_menu(matches[:15])
-    push_menu_stack(message.bot, matched_exercises_menu)
-    await message.answer(
-        "Нашёл:\n" + "\n".join(f"• {m}" for m in matches[:15]) + "\n\nВыбери упражнение из меню ниже.",
-        reply_markup=matched_exercises_menu,
-    )
+    if text in {"⬅️ Назад", "◀️ Назад"}:
+        await state.set_state(WorkoutStates.choosing_exercise)
+        await _send_add_activity_screen(message, state, str(message.from_user.id))
+        return
+    await _show_search_results(message, state, text)
 
 
 @router.message(WorkoutStates.entering_steps)
@@ -741,8 +807,7 @@ async def handle_steps_input(message: Message, state: FSMContext):
             await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
         else:
             await state.set_state(WorkoutStates.choosing_exercise)
-            push_menu_stack(message.bot, exercise_picker_menu)
-            await message.answer("Выбери активность:", reply_markup=exercise_picker_menu)
+            await _send_add_activity_screen(message, state, str(message.from_user.id))
         return
 
     try:
@@ -825,8 +890,7 @@ async def handle_duration_input(message: Message, state: FSMContext):
         return
     if message.text == "⬅️ Назад":
         await state.set_state(WorkoutStates.choosing_exercise)
-        push_menu_stack(message.bot, exercise_picker_menu)
-        await message.answer("Выбери активность:", reply_markup=exercise_picker_menu)
+        await _send_add_activity_screen(message, state, str(message.from_user.id))
         return
     if message.text in MAIN_MENU_BUTTON_ALIASES:
         from handlers.common import go_main_menu
@@ -939,8 +1003,7 @@ async def choose_grip_type(message: Message, state: FSMContext):
     if grip_type == "⬅️ Назад" or grip_type in MAIN_MENU_BUTTON_ALIASES:
         if grip_type == "⬅️ Назад":
             await state.set_state(WorkoutStates.choosing_exercise)
-            push_menu_stack(message.bot, exercise_picker_menu)
-            await message.answer("Выбери активность:", reply_markup=exercise_picker_menu)
+            await _send_add_activity_screen(message, state, str(message.from_user.id))
         else:
             from handlers.common import go_main_menu
             await go_main_menu(message, state)
@@ -972,8 +1035,7 @@ async def handle_custom_exercise(message: Message, state: FSMContext):
     if message.text == "⬅️ Назад" or message.text in MAIN_MENU_BUTTON_ALIASES:
         if message.text == "⬅️ Назад":
             await state.set_state(WorkoutStates.choosing_exercise)
-            push_menu_stack(message.bot, exercise_picker_menu)
-            await message.answer("Выбери активность:", reply_markup=exercise_picker_menu)
+            await _send_add_activity_screen(message, state, str(message.from_user.id))
         else:
             from handlers.common import go_main_menu
             await go_main_menu(message, state)
