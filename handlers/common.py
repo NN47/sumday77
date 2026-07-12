@@ -195,8 +195,8 @@ async def quick_supplements(callback: CallbackQuery, state: FSMContext):
 async def quick_steps_add(callback: CallbackQuery, state: FSMContext):
     """Быстрый переход к добавлению шагов."""
     await callback.answer()
-    from handlers.workouts import open_steps_flow
-    await open_steps_flow(callback.message, state)
+    from handlers.workouts import start_steps_flow
+    await start_steps_flow(callback.message, state, str(callback.from_user.id))
 
 
 @router.callback_query(lambda c: c.data == "quick_water_300")
