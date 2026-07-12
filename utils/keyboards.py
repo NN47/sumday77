@@ -28,55 +28,11 @@ FINISH_MEAL_BUTTON_TEXT = "✅ Завершить приём"
 LEGACY_FINISH_MEAL_BUTTON_TEXT = "✅ Завершить приём пищи"
 
 
-ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT = "📅 Сегодня"
-ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT = "📅 Сегодня копия"
-ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_TEXT = "📅 Сегодня копия 2"
 ACTIVITY_ANALYSIS_DETAILED_DEEPSEEK_BUTTON_TEXT = "🧠 Подробный AI-анализ"
-ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_TEXT = "🪄 ИИ-разбор дня"
-ACTIVITY_ANALYSIS_WEEK_BUTTON_TEXT = "📊 Неделя"
-ACTIVITY_ANALYSIS_MONTH_BUTTON_TEXT = "📈 Месяц"
 ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT = "🗓 Календарь"
 
 ACTIVITY_ANALYSIS_DETAILED_DEEPSEEK_BUTTON_ALIASES = {
     ACTIVITY_ANALYSIS_DETAILED_DEEPSEEK_BUTTON_TEXT,
-}
-ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES = {
-    ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT,
-    "🔍 Проанализировать день",
-    "📅 Анализ за день",
-    "Проанализировать день",
-}
-ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES = {
-    ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_TEXT,
-}
-ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES = {
-    ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT,
-    "📅 Сегодня через GigaChat",
-    "📅 Анализ за день через GigaChat",
-    "анализ за день через gigachat",
-    "сегодня через gigachat",
-}
-ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES = {
-    ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_TEXT,
-    "🧪 Анализ дня через OpenRouter",
-    "🧪 Анализ дня через опен роутер",
-    "🧪 анализ дня через openrouter",
-    "анализ дня через openrouter",
-    "анализ дня через опен роутер",
-}
-ACTIVITY_ANALYSIS_WEEK_BUTTON_ALIASES = {
-    ACTIVITY_ANALYSIS_WEEK_BUTTON_TEXT,
-    "🔍 Проанализировать\nнеделю",
-    "🔍 Проанализировать неделю",
-    "📆 Анализ за неделю",
-    "проанализировать неделю",
-}
-ACTIVITY_ANALYSIS_MONTH_BUTTON_ALIASES = {
-    ACTIVITY_ANALYSIS_MONTH_BUTTON_TEXT,
-    "🔍 Проанализировать\nмесяц",
-    "🔍 Проанализировать месяц",
-    "📊 Анализ за месяц",
-    "проанализировать месяц",
 }
 
 
@@ -784,12 +740,6 @@ water_quick_add_inline = water_adjustment_inline
 activity_analysis_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=ACTIVITY_ANALYSIS_DETAILED_DEEPSEEK_BUTTON_TEXT)],
-        [
-            KeyboardButton(text=ACTIVITY_ANALYSIS_TODAY_BUTTON_TEXT),
-            KeyboardButton(text=ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT),
-            KeyboardButton(text=ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_TEXT),
-        ],
-        [KeyboardButton(text=ACTIVITY_ANALYSIS_WEEK_BUTTON_TEXT), KeyboardButton(text=ACTIVITY_ANALYSIS_MONTH_BUTTON_TEXT)],
         [KeyboardButton(text=ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT)],
         [main_menu_button],
     ],

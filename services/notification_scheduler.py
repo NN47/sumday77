@@ -36,7 +36,7 @@ SUPPLEMENT_REMINDER_DELAY = timedelta(minutes=30)
 EVENING_ANALYSIS_MAIN_TEXT = (
     "<b>🌙 Вечерний анализ дня</b>\n\n"
     "Ты уже добавил все приёмы пищи за сегодня?\n\n"
-    "Если всё на месте — <b>запущу ИИ-анализ дня</b>:\n"
+    "Если всё на месте — <b>запущу подробный AI-анализ дня</b>:\n"
     "🍽 питание\n"
     "🔥 калории\n"
     "💪 белок\n"
@@ -47,7 +47,7 @@ EVENING_ANALYSIS_MAIN_TEXT = (
 EVENING_ANALYSIS_REMINDER_TEXT = (
     "⏰ Напоминаю про анализ дня\n\n"
     "Ты уже добавил все приёмы пищи за сегодня?\n"
-    "Если дневник заполнен — можем подвести итоги."
+    "Если дневник заполнен — можем запустить подробный AI-анализ дня."
 )
 
 
@@ -141,7 +141,7 @@ class NotificationScheduler:
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="✅ Да, анализировать день",
+                        text="✅ Запустить подробный AI-анализ",
                         callback_data=f"{EVENING_ANALYSIS_START_PREFIX}:{date_payload}",
                     )
                 ],

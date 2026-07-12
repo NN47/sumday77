@@ -6,7 +6,6 @@ import json
 from datetime import date, datetime, timedelta
 from collections import Counter
 from aiogram import Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
@@ -14,13 +13,6 @@ from utils.keyboards import (
     push_menu_stack,
     ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT,
     ACTIVITY_ANALYSIS_DETAILED_DEEPSEEK_BUTTON_ALIASES,
-    ACTIVITY_ANALYSIS_MONTH_BUTTON_ALIASES,
-    ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES,
-    ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES,
-    ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES,
-    ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES,
-    ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT,
-    ACTIVITY_ANALYSIS_WEEK_BUTTON_ALIASES,
 )
 from utils.emoji_map import EMOJI_MAP
 from utils.calendar_utils import (
@@ -32,7 +24,7 @@ from database.repositories.activity_analysis_repository import ActivityAnalysisR
 from database.repositories import AnalyticsRepository, EveningAnalysisNotificationRepository
 from states.user_states import ActivityAnalysisStates
 from services.gemini_service import gemini_service, GeminiServiceTemporaryUnavailableError
-from services.openrouter_service import OpenRouterServiceTemporaryError, openrouter_service
+from services.openrouter_service import openrouter_service
 from services.deepseek_service import (
     deepseek_service,
     DeepSeekServiceError,
@@ -395,20 +387,6 @@ def _sanitize_daily_analysis_text(text: str) -> str:
 
     return before_plan + "\n".join(cleaned_plan_lines)
 
-
-def _build_calorie_deficit_prompt_rules(prompt_variant: str) -> str:
-    """Возвращает дополнительные правила для отдельного анализа с учётом дефицита калорий."""
-    if prompt_variant != "calorie_deficit_gigachat":
-        return ""
-    return """Отдельный режим анализа для кнопки «📅 Сегодня копия 2»: питание оценивай строго через контекст цели и калорийного баланса.
-- Обязательно учитывай дневную норму калорий, фактически съеденные калории и разницу между ними; прямо напиши размер дефицита или профицита в ккал.
-- Выводы по питанию делай не только по абсолютным калориям, белкам, жирам и углеводам, но и по цели пользователя: похудение, поддержание или набор.
-- Если цель — похудение и есть разумный дефицит калорий, не ругай за недобор как за ошибку: интерпретируй это как выполнение цели, похвали и отметь, что цель по снижению веса поддержана.
-- Если дефицит слишком большой, мягко предупреди о рисках чрезмерного дефицита и предложи приблизить калораж к более устойчивому уровню.
-- Если дефицит в пределах нормы, прямо напиши, что дефицит нормальный/умеренный, и объясни почему он помогает цели похудения.
-- Если есть профицит, спокойно объясни, насколько он расходится с целью и какой следующий маленький шаг поможет.
-- Белки, жиры и углеводы оценивай в связке с калорийной целью: белок — как опору сытости/сохранения мышц, жиры и углеводы — как контекст, а не как повод ругать пользователя без связи с целью.
-"""
 
 async def generate_activity_analysis(
     user_id: str,
@@ -1238,12 +1216,10 @@ async def analyze_activity(message: Message):
     AnalyticsRepository.track_event(user_id, "open_activity", section="activity")
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(
-        "📊 ИИ-анализ\n\n"
-        "Выбери формат:\n"
-        "• 📅 Сегодня — быстрый отчёт за день\n"
-        f"• {ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_TEXT} — быстрый отчёт за день\n"
-        "• 📊 Неделя / 📈 Месяц — динамика прогресса\n"
-        "• 🗓 Календарь — история прошлых анализов",
+        "🧠 ИИ-анализ\n\n"
+        "Доступные действия:\n"
+        "• 🧠 Подробный AI-анализ — полный разбор дня по дневнику питания, активности, воде, весу и заметкам.\n"
+        "• 🗓 Календарь — история сохранённых анализов.",
         reply_markup=activity_analysis_menu,
     )
 
@@ -1414,20 +1390,13 @@ async def save_manual_activity_analysis(message: Message, state: FSMContext):
     await show_activity_analysis_day(message, user_id, entry_date)
 
 
-@router.message(lambda m: m.text in ACTIVITY_ANALYSIS_TODAY_BUTTON_ALIASES)
-async def analyze_activity_day(message: Message):
-    """Анализ за день."""
-    user_id = str(message.from_user.id)
-    await run_daily_activity_analysis(message, user_id, provider="gemini")
-
-
 @router.callback_query(lambda c: c.data and c.data.startswith(f"{EVENING_ANALYSIS_START_PREFIX}:"))
 async def start_evening_activity_analysis(callback: CallbackQuery):
     """Запускает анализ дня из вечернего уведомления."""
     await callback.answer()
     user_id = str(callback.from_user.id)
     target_date = date.fromisoformat(callback.data.split(":", 1)[1])
-    await run_daily_activity_analysis(callback.message, user_id, target_date, provider="gemini")
+    await run_detailed_activity_analysis(callback.message, user_id, target_date)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith(f"{EVENING_ANALYSIS_REMIND_PREFIX}:"))
@@ -1448,23 +1417,19 @@ async def remind_evening_activity_analysis_later(callback: CallbackQuery):
     await callback.message.answer("⏰ Хорошо, напомню позже.")
 
 
-
-
-@router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_DETAILED_DEEPSEEK_BUTTON_ALIASES)
-async def analyze_activity_day_detailed_deepseek(message: Message):
-    """Подробный AI-анализ дня через DeepSeek на расширенном контексте."""
-    user_id = str(message.from_user.id)
-    today = date.today()
-    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, today)
+async def run_detailed_activity_analysis(message: Message, user_id: str, target_date: date | None = None):
+    """Запускает подробный AI-анализ дня через DeepSeek на расширенном контексте."""
+    target_date = target_date or date.today()
+    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, target_date)
     AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
     AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
     await message.answer("🧠 Готовлю подробный AI-анализ дня...")
     try:
         analysis = await extended_activity_analysis_service.generate(
             user_id,
-            AnalysisPeriod(start_date=today, end_date=today, label="за день"),
+            AnalysisPeriod(start_date=target_date, end_date=target_date, label="за день"),
         )
-        ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="detailed_deepseek")
+        ActivityAnalysisRepository.create_entry(user_id, analysis, target_date, source="detailed_deepseek")
         AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
     except Exception as e:
         AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
@@ -1473,7 +1438,7 @@ async def analyze_activity_day_detailed_deepseek(message: Message):
             error=e,
             user_id=user_id,
             context="detailed_daily_analysis",
-            extra={"handler": "analyze_activity_day_detailed_deepseek"},
+            extra={"handler": "run_detailed_activity_analysis"},
         )
         push_menu_stack(message.bot, activity_analysis_menu)
         await message.answer(
@@ -1491,100 +1456,12 @@ async def analyze_activity_day_detailed_deepseek(message: Message):
             reply_markup=activity_analysis_menu if idx == len(chunks) else None,
         )
 
-@router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_TODAY_GIGACHAT_BUTTON_ALIASES)
-async def analyze_activity_day_gigachat(message: Message):
-    """Копия стандартного анализа за день с тем же промптом, что у кнопки «📅 Сегодня»."""
+
+@router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_DETAILED_DEEPSEEK_BUTTON_ALIASES)
+async def analyze_activity_day_detailed_deepseek(message: Message):
+    """Подробный AI-анализ дня через DeepSeek на расширенном контексте."""
     user_id = str(message.from_user.id)
-    await run_daily_activity_analysis(message, user_id, provider="gigachat")
-
-
-@router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_TODAY_COPY_2_BUTTON_ALIASES)
-async def analyze_activity_day_copy_2(message: Message):
-    """Копия стандартного анализа за день с тем же промптом, что у кнопки «📅 Сегодня»."""
-    user_id = str(message.from_user.id)
-    await run_daily_activity_analysis(message, user_id, provider="deepseek")
-
-
-@router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_OPENROUTER_BUTTON_ALIASES)
-async def analyze_activity_day_openrouter(message: Message):
-    """Анализ дня через OpenRouter."""
-    user_id = str(message.from_user.id)
-    today = date.today()
-    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, today)
-    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
-    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
-    await message.answer("⏳ Подожди немного, бот анализирует твой день через OpenRouter...")
-    try:
-        analysis = await generate_activity_analysis(user_id, today, today, "за день", backend="openrouter")
-        ActivityAnalysisRepository.create_entry(user_id, analysis, today, source="generated")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
-    except Exception as e:
-        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
-        if isinstance(e, (OpenRouterServiceTemporaryError, asyncio.TimeoutError)):
-            push_menu_stack(message.bot, activity_analysis_menu)
-            await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
-            return
-        log_app_error(
-            source="openrouter",
-            error=e,
-            user_id=user_id,
-            context="daily_analysis_openrouter",
-            extra={"handler": "analyze_activity_day_openrouter"},
-        )
-        await message.answer("⚠️ Не удалось сгенерировать анализ дня через OpenRouter. Попробуй позже.")
-        return
-    push_menu_stack(message.bot, activity_analysis_menu)
-    chunks = split_telegram_message(analysis, limit=3900)
-
-    for i, chunk in enumerate(chunks):
-        reply_markup = activity_analysis_menu if i == len(chunks) - 1 else None
-        try:
-            await message.answer(chunk, parse_mode="HTML", reply_markup=reply_markup)
-        except TelegramBadRequest as e:
-            logger.warning("Failed to send OpenRouter analysis chunk as HTML, fallback to plain text: %s", e)
-            await message.answer(chunk, reply_markup=reply_markup)
-
-
-@router.message(lambda m: m.text in ACTIVITY_ANALYSIS_WEEK_BUTTON_ALIASES)
-async def analyze_activity_week(message: Message):
-    """Анализ за неделю."""
-    user_id = str(message.from_user.id)
-    today = date.today()
-    week_start = today - timedelta(days=today.weekday())
-    try:
-        analysis = await generate_activity_analysis(user_id, week_start, today, "за неделю")
-    except Exception as e:
-        if _is_gemini_temporarily_unavailable_error(e):
-            push_menu_stack(message.bot, activity_analysis_menu)
-            await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
-            return
-        log_app_error(source="gemini", error=e, user_id=user_id, context="weekly_analysis")
-        push_menu_stack(message.bot, activity_analysis_menu)
-        await message.answer("⚠️ Не удалось сгенерировать анализ недели. Попробуй позже.", reply_markup=activity_analysis_menu)
-        return
-    push_menu_stack(message.bot, activity_analysis_menu)
-    await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
-
-
-@router.message(lambda m: m.text in ACTIVITY_ANALYSIS_MONTH_BUTTON_ALIASES)
-async def analyze_activity_month(message: Message):
-    """Анализ за месяц."""
-    user_id = str(message.from_user.id)
-    today = date.today()
-    month_start = date(today.year, today.month, 1)
-    try:
-        analysis = await generate_activity_analysis(user_id, month_start, today, "за месяц")
-    except Exception as e:
-        if _is_gemini_temporarily_unavailable_error(e):
-            push_menu_stack(message.bot, activity_analysis_menu)
-            await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
-            return
-        log_app_error(source="gemini", error=e, user_id=user_id, context="monthly_analysis")
-        push_menu_stack(message.bot, activity_analysis_menu)
-        await message.answer("⚠️ Не удалось сгенерировать анализ месяца. Попробуй позже.", reply_markup=activity_analysis_menu)
-        return
-    push_menu_stack(message.bot, activity_analysis_menu)
-    await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
+    await run_detailed_activity_analysis(message, user_id)
 
 def register_activity_handlers(dp):
     """Регистрирует обработчики анализа деятельности."""
