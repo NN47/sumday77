@@ -47,7 +47,10 @@ class WorkoutStates(StatesGroup):
     """Состояния для добавления тренировки."""
     choosing_exercise = State()
     entering_custom_exercise = State()
+    choosing_input_method = State()
     entering_duration = State()
+    entering_distance = State()
+    entering_jumps = State()
     confirming_duration = State()
     entering_steps = State()
     confirming_steps = State()

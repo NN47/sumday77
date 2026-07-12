@@ -40,15 +40,32 @@ def init_db():
         except Exception as e:
             logger.warning(f"Ошибка при проверке supplement_entries.amount: {e}")
         
-        # workouts.calories
+        # workouts activity input fields
         try:
             workout_columns = {col["name"] for col in inspector.get_columns("workouts")}
-            if "calories" not in workout_columns:
-                conn.execute(text("ALTER TABLE workouts ADD COLUMN calories FLOAT"))
+
+            def _add_workout_column_if_missing(column_name: str, sql_type: str) -> None:
+                if column_name in workout_columns:
+                    return
+                conn.execute(text(f"ALTER TABLE workouts ADD COLUMN {column_name} {sql_type}"))
                 conn.commit()
-                logger.info("Добавлен столбец workouts.calories")
+                logger.info(f"Добавлен столбец workouts.{column_name}")
+
+            _add_workout_column_if_missing("calories", "FLOAT")
+            _add_workout_column_if_missing("input_method", "VARCHAR")
+            _add_workout_column_if_missing("duration_minutes", "FLOAT")
+            _add_workout_column_if_missing("distance_km", "FLOAT")
+            _add_workout_column_if_missing("jumps_count", "INTEGER")
+            count_column = next((col for col in inspector.get_columns("workouts") if col["name"] == "count"), None)
+            if count_column and "INT" in str(count_column.get("type", "")).upper():
+                try:
+                    conn.execute(text("ALTER TABLE workouts ALTER COLUMN count TYPE FLOAT USING count::float"))
+                    conn.commit()
+                    logger.info("Изменён тип столбца workouts.count на FLOAT")
+                except Exception as type_error:
+                    logger.warning(f"Не удалось изменить тип workouts.count на FLOAT: {type_error}")
         except Exception as e:
-            logger.warning(f"Ошибка при проверке workouts.calories: {e}")
+            logger.warning(f"Ошибка при проверке workouts activity input fields: {e}")
 
         # users.target_weight / users.created_at / users.last_seen_at
         try:
