@@ -82,6 +82,13 @@ def init_db():
         _add_users_column_if_missing("last_seen_at", "TIMESTAMP", fill_now=True)
 
 
+
+        # meal_completion_comments table (created by metadata for new DBs)
+        try:
+            Base.metadata.tables["meal_completion_comments"].create(bind=engine, checkfirst=True)
+        except Exception as e:
+            logger.warning(f"Ошибка при создании meal_completion_comments: {e}")
+
         # error_logs new schema fields
         try:
             error_columns = {col["name"] for col in inspector.get_columns("error_logs")}
