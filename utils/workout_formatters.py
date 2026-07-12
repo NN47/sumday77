@@ -4,6 +4,7 @@ from datetime import date
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.models import Workout
 from utils.workout_utils import calculate_workout_calories
+from utils.activity_input_config import ActivityInputMethod, infer_input_method
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +47,28 @@ def _positive_attr(activity: Workout, *names: str) -> float | int | None:
 def _activity_parameters(activity: Workout) -> str:
     variant = (activity.variant or "").casefold()
     count = activity.count or 0
+    method_value = getattr(activity, "input_method", None)
+    try:
+        method = ActivityInputMethod(method_value) if method_value else infer_input_method(activity.exercise, activity.variant)
+    except ValueError:
+        method = infer_input_method(activity.exercise, activity.variant)
     sets = _positive_attr(activity, "sets", "approaches", "set_count")
     weight = _positive_attr(activity, "weight", "working_weight", "work_weight")
 
     params: list[str] = []
-    if sets:
+    if method == ActivityInputMethod.TIME:
+        minutes = _positive_attr(activity, "duration_minutes") or count
+        if minutes:
+            params.append(f"{_format_number(minutes)} мин")
+    elif method == ActivityInputMethod.DISTANCE:
+        distance = _positive_attr(activity, "distance_km") or count
+        if distance:
+            params.append(f"{_format_number(distance)} км")
+    elif method == ActivityInputMethod.JUMPS:
+        jumps = _positive_attr(activity, "jumps_count") or count
+        if jumps:
+            params.append(f"{int(jumps):,} прыжков".replace(",", " "))
+    elif sets:
         reps = _format_number(count) if count else ""
         params.append(f"{_format_number(sets)} подхода × {reps} раз" if reps else f"{_format_number(sets)} подхода")
     elif variant in {"минуты", "мин"}:

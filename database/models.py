@@ -51,9 +51,13 @@ class Workout(Base):
     user_id = Column(String, nullable=False)
     exercise = Column(String, nullable=False)
     variant = Column(String)
-    count = Column(Integer)
+    count = Column(Float)
     date = Column(Date, default=date.today)
     calories = Column(Float, default=0)
+    input_method = Column(String, nullable=True)
+    duration_minutes = Column(Float, nullable=True)
+    distance_km = Column(Float, nullable=True)
+    jumps_count = Column(Integer, nullable=True)
 
 
 class CustomWorkoutExercise(Base):

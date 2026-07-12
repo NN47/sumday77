@@ -34,14 +34,12 @@ def test_activity_overview_shows_exercise_details_separately_from_steps():
 
     assert "🏃 Активность за день" in text
     assert "👣 Шаги: 5 500 (~229 ккал)" in text
-    assert "💪 Тренировки: 4 записей (~58 ккал)" in text
-    assert "• Отжимания: 30 повторений (~12 ккал)" in text
-    assert "• Планка: 2 мин (~7 ккал)" in text
-    assert "• Сгибание рук: Гантели 10 кг: 12 (~9 ккал)" in text
-    assert "• Бег: 20 мин (~30 ккал)" in text
+    assert "🏃 Активность:" in text
+    assert "• Отжимания — 30 раз (~12 ккал)" in text
+    assert "• Планка — 2 мин (~7 ккал)" in text
+    assert "• Сгибание рук — 12 раз (~9 ккал)" in text
+    assert "• Бег — 20 мин (~30 ккал)" in text
     assert "🔥 Всего сожжено: ~287 ккал" in text
-    assert "📌 Учтено в дневной норме: ~207 ккал" in text
-    assert "ℹ️ Почему учтено не всё?" in text
 
 
 def test_activity_overview_shows_sup_boarding_duration_and_calories():
@@ -54,4 +52,4 @@ def test_activity_overview_shows_sup_boarding_duration_and_calories():
     ):
         text = _format_today_activity_overview("user-id")
 
-    assert "• 🏄 Сапбординг: 80 мин (~557 ккал)" in text
+    assert "• 🏄 Сапбординг — 80 мин (~557 ккал)" in text

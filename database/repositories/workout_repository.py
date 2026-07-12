@@ -19,6 +19,10 @@ class WorkoutRepository:
         entry_date: date,
         variant: Optional[str] = None,
         calories: float = 0.0,
+        input_method: str | None = None,
+        duration_minutes: float | None = None,
+        distance_km: float | None = None,
+        jumps_count: int | None = None,
     ) -> Workout:
         """Сохраняет тренировку."""
         with get_db_session() as session:
@@ -29,6 +33,10 @@ class WorkoutRepository:
                 count=count,
                 date=entry_date,
                 calories=calories,
+                input_method=input_method,
+                duration_minutes=duration_minutes,
+                distance_km=distance_km,
+                jumps_count=jumps_count,
             )
             session.add(workout)
             session.commit()
@@ -90,7 +98,17 @@ class WorkoutRepository:
             )
     
     @staticmethod
-    def update_workout(workout_id: int, user_id: str, count: int, calories: float) -> bool:
+    def update_workout(
+        workout_id: int,
+        user_id: str,
+        count: int | float,
+        calories: float,
+        *,
+        input_method: str | None = None,
+        duration_minutes: float | None = None,
+        distance_km: float | None = None,
+        jumps_count: int | None = None,
+    ) -> bool:
         """Обновляет количество и калории тренировки."""
         with get_db_session() as session:
             workout = (
@@ -102,6 +120,11 @@ class WorkoutRepository:
             if workout:
                 workout.count = count
                 workout.calories = calories
+                if input_method is not None:
+                    workout.input_method = input_method
+                    workout.duration_minutes = duration_minutes
+                    workout.distance_km = distance_km
+                    workout.jumps_count = jumps_count
                 session.commit()
                 logger.info(f"Updated workout {workout_id} for user {user_id}: count={count}, calories={calories}")
                 return True

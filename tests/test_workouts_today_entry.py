@@ -178,9 +178,9 @@ def test_catalog_exercise_inline_pick_continues_to_duration_input():
     asyncio.run(workouts.pick_catalog_exercise(callback, state))
 
     callback.answer.assert_awaited_once()
-    state.set_state.assert_any_await(workouts.WorkoutStates.entering_duration)
+    state.set_state.assert_any_await(workouts.WorkoutStates.choosing_input_method)
     callback.message.answer.assert_awaited_once()
-    assert "Введи длительность для Бег" in callback.message.answer.await_args.args[0]
+    assert "Как хочешь добавить активность?" in callback.message.answer.await_args.args[0]
 
 
 def test_sup_boarding_is_available_in_all_exercises_and_uses_duration_input():

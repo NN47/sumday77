@@ -17,6 +17,8 @@ from utils.keyboards import (
     steps_menu,
     steps_confirmation_menu,
     duration_menu,
+    distance_menu,
+    jumps_menu,
     plank_duration_menu,
     count_menu,
     push_menu_stack,
@@ -25,12 +27,13 @@ from utils.keyboards import (
     grip_type_menu,
 )
 from states.user_states import WorkoutStates
-from database.repositories import WorkoutRepository, AnalyticsRepository
+from database.repositories import WorkoutRepository, AnalyticsRepository, MealRepository
 from database.repositories import CustomWorkoutExerciseRepository
 from utils.workout_utils import calculate_workout_calories
 from utils.validators import parse_date
 from utils.formatters import format_count_with_unit
 from utils.calendar_utils import build_workout_calendar_keyboard, show_calendar_back_button
+from utils.activity_input_config import ActivityInputMethod, get_activity_config_by_exercise, get_activity_methods, infer_input_method
 from utils.workout_formatters import (
     build_day_actions_keyboard,
     format_activity_summary,
@@ -83,11 +86,15 @@ def _exercise_search_tokens(exercise: str) -> tuple[str, ...]:
 
 
 def _exercise_input_type(exercise: str) -> str:
-    normalized = _normalize_exercise_name(exercise)
-    if normalized in STEPS_EXERCISES:
+    method = infer_input_method(_normalize_exercise_name(exercise))
+    if method == ActivityInputMethod.STEPS:
         return "steps"
-    if normalized in DURATION_EXERCISES:
+    if method == ActivityInputMethod.TIME:
         return "duration"
+    if method == ActivityInputMethod.DISTANCE:
+        return "distance"
+    if method == ActivityInputMethod.JUMPS:
+        return "jumps"
     return "reps"
 
 
@@ -304,6 +311,55 @@ async def _show_search_results(message: Message, state: FSMContext, query: str, 
         reply_markup=_build_activity_inline(page_items, "wrk_search_page", page, page > 0, (page + 1) * 8 < len(matches)),
     )
 
+
+def _method_label(method: ActivityInputMethod) -> str:
+    return {
+        ActivityInputMethod.TIME: "⏱ По времени",
+        ActivityInputMethod.DISTANCE: "📏 По расстоянию",
+        ActivityInputMethod.JUMPS: "🔢 По прыжкам",
+        ActivityInputMethod.REPETITIONS: "🔢 По повторениям",
+    }.get(method, str(method))
+
+
+def _build_input_method_keyboard(exercise: str) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=_method_label(method), callback_data=f"wrk_method:{method.value}")]
+        for method in get_activity_methods(exercise)
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _open_input_method(message: Message, state: FSMContext, exercise: str, method: ActivityInputMethod) -> None:
+    config = get_activity_config_by_exercise(exercise)
+    title = config.title if config else exercise
+    await state.update_data(input_method=method.value, back_target="input_method" if len(get_activity_methods(exercise)) > 1 else "exercise_picker")
+    if method == ActivityInputMethod.TIME:
+        await state.update_data(variant="Минуты")
+        await state.set_state(WorkoutStates.entering_duration)
+        selected_duration_menu = plank_duration_menu if exercise == "Планка" else duration_menu
+        push_menu_stack(message.bot, selected_duration_menu)
+        await message.answer(
+            f"{title}\n\nВведи длительность в минутах или выбери вариант:",
+            reply_markup=selected_duration_menu,
+        )
+        return
+    if method == ActivityInputMethod.DISTANCE:
+        await state.update_data(variant="Км")
+        await state.set_state(WorkoutStates.entering_distance)
+        push_menu_stack(message.bot, distance_menu)
+        await message.answer(f"{title}\n\nВведи дистанцию в километрах или выбери вариант:", reply_markup=distance_menu)
+        return
+    if method == ActivityInputMethod.JUMPS:
+        await state.update_data(variant="Прыжки")
+        await state.set_state(WorkoutStates.entering_jumps)
+        push_menu_stack(message.bot, jumps_menu)
+        await message.answer(f"{title}\n\nВведи количество прыжков или выбери вариант:", reply_markup=jumps_menu)
+        return
+    await state.update_data(variant="reps")
+    await state.set_state(WorkoutStates.entering_count)
+    push_menu_stack(message.bot, count_menu)
+    await message.answer("Выбери количество повторений:", reply_markup=count_menu)
+
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
     """Сбрасывает состояние пользователя."""
     # TODO: Заменить на FSM clear
@@ -471,33 +527,14 @@ async def show_day_workouts(
     
     text = [f"📅 {target_date.strftime('%d.%m.%Y')} — активность:"]
     total_calories = 0.0
-    aggregates: dict[str, dict[str, float | str]] = {}
 
     for w in workouts:
-        clean_exercise = _normalize_exercise_name(w.exercise)
         entry_calories = w.calories or calculate_workout_calories(user_id, w.exercise, w.variant, w.count)
         total_calories += entry_calories
-        key = clean_exercise
-        row = aggregates.setdefault(key, {"count": 0, "calories": 0.0, "variant": w.variant or "reps"})
-        row["count"] += w.count
-        row["calories"] += entry_calories
-        if (w.variant or "").lower() in {"минуты", "мин"}:
-            row["variant"] = "мин"
-        elif "шаг" in (w.variant or "").lower() or clean_exercise == "Шаги":
-            row["variant"] = "steps"
+        text.append(f"• {format_activity_summary(w, user_id)}")
 
-    for exercise, data in aggregates.items():
-        variant = data["variant"]
-        if variant == "steps":
-            formatted_count = f"{int(data['count']):,}".replace(",", " ")
-        elif variant == "мин":
-            formatted_count = f"{int(data['count'])} мин"
-        else:
-            formatted_count = f"{int(data['count'])} повторений"
-        text.append(f"• {exercise}: {formatted_count} (~{data['calories']:.0f} ккал)")
-    
     text.append(f"\n🔥 Итого за день: ~{total_calories:.0f} ккал")
-    
+
     await message.answer(
         "\n".join(text),
         reply_markup=build_day_actions_keyboard(
@@ -526,28 +563,24 @@ async def _continue_with_selected_exercise(message: Message, state: FSMContext, 
         await message.answer("Каким хватом выполнял подтягивания?", reply_markup=grip_type_menu)
         return
 
-    input_type = _exercise_input_type(exercise)
-    if input_type == "steps":
+    methods = get_activity_methods(exercise)
+    if len(methods) > 1:
+        config = get_activity_config_by_exercise(exercise)
+        await state.set_state(WorkoutStates.choosing_input_method)
+        await message.answer(
+            f"{config.title if config else exercise}\n\nКак хочешь добавить активность?",
+            reply_markup=_build_input_method_keyboard(exercise),
+        )
+        return
+
+    method = methods[0]
+    if method == ActivityInputMethod.STEPS:
         await state.update_data(back_target="exercise_picker")
         await state.set_state(WorkoutStates.entering_steps)
         push_menu_stack(message.bot, steps_menu)
         await message.answer("Введи количество шагов за сегодня:", reply_markup=steps_menu)
         return
-    if input_type == "duration":
-        await state.update_data(variant="Минуты", back_target="exercise_picker")
-        await state.set_state(WorkoutStates.entering_duration)
-        selected_duration_menu = plank_duration_menu if exercise == "Планка" else duration_menu
-        push_menu_stack(message.bot, selected_duration_menu)
-        await message.answer(
-            f"Введи длительность для {exercise} в минутах или выбери предложенное время:",
-            reply_markup=selected_duration_menu,
-        )
-        return
-
-    await state.update_data(variant="reps", back_target="exercise_picker")
-    await state.set_state(WorkoutStates.entering_count)
-    push_menu_stack(message.bot, count_menu)
-    await message.answer("Выбери количество повторений:", reply_markup=count_menu)
+    await _open_input_method(message, state, exercise, method)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("wrk_pick:"))
@@ -590,6 +623,25 @@ async def start_exercise_search(callback: CallbackQuery, state: FSMContext):
     await state.set_state(WorkoutStates.searching_exercise)
     push_menu_stack(callback.message.bot, search_back_menu)
     await callback.message.answer("🔍 Введи название упражнения или его часть:", reply_markup=search_back_menu)
+
+
+@router.callback_query(WorkoutStates.choosing_input_method, lambda c: c.data and c.data.startswith("wrk_method:"))
+async def choose_activity_input_method(callback: CallbackQuery, state: FSMContext):
+    """Выбирает универсальный способ ввода активности."""
+    await callback.answer()
+    data = await state.get_data()
+    exercise = data.get("exercise")
+    if not exercise:
+        await callback.message.answer("❌ Не удалось выбрать способ ввода. Начни добавление заново.")
+        await state.clear()
+        return
+    method_value = callback.data.split(":", maxsplit=1)[1]
+    try:
+        method = ActivityInputMethod(method_value)
+    except ValueError:
+        await callback.message.answer("❌ Неизвестный способ ввода.")
+        return
+    await _open_input_method(callback.message, state, exercise, method)
 
 
 @router.callback_query(lambda c: c.data.startswith("cal_nav:"))
@@ -701,8 +753,8 @@ async def edit_workout(callback: CallbackQuery, state: FSMContext):
         f"✏️ Редактирование тренировки\n\n"
         f"💪 {workout.exercise}\n"
         f"📅 {workout.date.strftime('%d.%m.%Y')}\n"
-        f"📊 Текущее количество: {workout.count}\n\n"
-        f"Введи новое количество:"
+        f"📊 Текущее значение: {format_activity_summary(workout, include_calories=False)}\n\n"
+        f"Введи новое значение:"
     )
 
 
@@ -711,30 +763,41 @@ async def handle_workout_edit_count(message: Message, state: FSMContext):
     """Обрабатывает ввод нового количества при редактировании тренировки."""
     user_id = str(message.from_user.id)
     
+    data = await state.get_data()
+    workout_id = data.get("workout_id")
+    exercise = data.get("workout_exercise")
+    variant = data.get("workout_variant")
+    input_method = infer_input_method(exercise, variant)
+    target_date_str = data.get("target_date", date.today().isoformat())
+
     try:
-        count = int(message.text)
+        if input_method == ActivityInputMethod.DISTANCE:
+            count = float((message.text or "").replace("км", "").replace("КМ", "").replace(",", ".").strip())
+        else:
+            count = int((message.text or "").replace(" ", ""))
         if count <= 0:
             raise ValueError
     except (ValueError, AttributeError):
         await message.answer("⚠️ Введи положительное число")
         return
     
-    data = await state.get_data()
-    workout_id = data.get("workout_id")
-    exercise = data.get("workout_exercise")
-    variant = data.get("workout_variant")
-    target_date_str = data.get("target_date", date.today().isoformat())
-    
     if not workout_id:
         await message.answer("❌ Ошибка: не найдена тренировка для обновления.")
         await state.clear()
         return
     
-    # Пересчитываем калории
-    calories = calculate_workout_calories(user_id, exercise, variant, count)
-    
-    # Обновляем тренировку
-    success = WorkoutRepository.update_workout(workout_id, user_id, count, calories)
+    # Пересчитываем калории только существующими проверенными путями.
+    calories = 0.0 if input_method in {ActivityInputMethod.DISTANCE, ActivityInputMethod.JUMPS} else calculate_workout_calories(user_id, exercise, variant, count)
+    success = WorkoutRepository.update_workout(
+        workout_id,
+        user_id,
+        count,
+        calories,
+        input_method=input_method.value,
+        duration_minutes=count if input_method == ActivityInputMethod.TIME else None,
+        distance_km=count if input_method == ActivityInputMethod.DISTANCE else None,
+        jumps_count=int(count) if input_method == ActivityInputMethod.JUMPS else None,
+    )
     
     if success:
         if isinstance(target_date_str, str):
@@ -926,8 +989,15 @@ async def handle_duration_input(message: Message, state: FSMContext):
         await message.answer("Введи длительность в минутах (например, 1,5):")
         return
     if message.text == "⬅️ Назад":
-        await state.set_state(WorkoutStates.choosing_exercise)
-        await _send_add_activity_screen(message, state, str(message.from_user.id))
+        data = await state.get_data()
+        exercise = data.get("exercise")
+        if data.get("back_target") == "input_method" and exercise:
+            await state.set_state(WorkoutStates.choosing_input_method)
+            config = get_activity_config_by_exercise(exercise)
+            await message.answer(f"{config.title if config else exercise}\n\nКак хочешь добавить активность?", reply_markup=_build_input_method_keyboard(exercise))
+        else:
+            await state.set_state(WorkoutStates.choosing_exercise)
+            await _send_add_activity_screen(message, state, str(message.from_user.id))
         return
     if message.text in MAIN_MENU_BUTTON_ALIASES:
         from handlers.common import go_main_menu
@@ -965,12 +1035,103 @@ async def handle_duration_input(message: Message, state: FSMContext):
         entry_date=_entry_date_from_state_data(data),
         variant="Минуты",
         calories=calories,
+        input_method=ActivityInputMethod.TIME.value,
+        duration_minutes=minutes,
     )
     await state.clear()
     await message.answer(
         f"✅ Записал!\n💪 {exercise}\n⏱ {_format_minutes(minutes)} мин\n🔥 ~{calories:.0f}\n📅 сегодня",
         reply_markup=add_another_exercise_menu,
     )
+
+
+@router.message(WorkoutStates.entering_distance)
+async def handle_distance_input(message: Message, state: FSMContext):
+    """Обрабатывает ввод дистанции активности."""
+    if message.text == "✍️ Ввести вручную":
+        await message.answer("Введи дистанцию в километрах (например, 2.5 или 5,3):")
+        return
+    if message.text == "⬅️ Назад":
+        data = await state.get_data()
+        exercise = data.get("exercise")
+        await state.set_state(WorkoutStates.choosing_input_method)
+        config = get_activity_config_by_exercise(exercise)
+        await message.answer(f"{config.title if config else exercise}\n\nКак хочешь добавить активность?", reply_markup=_build_input_method_keyboard(exercise))
+        return
+    if message.text in MAIN_MENU_BUTTON_ALIASES:
+        from handlers.common import go_main_menu
+        await go_main_menu(message, state)
+        return
+    raw = (message.text or "").replace("км", "").replace("КМ", "").replace(",", ".").strip()
+    try:
+        distance_km = float(raw)
+        if distance_km <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        await message.answer("⚠️ Введи положительную дистанцию в километрах (например, 2.5 или 5,3).")
+        return
+    data = await state.get_data()
+    exercise = data.get("exercise")
+    user_id = str(message.from_user.id)
+    entry_date = _entry_date_from_state_data(data)
+    calories = 0.0
+    WorkoutRepository.save_workout(
+        user_id=user_id,
+        exercise=exercise,
+        count=distance_km,
+        entry_date=entry_date,
+        variant="Км",
+        calories=calories,
+        input_method=ActivityInputMethod.DISTANCE.value,
+        distance_km=distance_km,
+    )
+    await state.clear()
+    date_label = "сегодня" if entry_date == date.today() else entry_date.strftime("%d.%m.%Y")
+    await message.answer(f"✅ Записал!\n💪 {exercise}\n📏 {_format_minutes(distance_km)} км\n🔥 ~{calories:.0f} ккал\n📅 {date_label}", reply_markup=add_another_exercise_menu)
+
+
+@router.message(WorkoutStates.entering_jumps)
+async def handle_jumps_input(message: Message, state: FSMContext):
+    """Обрабатывает ввод количества прыжков."""
+    if message.text == "✍️ Ввести вручную":
+        await message.answer("Введи количество прыжков числом:")
+        return
+    if message.text == "⬅️ Назад":
+        data = await state.get_data()
+        exercise = data.get("exercise")
+        await state.set_state(WorkoutStates.choosing_input_method)
+        config = get_activity_config_by_exercise(exercise)
+        await message.answer(f"{config.title if config else exercise}\n\nКак хочешь добавить активность?", reply_markup=_build_input_method_keyboard(exercise))
+        return
+    if message.text in MAIN_MENU_BUTTON_ALIASES:
+        from handlers.common import go_main_menu
+        await go_main_menu(message, state)
+        return
+    try:
+        jumps = int((message.text or "").replace(" ", ""))
+        if jumps <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        await message.answer("⚠️ Введи положительное количество прыжков.")
+        return
+    data = await state.get_data()
+    exercise = data.get("exercise")
+    user_id = str(message.from_user.id)
+    entry_date = _entry_date_from_state_data(data)
+    calories = 0.0
+    WorkoutRepository.save_workout(
+        user_id=user_id,
+        exercise=exercise,
+        count=jumps,
+        entry_date=entry_date,
+        variant="Прыжки",
+        calories=calories,
+        input_method=ActivityInputMethod.JUMPS.value,
+        jumps_count=jumps,
+    )
+    await state.clear()
+    date_label = "сегодня" if entry_date == date.today() else entry_date.strftime("%d.%m.%Y")
+    await message.answer(f"✅ Записал!\n💪 {exercise}\n🔢 {jumps:,} прыжков\n🔥 ~{calories:.0f} ккал\n📅 {date_label}".replace(",", " "), reply_markup=add_another_exercise_menu)
 
 
 @router.message(WorkoutStates.confirming_duration)
@@ -1020,6 +1181,8 @@ async def confirm_duration_workout(message: Message, state: FSMContext):
         entry_date=entry_date,
         variant="Минуты",
         calories=calories,
+        input_method=ActivityInputMethod.TIME.value,
+        duration_minutes=minutes,
     )
     AnalyticsRepository.track_event(user_id, "add_workout", section="activity")
     await state.clear()
