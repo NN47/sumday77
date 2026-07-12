@@ -143,7 +143,7 @@ def test_cancel_reps_input_clears_state_and_returns_training_menu_without_saving
     assert message.answer.await_args.kwargs["reply_markup"] is workouts.training_menu
 
 
-def test_start_exercise_selection_shows_recent_inline_above_picker():
+def test_start_exercise_selection_shows_recent_inline_and_categories():
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=12345),
         bot=SimpleNamespace(menu_stack=[]),
@@ -156,30 +156,26 @@ def test_start_exercise_selection_shows_recent_inline_above_picker():
 
     assert message.answer.await_count == 2
     recent_call = message.answer.await_args_list[0]
-    assert recent_call.args[0] == "🕘 <b>Недавно добавленные активности</b>"
-    assert recent_call.kwargs["parse_mode"] == "HTML"
+    assert recent_call.args[0] == "⭐ Недавние активности:\n\n1️⃣ Бег\n2️⃣ Отжимания"
     assert [[button.text for button in row] for row in recent_call.kwargs["reply_markup"].inline_keyboard] == [
-        ["Бег"],
-        ["Отжимания"],
+        ["1️⃣ Бег"],
+        ["2️⃣ Отжимания"],
+        ["🔍 Поиск упражнения"],
     ]
-    picker_call = message.answer.await_args_list[1]
-    assert picker_call.args[0] == "<b>Выбери из кнопок ниже или из недавних сверху ☝️</b>"
-    assert picker_call.kwargs["reply_markup"] is workouts.exercise_picker_menu
+    category_call = message.answer.await_args_list[1]
+    assert category_call.args[0] == "📂 Или выбери категорию:"
+    assert category_call.kwargs["reply_markup"] is workouts.activity_category_menu
 
 
-def test_recent_exercise_inline_pick_continues_to_duration_input():
+def test_catalog_exercise_inline_pick_continues_to_duration_input():
     callback = SimpleNamespace(
-        data="wrk_recent_pick:0",
+        data=f"wrk_pick:{workouts._activity_id('Бег')}",
         message=SimpleNamespace(bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock()),
         answer=AsyncMock(),
     )
-    state = SimpleNamespace(
-        get_data=AsyncMock(return_value={"recent_exercises": ["Бег"]}),
-        update_data=AsyncMock(),
-        set_state=AsyncMock(),
-    )
+    state = SimpleNamespace(update_data=AsyncMock(), set_state=AsyncMock())
 
-    asyncio.run(workouts.pick_recent_exercise(callback, state))
+    asyncio.run(workouts.pick_catalog_exercise(callback, state))
 
     callback.answer.assert_awaited_once()
     state.set_state.assert_any_await(workouts.WorkoutStates.entering_duration)
@@ -188,9 +184,7 @@ def test_recent_exercise_inline_pick_continues_to_duration_input():
 
 
 def test_sup_boarding_is_available_in_all_exercises_and_uses_duration_input():
-    from utils.keyboards import bodyweight_exercises
-
-    assert "🏄 Сапбординг" in bodyweight_exercises
+    assert "🏄 Сапбординг" in workouts._all_catalog_exercises()
     assert workouts._exercise_input_type("🏄 Сапбординг") == "duration"
 
 

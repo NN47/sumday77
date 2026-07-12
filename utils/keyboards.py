@@ -295,6 +295,39 @@ other_day_menu = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+ACTIVITY_CATEGORIES = {
+    "cardio": {"title": "🏃 Кардио", "activities": ["Бег", "Скакалка"]},
+    "gym": {"title": "🏋️ Тренажерный зал", "activities": [
+        "Становая тяга без утяжелителя", "Становая тяга с утяжелителем", "Тяга верхнего блока",
+        "Тяга горизонтального блока", "Тяга нижнего блока", "Тяга штанги в наклоне",
+        "Приседания со штангой", "Разведения гантелей", "Разгибание ног в тренажёре",
+        "Румынская тяга без утяжелителя", "Румынская тяга с утяжелителем", "Сгибание ног в тренажёре",
+        "Гиперэкстензия с утяжелителем", "Жим гантелей лёжа", "Жим гантелей сидя",
+        "Жим ногами", "Жим штанги лёжа", "Подъёмы гантелей на бицепс",
+    ]},
+    "bodyweight": {"title": "💪 Собственный вес", "activities": [
+        "Отжимания", "Подтягивания", "Приседания", "Планка", "Пресс", "Берпи",
+        "Гиперэкстензия без утяжелителя",
+    ]},
+    "sport": {"title": "🏄 Спорт и активный отдых", "activities": ["🏄 Сапбординг", "Йога"]},
+}
+
+activity_category_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🏃 Кардио")],
+        [KeyboardButton(text="🏋️ Тренажерный зал")],
+        [KeyboardButton(text="💪 Собственный вес")],
+        [KeyboardButton(text="🏄 Спорт и активный отдых")],
+        [KeyboardButton(text="⬅️ Назад")],
+    ],
+    resize_keyboard=True,
+)
+
+search_back_menu = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="⬅️ Назад")]],
+    resize_keyboard=True,
+)
+
 # Упражнения
 bodyweight_exercises = [
     "Подтягивания",
