@@ -156,7 +156,7 @@ def test_start_exercise_selection_shows_recent_inline_and_categories():
 
     assert message.answer.await_count == 2
     recent_call = message.answer.await_args_list[0]
-    assert recent_call.args[0] == "⭐ Недавние активности:\n\n1️⃣ Бег\n2️⃣ Отжимания"
+    assert recent_call.args[0] == "⭐ Недавние активности:"
     assert [[button.text for button in row] for row in recent_call.kwargs["reply_markup"].inline_keyboard] == [
         ["1️⃣ Бег"],
         ["2️⃣ Отжимания"],

@@ -271,8 +271,7 @@ async def _send_add_activity_screen(message: Message, state: FSMContext, user_id
     page_items, page = _paginate(recent, page)
     await state.update_data(add_activity_screen="main", recent_exercises=recent, recent_page=page)
     if page_items:
-        numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
-        text = "⭐ Недавние активности:\n\n" + "\n".join(f"{numbers[i]} {ex}" for i, ex in enumerate(page_items))
+        text = "⭐ Недавние активности:"
     else:
         text = "⭐ Недавних активностей пока нет.\n\nНайди упражнение через поиск или выбери категорию ниже."
     await message.answer(
