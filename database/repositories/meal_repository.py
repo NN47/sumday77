@@ -100,6 +100,20 @@ class MealRepository:
             )
 
     @staticmethod
+    def get_user_meal_history_page(user_id: str, *, offset: int = 0, limit: int = 100) -> list[Meal]:
+        """Возвращает страницу истории приёмов пищи пользователя от новых к старым."""
+        with get_db_session() as session:
+            return (
+                session.query(Meal)
+                .filter(Meal.user_id == user_id)
+                .filter(Meal.raw_query.isnot(None))
+                .order_by(Meal.id.desc())
+                .offset(max(0, offset))
+                .limit(max(1, limit))
+                .all()
+            )
+
+    @staticmethod
     def get_daily_totals(user_id: str, entry_date: date) -> dict:
         """Получает суммарные КБЖУ за день."""
         with get_db_session() as session:
