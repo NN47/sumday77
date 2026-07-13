@@ -23,6 +23,17 @@ def test_detailed_deepseek_prompt_requires_telegram_html_not_markdown() -> None:
     assert "**" in prompt  # markdown tokens are explicitly forbidden in the instruction
 
 
+def test_detailed_deepseek_prompt_avoids_inaccurate_nutrition_recommendations() -> None:
+    prompt = DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT
+
+    assert "Не называй жиры «качественными» или «полезными»" in prompt
+    assert "Не классифицируй автоматически такие продукты как источники полезных жиров" in prompt
+    assert "Не связывай недостаток углеводов напрямую с похудением" in prompt
+    assert "Основной фактор похудения — общий энергетический баланс" in prompt
+    assert "Не советуй добирать воду перед сном" in prompt
+    assert "распределять воду равномерно в течение дня" in prompt
+
+
 def test_detailed_deepseek_analysis_is_sent_with_html_parse_mode() -> None:
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=12345),
