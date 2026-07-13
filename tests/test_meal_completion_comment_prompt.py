@@ -38,3 +38,14 @@ def test_meal_completion_prompt_requires_varied_natural_titles_not_mini_analysis
     assert "не используй один и тот же шаблон" in prompt
     assert "не как мини-анализ КБЖУ" in prompt
     assert "естественная реакция персонального помощника" in prompt
+
+
+def test_meal_completion_prompt_encodes_supportive_philosophy() -> None:
+    prompt = _meal_completion_prompt()
+
+    assert "Sumday77 всегда на стороне пользователя" in prompt
+    assert "сначала найди реальную сильную сторону" in prompt
+    assert "баланс уже не поправить" in prompt
+    assert "придётся отрабатывать" in prompt
+    assert "Не советуй голодать" in prompt
+    assert "следующий хороший выбор всё ещё имеет значение" in prompt
