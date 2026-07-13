@@ -115,7 +115,7 @@ def _format_weight_value_for_editor(raw_value: str | float | int | None) -> str:
     weight_value = _to_float_weight(raw_value)
     if weight_value is None:
         return str(raw_value)
-    return f"{weight_value:.1f}"
+    return f"{weight_value:.2f}"
 
 
 def _format_weight_input_screen(
@@ -132,7 +132,7 @@ def _format_weight_input_screen(
     else:
         weight_line = (
             "<b>Последний внесённый вес:</b> "
-            f"{(f'{base_weight:.1f}'.rstrip('0').rstrip('.') if base_weight else 'нет данных')} кг"
+            f"{(_format_weight_value_for_editor(base_weight) if base_weight else 'нет данных')} кг"
         )
         title = "<b>Изменение веса</b>"
 
@@ -147,10 +147,10 @@ def _format_weight_input_screen(
 def _format_weight_delta(delta: float) -> str:
     """Форматирует изменение веса с понятным знаком и emoji."""
     if delta < 0:
-        return f"{delta:.1f} кг 📉"
+        return f"{delta:.2f} кг 📉"
     if delta > 0:
-        return f"+{delta:.1f} кг 📈"
-    return "0.0 кг ➖"
+        return f"+{delta:.2f} кг 📈"
+    return "0.00 кг ➖"
 
 
 def _format_weight_confirmation_text(
@@ -182,7 +182,7 @@ def _format_weight_draft_text(
     compact_quick_add: bool = False,
 ) -> str:
     """Формирует сообщение о черновом весе после быстрой правки."""
-    current_weight_lines = [f"⚖️ <b>Вес сейчас:</b> {weight_value:.1f} кг"]
+    current_weight_lines = [f"<b>⚖️ Вес сейчас: {weight_value:.2f} кг</b>"]
     if not compact_quick_add:
         current_weight_lines.append(f"📅 <b>Дата:</b> {entry_date.strftime('%d.%m.%Y')}")
 
@@ -199,19 +199,19 @@ def _format_weight_draft_text(
         delta = weight_value - previous_weight_value
         previous_weight_lines = [
             "<b>Предыдущая запись:</b>",
-            f"⚖️ {previous_weight_value:.1f} кг",
+            f"⚖️ {previous_weight_value:.2f} кг",
             f"📅 {previous_weight_date.strftime('%d.%m.%Y')}",
         ]
         if compact_quick_add:
             previous_weight_lines = [
-                "<b>Предыдущая запись:</b>",
+                "Предыдущая запись:",
                 f"📅 {previous_weight_date.strftime('%d.%m.%Y')}",
-                f"⚖️ {previous_weight_value:.1f} кг",
+                f"⚖️ {previous_weight_value:.2f} кг",
             ]
         lines.extend([
             *previous_weight_lines,
             "",
-            f"<b>Изменение с предыдущей записи:</b> {_format_weight_delta(delta)}",
+            f"{'Изменение с предыдущей записи:' if compact_quick_add else '<b>Изменение с предыдущей записи:</b>'} {_format_weight_delta(delta)}",
             "",
             *current_weight_lines,
         ])
@@ -985,7 +985,7 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
     weight_id = data.get("weight_id")
     previous_weight_value = data.get("draft_previous_weight_value")
     previous_weight_value = _to_float_weight(previous_weight_value)
-    stored_weight_value = f"{weight_value:.1f}"
+    stored_weight_value = f"{weight_value:.2f}"
     source = data.get("weight_entry_source", WEIGHT_SOURCE_WEIGHT_SECTION)
 
     try:
@@ -1006,7 +1006,7 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
                     source,
                     (
                         f"✅ <b>Вес обновлён!</b>\n\n"
-                        f"⚖️ <b>{weight_value:.1f} кг</b>\n"
+                        f"⚖️ <b>{weight_value:.2f} кг</b>\n"
                         f"📅 {entry_date.strftime('%d.%m.%Y')}"
                         f"{delta_text}"
                     ),
@@ -1041,7 +1041,7 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
                 source,
                 (
                     f"✅ <b>Вес сохранён!</b>\n\n"
-                    f"⚖️ <b>{weight_value:.1f} кг</b>"
+                    f"⚖️ <b>{weight_value:.2f} кг</b>"
                     f"{delta_text}"
                     f"{comment_text}"
                 ),
@@ -1617,7 +1617,7 @@ async def show_day_weight(message: Message, user_id: str, target_date: date):
         return
     
     weight_value = _to_float_weight(weight.value)
-    weight_text = f"{weight_value:.1f}" if weight_value is not None else str(weight.value)
+    weight_text = f"{weight_value:.2f}" if weight_value is not None else str(weight.value)
     text = f"📅 {target_date.strftime('%d.%m.%Y')}\n\n⚖️ Вес: {weight_text} кг"
     
     await message.answer(
