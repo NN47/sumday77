@@ -64,3 +64,14 @@ def test_detailed_deepseek_analysis_is_sent_with_html_parse_mode() -> None:
     create_entry.assert_called_once()
     final_call = message.answer.await_args_list[-1]
     assert final_call.kwargs.get("parse_mode") == "HTML"
+
+
+def test_detailed_deepseek_prompt_encodes_supportive_sumday77_philosophy() -> None:
+    prompt = DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT
+
+    assert "Sumday77 всегда на стороне пользователя" in prompt
+    assert "Всегда сначала найди реальные сильные стороны дня" in prompt
+    assert "день уже потерян" in prompt
+    assert "Не назначай наказание за еду" in prompt
+    assert "один день не отменяет общий прогресс" in prompt
+    assert "следующий хороший выбор всё ещё важен" in prompt
