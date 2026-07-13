@@ -143,8 +143,7 @@ def test_weight_quick_adjust_keyboard_uses_requested_delta_buttons_without_dupli
     assert rows[0] == ["-1.0", "-0,5", "+0,5", "+1.0"]
     assert rows[1] == ["-0,2", "-0,1", "+0,1", "+0,2"]
     assert rows[2] == ["✍️ Ввести вручную"]
-    assert rows[3] == ["✅ Сохранить"]
-    assert rows[4] == ["⬅️ Назад", "❌ Отмена"]
+    assert rows[3] == ["❌ Отмена"]
 
 
 def test_quick_weight_delta_resolves_against_base_weight():
@@ -195,7 +194,7 @@ def test_weight_input_screen_formats_current_weight_float_artifacts():
     )
 
     assert "76.20000000000003" not in text
-    assert "<b>Текущий вес:</b> 76.2 кг" in text
+    assert "<b>Текущий вес:</b> 76.20 кг" in text
 
 def test_weight_input_keeps_quick_buttons_and_requires_save_before_repository_write():
     from handlers.weight import handle_weight_input
@@ -221,13 +220,13 @@ def test_weight_input_keeps_quick_buttons_and_requires_save_before_repository_wr
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows[0] == ["-1.0", "-0,5", "+0,5", "+1.0"]
     assert rows[3] == ["✅ Сохранить"]
-    assert "⚖️ <b>Вес сейчас:</b> 76.4 кг" in text
+    assert "<b>⚖️ Вес сейчас: 76.40 кг</b>" in text
     assert "📅 <b>Дата:</b> 29.05.2026" in text
     assert "<b>Предыдущая запись:</b>" in text
-    assert "⚖️ 76.9 кг" in text
+    assert "⚖️ 76.90 кг" in text
     assert "📅 28.05.2026" in text
-    assert text.index("<b>Предыдущая запись:</b>") < text.index("⚖️ <b>Вес сейчас:</b> 76.4 кг")
-    assert "<b>Изменение с предыдущей записи:</b> -0.5 кг 📉" in text
+    assert text.index("<b>Предыдущая запись:</b>") < text.index("<b>⚖️ Вес сейчас: 76.40 кг</b>")
+    assert "<b>Изменение с предыдущей записи:</b> -0.50 кг 📉" in text
     assert "Текущий вес" not in text
     assert "Новый вес" not in text
 
@@ -248,11 +247,11 @@ def test_weight_input_from_quick_add_uses_compact_draft_text():
 
     text, _ = message.answers[-1]
     assert text == (
-        "<b>Предыдущая запись:</b>\n"
+        "Предыдущая запись:\n"
         "📅 11.07.2026\n"
-        "⚖️ 76.0 кг\n\n"
-        "<b>Изменение с предыдущей записи:</b> +0.6 кг 📈\n\n"
-        "⚖️ <b>Вес сейчас:</b> 76.6 кг"
+        "⚖️ 76.00 кг\n\n"
+        "Изменение с предыдущей записи: +0.60 кг 📈\n\n"
+        "<b>⚖️ Вес сейчас: 76.60 кг</b>"
     )
 
 
@@ -276,11 +275,11 @@ def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
     text, reply_markup = message.answers[-1]
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows[1] == ["-0,2", "-0,1", "+0,1", "+0,2"]
-    assert "⚖️ <b>Вес сейчас:</b> 76.0 кг" in text
-    assert "⚖️ 76.9 кг" in text
+    assert "<b>⚖️ Вес сейчас: 76.00 кг</b>" in text
+    assert "⚖️ 76.90 кг" in text
     assert "📅 28.05.2026" in text
-    assert text.index("<b>Предыдущая запись:</b>") < text.index("⚖️ <b>Вес сейчас:</b> 76.0 кг")
-    assert "<b>Изменение с предыдущей записи:</b> -0.9 кг 📉" in text
+    assert text.index("<b>Предыдущая запись:</b>") < text.index("<b>⚖️ Вес сейчас: 76.00 кг</b>")
+    assert "<b>Изменение с предыдущей записи:</b> -0.90 кг 📉" in text
     assert "Текущий вес" not in text
     assert "Новый вес" not in text
 
@@ -290,7 +289,7 @@ def test_weight_draft_text_shows_first_entry_message_without_previous_weight():
 
     text = _format_weight_draft_text(75.9, date(2026, 6, 1), None, None)
 
-    assert "⚖️ <b>Вес сейчас:</b> 75.9 кг" in text
+    assert "<b>⚖️ Вес сейчас: 75.90 кг</b>" in text
     assert "📅 <b>Дата:</b> 01.06.2026" in text
     assert "Это первая запись веса." in text
     assert "После сохранения бот начнёт отслеживать динамику." in text
@@ -303,8 +302,8 @@ def test_weight_draft_text_formats_positive_and_zero_delta():
     positive_text = _format_weight_draft_text(76.9, date(2026, 6, 1), 75.9, date(2026, 5, 25))
     zero_text = _format_weight_draft_text(75.9, date(2026, 6, 1), 75.9, date(2026, 5, 25))
 
-    assert "<b>Изменение с предыдущей записи:</b> +1.0 кг 📈" in positive_text
-    assert "<b>Изменение с предыдущей записи:</b> 0.0 кг ➖" in zero_text
+    assert "<b>Изменение с предыдущей записи:</b> +1.00 кг 📈" in positive_text
+    assert "<b>Изменение с предыдущей записи:</b> 0.00 кг ➖" in zero_text
 
 
 def test_weight_day_actions_for_existing_weight_show_requested_buttons():
@@ -335,7 +334,7 @@ def test_show_day_weight_formats_float_artifacts():
 
     text, reply_markup = message.answers[0]
     assert "76.20000000000003" not in text
-    assert "⚖️ Вес: 76.2 кг" in text
+    assert "⚖️ Вес: 76.20 кг" in text
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows == [
         ["✏️ Редактировать", "🗑 Удалить"],
@@ -353,6 +352,7 @@ def test_update_weight_sends_only_success_message_with_day_actions():
             "draft_previous_weight_value": 76.9,
             "entry_date": date(2026, 5, 29).isoformat(),
             "weight_id": 3,
+            "weight_entry_source": "calendar",
         }
     )
     updated_entry = weight_entry(76.2, date(2026, 5, 29), 3)
@@ -364,13 +364,13 @@ def test_update_weight_sends_only_success_message_with_day_actions():
     ):
         asyncio.run(_save_weight_draft(message, state, "12345", state.data))
 
-    update_weight.assert_called_once_with(3, "12345", "76.2")
+    update_weight.assert_called_once_with(3, "12345", "76.20")
     show_day_weight.assert_not_called()
     assert state.cleared is True
     assert len(message.answers) == 1
     text, reply_markup = message.answers[0]
     assert "✅ <b>Вес обновлён!</b>" in text
-    assert "⚖️ <b>76.2 кг</b>" in text
+    assert "⚖️ <b>76.20 кг</b>" in text
     assert "76.20000000000003" not in text
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows == [
