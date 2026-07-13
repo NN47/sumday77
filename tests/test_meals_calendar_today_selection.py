@@ -15,7 +15,7 @@ def _build_callback(callback_data: str):
     return callback
 
 
-def test_selecting_today_opens_today_report():
+def test_selecting_today_opens_selected_day_from_calendar():
     today = date.today().isoformat()
     callback = _build_callback(f"meal_cal_day:{today}")
 
@@ -26,8 +26,12 @@ def test_selecting_today_opens_today_report():
         asyncio.run(meals.select_kbju_calendar_day(callback))
 
     callback.answer.assert_awaited_once()
-    send_today.assert_awaited_once_with(callback.message, str(callback.from_user.id))
-    show_day.assert_not_awaited()
+    send_today.assert_not_awaited()
+    show_day.assert_awaited_once_with(
+        callback.message,
+        str(callback.from_user.id),
+        date.fromisoformat(today),
+    )
 
 
 def test_selecting_non_today_opens_selected_day():
