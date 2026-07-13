@@ -722,6 +722,7 @@ def _format_label_weight_confirmation_text(data: dict, weight_grams: float) -> s
 
 
 MY_PRODUCTS_PAGE_SIZE = 8
+MY_PRODUCTS_HISTORY_BATCH_SIZE = 100
 
 MY_PRODUCTS_SOURCE_FILTERS = {
     "text_ai": {"button": "📝 Из текстового AI-анализа", "title": "📝 <b>Мои продукты из текстового AI-анализа"},
@@ -909,6 +910,58 @@ def _expand_my_products(my_product_meals: list, limit: int = 64, source_filter: 
     return items
 
 
+def _get_my_products_page_items(
+    user_id: str,
+    page: int,
+    *,
+    source_filter: str | None = None,
+) -> tuple[list[MyProductItem], bool, bool, int]:
+    """Возвращает нужную страницу моих продуктов, подгружая историю порциями."""
+    page = max(1, page)
+    start = (page - 1) * MY_PRODUCTS_PAGE_SIZE
+    needed = start + MY_PRODUCTS_PAGE_SIZE + 1
+    items: list[MyProductItem] = []
+    seen: set[str] = set()
+    offset = 0
+
+    while len(items) < needed:
+        meals_batch = MealRepository.get_user_meal_history_page(
+            user_id,
+            offset=offset,
+            limit=MY_PRODUCTS_HISTORY_BATCH_SIZE,
+        )
+        if not meals_batch:
+            break
+
+        batch_items = _expand_my_products(
+            meals_batch,
+            limit=MY_PRODUCTS_HISTORY_BATCH_SIZE * 10,
+            source_filter=source_filter,
+        )
+        for item in batch_items:
+            key = item.title.strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            items.append(item)
+            if len(items) >= needed:
+                break
+
+        offset += len(meals_batch)
+        if len(meals_batch) < MY_PRODUCTS_HISTORY_BATCH_SIZE:
+            break
+
+    if not items:
+        return [], False, False, 1
+
+    if start >= len(items):
+        last_page = max(1, math.ceil(len(items) / MY_PRODUCTS_PAGE_SIZE))
+        return _get_my_products_page_items(user_id, last_page, source_filter=source_filter)
+
+    page_items = items[start : start + MY_PRODUCTS_PAGE_SIZE]
+    return page_items, page > 1, len(items) > start + MY_PRODUCTS_PAGE_SIZE, page
+
+
 def _is_custom_product_meal(meal) -> bool:
     """Проверяет, что запись создана именно через кнопку «Внести вручную»."""
     return any(_get_product_source(product) == "manual" for product in _parse_my_products(meal))
@@ -991,8 +1044,8 @@ def _build_my_products_keyboard(
         rows.append(nav_row)
 
     rows.append([InlineKeyboardButton(text="🔎 Поиск продукта", callback_data=f"my_products_search_start:{meal_type}")])
-    if back_callback_data:
-        rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback_data)])
+    if page >= 3:
+        rows.append([InlineKeyboardButton(text="⬅️ В начало", callback_data=f"my_products_page:{meal_type}:1")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -2235,16 +2288,13 @@ async def _show_my_products_page(
     show_source_filter_block: bool = False,
 ) -> bool:
     user_id = user_id or str(message.from_user.id)
-    source_meals = MealRepository.get_recent_unique_meals(user_id, limit=64)
-    all_my_product_meals = _expand_my_products(source_meals, limit=64, source_filter=source_filter)
-    if not all_my_product_meals:
+    page_items, has_prev, has_next, page = _get_my_products_page_items(
+        user_id,
+        page,
+        source_filter=source_filter,
+    )
+    if not page_items:
         return False
-    total_pages = max(1, math.ceil(len(all_my_product_meals) / MY_PRODUCTS_PAGE_SIZE))
-    page = min(max(1, page), total_pages)
-    start = (page - 1) * MY_PRODUCTS_PAGE_SIZE
-    page_items = all_my_product_meals[start : start + MY_PRODUCTS_PAGE_SIZE]
-    has_prev = page > 1
-    has_next = page < total_pages
     await state.update_data(
         my_products_page=page,
         meal_type=meal_type,

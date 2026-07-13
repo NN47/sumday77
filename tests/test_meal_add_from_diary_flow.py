@@ -475,7 +475,7 @@ def test_meal_entry_my_products_inline_button_opens_my_product_products_page():
         carbs=1.7,
     )
 
-    with patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[meal]):
+    with patch("handlers.meals.MealRepository.get_user_meal_history_page", side_effect=[[meal], []]):
         asyncio.run(meals.meal_entry_my_products(callback, state))
 
     callback.answer.assert_awaited_once()
@@ -865,7 +865,7 @@ def test_show_my_products_page_sends_html_parse_mode():
         carbs=1.7,
     )
 
-    with patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[meal]):
+    with patch("handlers.meals.MealRepository.get_user_meal_history_page", side_effect=[[meal], []]):
         asyncio.run(meals._show_my_products_page(message, state, meal_type="snack", page=1))
 
     assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
@@ -1011,6 +1011,59 @@ def test_my_product_meals_keyboard_uses_full_emoji_numbers_on_later_pages():
         "➡️ Следующая страница",
     ]
     assert keyboard.inline_keyboard[-1][0].text == "🔎 Поиск продукта"
+
+
+def test_my_products_keyboard_shows_start_button_only_from_third_page():
+    items = [
+        meals.MyProductItem(17, 0, "Продукт", 100, 100, 1, 1, 1),
+    ]
+
+    first_page = meals._build_my_products_keyboard(
+        items, meal_type="snack", page=1, has_prev=False, has_next=True, back_callback_data="old_back"
+    )
+    second_page = meals._build_my_products_keyboard(
+        items, meal_type="snack", page=2, has_prev=True, has_next=True, back_callback_data="old_back"
+    )
+    third_page = meals._build_my_products_keyboard(
+        items, meal_type="snack", page=3, has_prev=True, has_next=False, back_callback_data="old_back"
+    )
+
+    assert all(row[0].text != "⬅️ Назад" for row in first_page.inline_keyboard)
+    assert all(row[0].text != "⬅️ Назад" for row in second_page.inline_keyboard)
+    assert third_page.inline_keyboard[-1][0].text == "⬅️ В начало"
+    assert third_page.inline_keyboard[-1][0].callback_data == "my_products_page:snack:1"
+
+
+def test_get_my_products_page_items_loads_history_in_batches_beyond_old_limit():
+    history = [
+        SimpleNamespace(
+            id=i,
+            raw_query=f"Продукт {i}",
+            description=None,
+            products_json=(
+                f'[{{"name":"Продукт {i}","grams":100,"kcal":50,"protein":1,"fat":2,"carbs":3}}]'
+            ),
+            calories=50,
+            protein=1,
+            fat=2,
+            carbs=3,
+        )
+        for i in range(1, 75)
+    ]
+
+    def get_page(_user_id, *, offset, limit):
+        return history[offset : offset + limit]
+
+    with patch("handlers.meals.MY_PRODUCTS_HISTORY_BATCH_SIZE", 20), patch(
+        "handlers.meals.MealRepository.get_user_meal_history_page", side_effect=get_page
+    ) as get_history_page:
+        page_items, has_prev, has_next, normalized_page = meals._get_my_products_page_items("12345", 9)
+
+    assert normalized_page == 9
+    assert has_prev is True
+    assert has_next is True
+    assert [item.title for item in page_items] == [f"Продукт {i}" for i in range(65, 73)]
+    assert get_history_page.call_count > 1
 
 
 def test_my_products_search_results_keyboard_marks_pick_origin_as_search():
@@ -1568,7 +1621,7 @@ def test_my_products_page_edits_existing_message_instead_of_sending_new_one():
         for i in range(1, 10)
     ]
 
-    with patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=meals_history):
+    with patch("handlers.meals.MealRepository.get_user_meal_history_page", side_effect=[meals_history, []]):
         asyncio.run(meals.my_products_page(callback, state))
 
     callback.answer.assert_awaited_once()
