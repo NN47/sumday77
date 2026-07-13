@@ -1,6 +1,7 @@
 """Обработчики для веса и замеров."""
 import logging
 from datetime import date, timedelta, datetime
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from aiogram import Router, F
 from aiogram.types import (
     Message,
@@ -36,34 +37,65 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-WEIGHT_QUICK_DELTAS = (-1.0, -0.5, 0.5, 1.0, -0.2, -0.1, 0.1, 0.2)
+WEIGHT_QUICK_DELTAS = (
+    Decimal("-1.00"), Decimal("-0.50"), Decimal("0.50"), Decimal("1.00"),
+    Decimal("-0.25"), Decimal("-0.20"), Decimal("0.20"), Decimal("0.25"),
+    Decimal("-0.10"), Decimal("-0.05"), Decimal("0.05"), Decimal("0.10"),
+)
 WEIGHT_SOURCE_QUICK_ADD = "quick_add"
 WEIGHT_SOURCE_WEIGHT_SECTION = "weight_section"
 WEIGHT_SOURCE_CALENDAR = "calendar"
 
 
 
-def _format_weight_delta_button(delta_kg: float) -> str:
+def _to_weight_decimal(raw_value: str | float | int | Decimal | None) -> Optional[Decimal]:
+    """Преобразует вес или дельту в Decimal с точностью до сотых."""
+    if raw_value is None:
+        return None
+    try:
+        return Decimal(str(raw_value).replace(",", ".")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def _apply_weight_delta(base_weight: str | float | int | Decimal | None, delta_kg: str | float | int | Decimal) -> Optional[float]:
+    """Считает быстрый шаг через Decimal, чтобы не накапливать float-ошибки."""
+    base = _to_weight_decimal(base_weight)
+    delta = _to_weight_decimal(delta_kg)
+    if base is None or delta is None:
+        return None
+    result = max(Decimal("1.00"), (base + delta).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    return float(result)
+
+
+def _format_weight_delta_button(delta_kg: Decimal | float) -> str:
     """Форматирует быстрый шаг изменения веса в килограммах для кнопки."""
-    sign = "+" if delta_kg > 0 else "-"
-    abs_delta = abs(delta_kg)
-    formatted = f"{abs_delta:.1f}"
-    if abs_delta != 1.0:
-        formatted = formatted.rstrip("0").rstrip(".").replace(".", ",")
-    return f"{sign}{formatted}"
+    delta = _to_weight_decimal(delta_kg) or Decimal("0.00")
+    sign = "+" if delta > 0 else "-"
+    return f"{sign}{abs(delta):.2f}".replace(".", ",")
 
 
 _WEIGHT_QUICK_DELTAS_BY_LABEL = {
     _format_weight_delta_button(delta): delta for delta in WEIGHT_QUICK_DELTAS
 }
-_WEIGHT_QUICK_DELTAS_BY_LABEL.update({"-1": -1.0, "+1": 1.0})
+_WEIGHT_QUICK_DELTAS_BY_LABEL.update({
+    f"{delta:+.1f}".replace(".", ","): delta for delta in WEIGHT_QUICK_DELTAS
+})
+_WEIGHT_QUICK_DELTAS_BY_LABEL.update({
+    f"{delta:+.1f}": delta for delta in WEIGHT_QUICK_DELTAS
+})
+_WEIGHT_QUICK_DELTAS_BY_LABEL.update({
+    "-1": Decimal("-1.00"),
+    "+1": Decimal("1.00"),
+})
 
 
 def _build_weight_quick_adjust_keyboard(_base_weight: float, *, has_changes: bool = False) -> InlineKeyboardMarkup:
     """Инлайн-клавиатура быстрых изменений веса относительно текущего черновика."""
     delta_rows = [
-        [-1.0, -0.5, 0.5, 1.0],
-        [-0.2, -0.1, 0.1, 0.2],
+        [Decimal("-1.00"), Decimal("-0.50"), Decimal("0.50"), Decimal("1.00")],
+        [Decimal("-0.25"), Decimal("-0.20"), Decimal("0.20"), Decimal("0.25")],
+        [Decimal("-0.10"), Decimal("-0.05"), Decimal("0.05"), Decimal("0.10")],
     ]
 
     keyboard = []
@@ -72,7 +104,7 @@ def _build_weight_quick_adjust_keyboard(_base_weight: float, *, has_changes: boo
             [
                 InlineKeyboardButton(
                     text=_format_weight_delta_button(delta),
-                    callback_data=f"weight_adj:{delta}",
+                    callback_data=f"weight_adj:{delta:.2f}",
                 )
                 for delta in delta_row
             ]
@@ -91,7 +123,7 @@ def _resolve_quick_weight_value(raw_text: str, base_weight: Optional[float]) -> 
     delta = _WEIGHT_QUICK_DELTAS_BY_LABEL.get(raw_text.strip())
     if delta is None or base_weight is None:
         return None
-    return max(1.0, base_weight + delta)
+    return _apply_weight_delta(base_weight, delta)
 
 
 def _build_weight_confirmation_keyboard() -> ReplyKeyboardMarkup:
@@ -795,7 +827,8 @@ async def _update_weight_editor_from_message(
 def _parse_weight_delta_callback(callback_data: str) -> Optional[float]:
     """Достаёт дельту веса из callback_data инлайн-кнопки."""
     try:
-        return float(callback_data.split(":", 1)[1])
+        parsed_delta = _to_weight_decimal(callback_data.split(":", 1)[1])
+        return float(parsed_delta) if parsed_delta is not None else None
     except (IndexError, TypeError, ValueError):
         return None
 
@@ -1175,7 +1208,7 @@ async def handle_weight_inline_adjust(callback: CallbackQuery, state: FSMContext
     if base_weight is None:
         base_weight = 70.0
 
-    weight_value = max(1.0, base_weight + delta)
+    weight_value = _apply_weight_delta(base_weight, delta) or 1.0
     await _apply_weight_value_to_editor(callback.message, state, user_id, weight_value)
 
 

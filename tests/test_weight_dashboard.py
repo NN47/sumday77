@@ -140,17 +140,19 @@ def test_weight_quick_adjust_keyboard_uses_requested_delta_buttons_without_dupli
     keyboard = _build_weight_quick_adjust_keyboard(76.9)
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
 
-    assert rows[0] == ["-1.0", "-0,5", "+0,5", "+1.0"]
-    assert rows[1] == ["-0,2", "-0,1", "+0,1", "+0,2"]
-    assert rows[2] == ["✍️ Ввести вручную"]
-    assert rows[3] == ["❌ Отмена"]
+    assert rows[0] == ["-1,00", "-0,50", "+0,50", "+1,00"]
+    assert rows[1] == ["-0,25", "-0,20", "+0,20", "+0,25"]
+    assert rows[2] == ["-0,10", "-0,05", "+0,05", "+0,10"]
+    assert rows[3] == ["✍️ Ввести вручную"]
+    assert rows[4] == ["❌ Отмена"]
 
 
 def test_quick_weight_delta_resolves_against_base_weight():
     assert _resolve_quick_weight_value("-0,5", 76.9) == 76.4
     assert _resolve_quick_weight_value("-1.0", 76.9) == 75.9
     assert _resolve_quick_weight_value("-1", 76.9) == 75.9
-    assert round(_resolve_quick_weight_value("+0,2", 76.9), 1) == 77.1
+    assert _resolve_quick_weight_value("+0,20", 76.9) == 77.1
+    assert _resolve_quick_weight_value("+0,05", 76.25) == 76.3
     assert _resolve_quick_weight_value("72.5", 76.9) is None
 
 
@@ -218,8 +220,8 @@ def test_weight_input_keeps_quick_buttons_and_requires_save_before_repository_wr
     assert state.data["quick_base_weight"] == 76.4
     text, reply_markup = message.answers[-1]
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
-    assert rows[0] == ["-1.0", "-0,5", "+0,5", "+1.0"]
-    assert rows[3] == ["✅ Сохранить"]
+    assert rows[0] == ["-1,00", "-0,50", "+0,50", "+1,00"]
+    assert rows[4] == ["✅ Сохранить"]
     assert "<b>⚖️ Вес сейчас: 76.40 кг</b>" in text
     assert "📅 <b>Дата:</b> 29.05.2026" in text
     assert "<b>Предыдущая запись:</b>" in text
@@ -274,7 +276,7 @@ def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
     assert round(state.data["quick_base_weight"], 1) == 76.0
     text, reply_markup = message.answers[-1]
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
-    assert rows[1] == ["-0,2", "-0,1", "+0,1", "+0,2"]
+    assert rows[1] == ["-0,25", "-0,20", "+0,20", "+0,25"]
     assert "<b>⚖️ Вес сейчас: 76.00 кг</b>" in text
     assert "⚖️ 76.90 кг" in text
     assert "📅 28.05.2026" in text
