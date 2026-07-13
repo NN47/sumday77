@@ -158,8 +158,6 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
     total_calories = 0.0
     steps_count = 0
     steps_calories = 0.0
-    exercise_entries = 0
-    exercise_calories = 0.0
 
     for w in workouts:
         exercise = normalize_exercise_name(w.exercise)
@@ -171,16 +169,13 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
             steps_calories += entry_calories
             continue
 
-        exercise_entries += 1
-        exercise_calories += entry_calories
-
     if not include_exercise_details:
         return f"🔥 <b>Сожжено:</b> {total_calories:.0f} ккал"
 
     lines = [f"👣 <b>Шаги:</b> {steps_count:,} (~{steps_calories:.0f} ккал)".replace(",", " ")]
 
     details = []
-    repetition_totals = {}
+    exercise_totals = {}
     for w in workouts:
         exercise = normalize_exercise_name(w.exercise)
         variant = w.variant or ""
@@ -195,18 +190,22 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
             if w.variant and w.variant not in {"reps", "Повторения"}:
                 entered_value = f"{w.variant}: {entered_value}"
             else:
-                repetition_totals[exercise] = repetition_totals.get(exercise, 0) + (w.count or 0)
+                if exercise not in exercise_totals:
+                    exercise_totals[exercise] = {"count": 0, "calories": 0.0}
+                exercise_totals[exercise]["count"] += w.count or 0
+                exercise_totals[exercise]["calories"] += entry_calories
         details.append(f"• {exercise}: {entered_value} (~{entry_calories:.0f} ккал)")
 
     if details:
         lines.append("💪 <b>Упражнения:</b>")
         lines.extend(details)
-        if repetition_totals:
-            lines.append("Всего повторений:")
-            for exercise, total_count in repetition_totals.items():
+        if exercise_totals:
+            lines.append("")
+            lines.append("📊 <b>Итоги:</b>")
+            for exercise, total in exercise_totals.items():
+                total_count = total["count"]
                 formatted_count = str(int(total_count)) if float(total_count).is_integer() else f"{total_count:g}"
-                lines.append(f"• {exercise}: {formatted_count}")
-        lines.append(f"Итого по упражнениям: {exercise_entries} запись (~{exercise_calories:.0f} ккал)")
+                lines.append(f"• {exercise}: {formatted_count} повторений (~{total['calories']:.0f} ккал)")
     else:
         lines.append("💪 <b>Упражнения:</b> 0 записей (~0 ккал)")
 
