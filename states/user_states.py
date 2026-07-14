@@ -63,6 +63,7 @@ class WorkoutStates(StatesGroup):
     choosing_date = State()
     entering_custom_date = State()
     editing_count = State()  # Редактирование количества
+    editing_weight = State()  # Редактирование рабочего веса
 
 
 class WeightStates(StatesGroup):
