@@ -218,7 +218,7 @@ def test_gym_exercise_starts_with_working_weight_input():
     state.set_state.assert_any_await(workouts.WorkoutStates.entering_working_weight)
     text = callback.message.answer.await_args.args[0]
     assert "🏋️ Тяга штанги в наклоне" in text
-    assert "1️⃣ Укажи рабочий вес" in text
+    assert "1️⃣ Укажи общий вес штанги" in text
     keyboard_rows = [[button.text for button in row] for row in callback.message.answer.await_args.kwargs["reply_markup"].keyboard]
     assert keyboard_rows[0] == ["Без веса"]
     assert "30 кг" in keyboard_rows[2]
@@ -237,7 +237,7 @@ def test_gym_weight_selection_opens_reps_without_asking_weight_again():
     state.update_data.assert_any_await(working_weight=30.0)
     state.set_state.assert_any_await(workouts.WorkoutStates.entering_count)
     text = message.answer.await_args.args[0]
-    assert "⚖️ Рабочий вес: 30 кг" in text
+    assert "⚖️ Общий вес штанги: 30 кг" in text
     assert "2️⃣ Выбери количество повторений" in text
 
 
@@ -252,5 +252,52 @@ def test_add_another_gym_set_reuses_selected_working_weight():
     asyncio.run(workouts.handle_count_input(message, state))
 
     text = message.answer.await_args.args[0]
-    assert "⚖️ Рабочий вес: 30 кг" in text
+    assert "⚖️ Общий вес штанги: 30 кг" in text
+    assert "Выбери количество повторений" in text
+
+
+def test_hammer_curl_is_gym_dumbbell_exercise_and_asks_one_dumbbell_weight():
+    callback = SimpleNamespace(
+        data=f"wrk_pick:{workouts._activity_id('Молот на бицепс')}",
+        message=SimpleNamespace(bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock()),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(update_data=AsyncMock(), set_state=AsyncMock())
+
+    asyncio.run(workouts.pick_catalog_exercise(callback, state))
+
+    state.set_state.assert_any_await(workouts.WorkoutStates.entering_working_weight)
+    text = callback.message.answer.await_args.args[0]
+    assert "🏋️ Молот на бицепс" in text
+    assert "1️⃣ Укажи вес одной гантели" in text
+
+
+def test_hammer_curl_weight_selection_saves_single_dumbbell_weight_and_reps_prompt():
+    message = SimpleNamespace(text="30 кг", bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock())
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"exercise": "Молот на бицепс"}),
+        update_data=AsyncMock(),
+        set_state=AsyncMock(),
+    )
+
+    asyncio.run(workouts.handle_working_weight_input(message, state))
+
+    state.update_data.assert_any_await(working_weight=30.0)
+    text = message.answer.await_args.args[0]
+    assert "⚖️ Вес одной гантели: 30 кг" in text
+    assert "2️⃣ Выбери количество повторений" in text
+
+
+def test_hammer_curl_add_another_set_reuses_one_dumbbell_weight():
+    message = SimpleNamespace(text="💪 Добавить еще подход", from_user=SimpleNamespace(id=12345), bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock())
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"exercise": "Молот на бицепс", "variant": "reps", "working_weight": 30.0, "entry_date": "2026-06-03"}),
+        update_data=AsyncMock(),
+        set_state=AsyncMock(),
+    )
+
+    asyncio.run(workouts.handle_count_input(message, state))
+
+    text = message.answer.await_args.args[0]
+    assert "⚖️ Вес одной гантели: 30 кг" in text
     assert "Выбери количество повторений" in text

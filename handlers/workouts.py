@@ -32,6 +32,7 @@ from states.user_states import WorkoutStates
 from database.repositories import WorkoutRepository, AnalyticsRepository, MealRepository
 from database.repositories import CustomWorkoutExerciseRepository
 from utils.workout_utils import calculate_workout_calories
+from utils.workout_equipment import get_equipment_config
 from utils.validators import parse_date
 from utils.formatters import format_count_with_unit
 from utils.calendar_utils import build_workout_calendar_keyboard, show_calendar_back_button
@@ -121,6 +122,14 @@ def _is_gym_exercise(exercise: str | None) -> bool:
     return bool(exercise) and _normalize_exercise_name(exercise) in _gym_exercises()
 
 
+def _weight_label(exercise: str | None) -> str:
+    return get_equipment_config(_normalize_exercise_name(exercise) if exercise else exercise).weight_label
+
+
+def _weight_saved_description(exercise: str | None) -> str:
+    return get_equipment_config(_normalize_exercise_name(exercise) if exercise else exercise).saved_weight_description
+
+
 def _format_working_weight(weight: float | int | None) -> str:
     if weight is None or float(weight) <= 0:
         return "без веса"
@@ -145,7 +154,7 @@ async def _open_working_weight_input(message: Message, state: FSMContext, exerci
     push_menu_stack(message.bot, working_weight_menu)
     await message.answer(
         f"🏋️ {exercise}\n\n"
-        "1️⃣ Укажи рабочий вес:",
+        f"1️⃣ Укажи {_weight_label(exercise).lower()}:",
         reply_markup=working_weight_menu,
     )
 
@@ -153,7 +162,7 @@ async def _open_working_weight_input(message: Message, state: FSMContext, exerci
 async def _open_reps_input(message: Message, state: FSMContext, exercise: str, working_weight: float | None, *, step_prefix: str = "2️⃣ ") -> None:
     await state.set_state(WorkoutStates.entering_count)
     push_menu_stack(message.bot, count_menu)
-    weight_line = f"⚖️ Рабочий вес: {_format_working_weight(working_weight)}\n\n" if _is_gym_exercise(exercise) else ""
+    weight_line = f"⚖️ {_weight_label(exercise)}: {_format_working_weight(working_weight)}\n\n" if _is_gym_exercise(exercise) else ""
     await message.answer(
         f"🏋️ {exercise}\n"
         f"{weight_line}"
@@ -958,7 +967,7 @@ def _format_set_details(workout) -> str:
         "Текущие данные:",
     ]
     if _is_gym_exercise(workout.exercise):
-        lines.append(f"⚖️ Вес: {_format_working_weight(weight)}")
+        lines.append(f"⚖️ {_weight_label(workout.exercise)}: {_format_working_weight(weight)}")
     lines.extend([
         f"🔁 Повторения: {int(workout.count or 0)}",
         f"🔥 Калории: ~{calories:.0f} ккал",
@@ -1003,7 +1012,7 @@ async def request_workout_reps_edit(callback: CallbackQuery, state: FSMContext):
         return
     await state.update_data(**_set_edit_context(workout, workout.date))
     await state.set_state(WorkoutStates.editing_count)
-    weight_line = f"⚖️ Вес: {_format_working_weight(getattr(workout, 'working_weight', None))}\n" if _is_gym_exercise(workout.exercise) else ""
+    weight_line = f"⚖️ {_weight_label(workout.exercise)}: {_format_working_weight(getattr(workout, 'working_weight', None))}\n" if _is_gym_exercise(workout.exercise) else ""
     await callback.message.answer(
         f"🏋️ {workout.exercise}\n"
         f"{weight_line}"
@@ -1028,7 +1037,7 @@ async def request_workout_weight_edit(callback: CallbackQuery, state: FSMContext
         f"🏋️ {workout.exercise}\n"
         f"🔁 Повторения: {int(workout.count or 0)}\n"
         f"⚖️ Сейчас: {_format_working_weight(getattr(workout, 'working_weight', None))}\n\n"
-        f"Укажи новый рабочий вес:",
+        f"Укажи {_weight_label(workout.exercise).lower()}:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="wrk_edit_cancel")]]),
     )
 
@@ -1152,7 +1161,7 @@ async def confirm_delete_workout_set(callback: CallbackQuery, state: FSMContext)
         await callback.message.answer("❌ Не нашёл подход для удаления.")
         return
     await state.update_data(**_set_edit_context(workout, workout.date))
-    weight_line = f"⚖️ {_format_working_weight(getattr(workout, 'working_weight', None))}\n" if _is_gym_exercise(workout.exercise) else ""
+    weight_line = f"⚖️ {_format_working_weight(getattr(workout, 'working_weight', None))} — {_weight_saved_description(workout.exercise)}\n" if _is_gym_exercise(workout.exercise) else ""
     await callback.message.answer(
         f"Удалить этот подход?\n\n"
         f"🏋️ {workout.exercise}\n"
@@ -1664,7 +1673,9 @@ async def handle_custom_exercise(message: Message, state: FSMContext):
 async def handle_working_weight_input(message: Message, state: FSMContext):
     """Обрабатывает выбор рабочего веса для упражнений тренажёрного зала."""
     if message.text == "✍️ Ввести вручную":
-        await message.answer("Введи рабочий вес в килограммах, например 32,5. Если упражнение без веса — нажми «Без веса».")
+        data = await state.get_data()
+        label = _weight_label(data.get("exercise"))
+        await message.answer(f"Введи {label.lower()} в килограммах, например 32,5. Если упражнение без веса — нажми «Без веса».")
         return
     if message.text in {"❌ Отмена", "⬅️ Назад"}:
         await state.clear()
@@ -1679,7 +1690,8 @@ async def handle_working_weight_input(message: Message, state: FSMContext):
     try:
         working_weight = _parse_working_weight(message.text)
     except (ValueError, TypeError):
-        await message.answer("⚠️ Введи рабочий вес положительным числом или нажми «Без веса».")
+        data = await state.get_data()
+        await message.answer(f"⚠️ Введи {_weight_label(data.get("exercise")).lower()} положительным числом или нажми «Без веса».")
         return
 
     data = await state.get_data()
@@ -1812,8 +1824,8 @@ async def handle_count_input(message: Message, state: FSMContext):
     formatted_count = format_count_with_unit(count, variant)
     total_formatted = format_count_with_unit(total_count, variant)
     working_weight = data.get("working_weight") if _is_gym_exercise(exercise) else None
-    weight_line = f"⚖️ {_format_working_weight(working_weight)}\n" if _is_gym_exercise(exercise) else ""
-    total_weight_line = f"• Рабочий вес: {_format_working_weight(working_weight)}\n" if _is_gym_exercise(exercise) else ""
+    weight_line = f"⚖️ {_format_working_weight(working_weight)} — {_weight_saved_description(exercise)}\n" if _is_gym_exercise(exercise) else ""
+    total_weight_line = f"• {_weight_label(exercise)}: {_format_working_weight(working_weight)}\n" if _is_gym_exercise(exercise) else ""
     title_icon = "🏋️" if _is_gym_exercise(exercise) else "💪"
     
     date_label = "сегодня" if entry_date == date.today() else entry_date.strftime("%d.%m.%Y")
@@ -1822,7 +1834,7 @@ async def handle_count_input(message: Message, state: FSMContext):
         f"✅ Записал! 👍\n\n"
         f"{title_icon} {exercise}\n"
         f"{weight_line}"
-        f"📊 {formatted_count}\n"
+        f"🔁 {formatted_count}\n"
         f"🔥 ~{calories:.0f} ккал\n"
         f"📅 {date_label.capitalize()}\n\n"
         f"Всего за {date_label}:\n"
