@@ -4,7 +4,7 @@ from datetime import date
 from typing import Optional
 from sqlalchemy import func
 from database.session import get_db_session
-from database.models import Meal, KbjuSettings
+from database.models import Meal, KbjuSettings, MealCompletionComment
 from database.repositories.analytics_repository import AnalyticsRepository
 from utils.meal_types import normalize_meal_type, MealType
 
@@ -251,8 +251,12 @@ class MealRepository:
                     meal.products_json = products_json
                 if api_details:
                     meal.api_details = api_details
+                session.query(MealCompletionComment).filter(
+                    MealCompletionComment.user_id == user_id,
+                    MealCompletionComment.meal_id == meal_id,
+                ).delete(synchronize_session=False)
                 session.commit()
-                logger.info(f"Updated meal {meal_id} for user {user_id}")
+                logger.info(f"Updated meal {meal_id} for user {user_id} and invalidated meal completion comment")
                 return True
             return False
     
