@@ -186,14 +186,22 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
         if variant_lower in {"минуты", "мин"}:
             entered_value = f"{w.count:g} мин"
         else:
-            entered_value = str(int(w.count)) if float(w.count).is_integer() else f"{w.count:g}"
+            count_text = str(int(w.count)) if float(w.count).is_integer() else f"{w.count:g}"
+            working_weight = getattr(w, "working_weight", None)
+            weight_text = None
+            if working_weight is not None and float(working_weight) > 0:
+                weight_number = float(working_weight)
+                weight_text = str(int(weight_number)) if weight_number.is_integer() else f"{weight_number:g}".replace(".", ",")
+            entered_value = f"{count_text} × {weight_text} кг" if weight_text else count_text
             if w.variant and w.variant not in {"reps", "Повторения"}:
                 entered_value = f"{w.variant}: {entered_value}"
             else:
                 if exercise not in exercise_totals:
-                    exercise_totals[exercise] = {"count": 0, "calories": 0.0}
+                    exercise_totals[exercise] = {"count": 0, "calories": 0.0, "weights": set()}
                 exercise_totals[exercise]["count"] += w.count or 0
                 exercise_totals[exercise]["calories"] += entry_calories
+                if weight_text:
+                    exercise_totals[exercise]["weights"].add(float(working_weight))
         details.append(f"• {exercise}: {entered_value} (~{entry_calories:.0f} ккал)")
 
     if details:
@@ -205,7 +213,18 @@ def format_today_workouts_block(user_id: str, include_date: bool = True, include
             for exercise, total in exercise_totals.items():
                 total_count = total["count"]
                 formatted_count = str(int(total_count)) if float(total_count).is_integer() else f"{total_count:g}"
-                lines.append(f"• {exercise}: {formatted_count} повторений (~{total['calories']:.0f} ккал)")
+                weights = sorted(total.get("weights", set()))
+                weight_part = ""
+                if len(weights) == 1:
+                    weight = weights[0]
+                    weight_text = str(int(weight)) if float(weight).is_integer() else f"{weight:g}".replace(".", ",")
+                    weight_part = f", {weight_text} кг"
+                elif len(weights) > 1:
+                    min_weight, max_weight = weights[0], weights[-1]
+                    min_text = str(int(min_weight)) if float(min_weight).is_integer() else f"{min_weight:g}".replace(".", ",")
+                    max_text = str(int(max_weight)) if float(max_weight).is_integer() else f"{max_weight:g}".replace(".", ",")
+                    weight_part = f", вес {min_text}–{max_text} кг"
+                lines.append(f"• {exercise}: {formatted_count} повторений{weight_part} (~{total['calories']:.0f} ккал)")
     else:
         lines.append("💪 <b>Упражнения:</b> 0 записей (~0 ккал)")
 
