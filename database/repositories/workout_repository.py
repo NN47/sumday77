@@ -23,6 +23,7 @@ class WorkoutRepository:
         duration_minutes: float | None = None,
         distance_km: float | None = None,
         jumps_count: int | None = None,
+        working_weight: float | None = None,
     ) -> Workout:
         """Сохраняет тренировку."""
         with get_db_session() as session:
@@ -37,6 +38,7 @@ class WorkoutRepository:
                 duration_minutes=duration_minutes,
                 distance_km=distance_km,
                 jumps_count=jumps_count,
+                working_weight=working_weight,
             )
             session.add(workout)
             session.commit()
@@ -108,6 +110,8 @@ class WorkoutRepository:
         duration_minutes: float | None = None,
         distance_km: float | None = None,
         jumps_count: int | None = None,
+        working_weight: float | None = None,
+        update_weight: bool = False,
     ) -> bool:
         """Обновляет количество и калории тренировки."""
         with get_db_session() as session:
@@ -125,7 +129,33 @@ class WorkoutRepository:
                     workout.duration_minutes = duration_minutes
                     workout.distance_km = distance_km
                     workout.jumps_count = jumps_count
+                if update_weight:
+                    workout.working_weight = working_weight
                 session.commit()
                 logger.info(f"Updated workout {workout_id} for user {user_id}: count={count}, calories={calories}")
                 return True
             return False
+
+    @staticmethod
+    def update_workout_reps(workout_id: int, user_id: str, count: int, calories: float) -> bool:
+        """Обновляет повторы и калории одной записи тренировки."""
+        return WorkoutRepository.update_workout(workout_id, user_id, count, calories)
+
+    @staticmethod
+    def update_workout_weight(workout_id: int, user_id: str, working_weight: float, calories: float | None = None) -> bool:
+        """Обновляет рабочий вес одной записи тренировки."""
+        with get_db_session() as session:
+            workout = (
+                session.query(Workout)
+                .filter(Workout.id == workout_id)
+                .filter(Workout.user_id == user_id)
+                .first()
+            )
+            if not workout:
+                return False
+            workout.working_weight = working_weight
+            if calories is not None:
+                workout.calories = calories
+            session.commit()
+            logger.info(f"Updated workout {workout_id} weight for user {user_id}: {working_weight}")
+            return True

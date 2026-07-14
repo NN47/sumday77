@@ -56,6 +56,7 @@ def init_db():
             _add_workout_column_if_missing("duration_minutes", "FLOAT")
             _add_workout_column_if_missing("distance_km", "FLOAT")
             _add_workout_column_if_missing("jumps_count", "INTEGER")
+            _add_workout_column_if_missing("working_weight", "FLOAT")
             count_column = next((col for col in inspector.get_columns("workouts") if col["name"] == "count"), None)
             if count_column and "INT" in str(count_column.get("type", "")).upper():
                 try:

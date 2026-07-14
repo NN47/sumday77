@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import Optional
 from aiogram import Router, F
 from aiogram.filters import StateFilter
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
     MAIN_MENU_BUTTON_ALIASES,
@@ -22,6 +22,7 @@ from utils.keyboards import (
     jumps_menu,
     plank_duration_menu,
     count_menu,
+    weighted_exercises,
     push_menu_stack,
     add_another_set_menu,
     add_another_exercise_menu,
@@ -181,6 +182,53 @@ def _build_activity_report_inline(activities: list, target_date: date) -> Inline
         rows.append([InlineKeyboardButton(text="✏️ Редактировать активность", callback_data=f"wrk_edit_menu:{target_date.isoformat()}")])
     rows.append([InlineKeyboardButton(text="👣 Добавить шаги", callback_data=f"wrk_steps:{target_date.isoformat()}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _format_number(value: float | int | None) -> str:
+    if value is None:
+        return "0"
+    number = float(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:g}".replace(".", ",")
+
+
+def _workout_has_working_weight(workout) -> bool:
+    """Проверяет, поддерживает ли запись редактирование рабочего веса."""
+    return bool(getattr(workout, "working_weight", None)) or workout.exercise in set(weighted_exercises)
+
+
+def _build_set_edit_keyboard(workout) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text="🔁 Изменить повторения", callback_data=f"wrk_edit_reps:{workout.id}")]]
+    if _workout_has_working_weight(workout):
+        rows.append([InlineKeyboardButton(text="⚖️ Изменить вес", callback_data=f"wrk_edit_weight:{workout.id}")])
+    rows.extend([
+        [InlineKeyboardButton(text="🗑 Удалить подход", callback_data=f"wrk_confirm_del:{workout.id}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="wrk_edit_cancel")],
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _format_set_edit_screen(workout, user_id: str) -> str:
+    weight = getattr(workout, "working_weight", None)
+    calories = workout.calories or calculate_workout_calories(user_id, workout.exercise, workout.variant, workout.count)
+    lines = [
+        "✏️ Редактирование подхода",
+        "",
+        f"🏋️ {workout.exercise}",
+        f"📅 {workout.date.strftime('%d.%m.%Y')}",
+        "",
+        "Текущие данные:",
+    ]
+    if weight:
+        lines.append(f"⚖️ Вес: {_format_number(weight)} кг")
+    lines.extend([
+        f"🔁 Повторения: {_format_number(workout.count)}",
+        f"🔥 Калории: ~{calories:.0f} ккал",
+        "",
+        "Выбери действие:",
+    ])
+    return "\n".join(lines)
 
 async def _send_activity_main_screen(message: Message, user_id: str, target_date: date | None = None):
     """Отправляет главный экран раздела активности."""
@@ -557,16 +605,8 @@ async def finish_exercise_without_active_state(message: Message, state: FSMConte
     """Завершает ввод упражнения, когда пользователь уже вне FSM-сценария."""
     user_id = str(message.from_user.id)
     await state.clear()
-
-    from utils.progress_formatters import format_today_workouts_block
-
-    workouts_text = format_today_workouts_block(user_id, include_date=False, include_exercise_details=True)
-    push_menu_stack(message.bot, training_menu)
-    await message.answer(
-        f"✅ Тренировка завершена!\n\n{workouts_text}\n\nВыбери действие:",
-        reply_markup=training_menu,
-        parse_mode="HTML",
-    )
+    await message.answer("✅ Тренировка завершена!")
+    await _send_activity_main_screen(message, user_id, date.today())
 
 
 @router.message(lambda m: m.text == "📅 Календарь активности")
@@ -871,7 +911,7 @@ async def show_activity_edit_menu(callback: CallbackQuery):
 
 @router.callback_query(lambda c: c.data.startswith("wrk_edit:"))
 async def edit_workout(callback: CallbackQuery, state: FSMContext):
-    """Начинает редактирование тренировки."""
+    """Открывает экран действий над конкретным подходом."""
     await callback.answer()
     parts = callback.data.split(":")
     workout_id = int(parts[1])
@@ -891,14 +931,168 @@ async def edit_workout(callback: CallbackQuery, state: FSMContext):
         target_date=target_date.isoformat(),
     )
     await state.set_state(WorkoutStates.editing_count)
-    
+    await callback.message.answer("✏️ Режим редактирования", reply_markup=ReplyKeyboardRemove())
     await callback.message.answer(
-        f"✏️ Редактирование тренировки\n\n"
-        f"💪 {workout.exercise}\n"
-        f"📅 {workout.date.strftime('%d.%m.%Y')}\n"
-        f"📊 Текущее значение: {format_activity_summary(workout, include_calories=False)}\n\n"
-        f"Введи новое значение:"
+        _format_set_edit_screen(workout, user_id),
+        reply_markup=_build_set_edit_keyboard(workout),
     )
+
+
+@router.callback_query(lambda c: c.data == "wrk_edit_cancel")
+async def cancel_workout_edit(callback: CallbackQuery, state: FSMContext):
+    """Отменяет редактирование подхода и возвращает общий экран активности."""
+    await callback.answer()
+    data = await state.get_data()
+    target_date = date.fromisoformat(data.get("target_date", date.today().isoformat()))
+    await state.clear()
+    await _send_activity_main_screen(callback.message, str(callback.from_user.id), target_date)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("wrk_edit_reps:"))
+async def request_workout_reps_edit(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    workout_id = int(callback.data.split(":")[1])
+    user_id = str(callback.from_user.id)
+    workout = WorkoutRepository.get_workout_by_id(workout_id, user_id)
+    if not workout:
+        await callback.message.answer("❌ Не нашёл подход для изменения.")
+        return
+    await state.update_data(workout_id=workout.id, target_date=workout.date.isoformat())
+    await state.set_state(WorkoutStates.editing_reps)
+    weight_line = f"⚖️ Вес: {_format_number(getattr(workout, 'working_weight', None))} кг\n" if getattr(workout, "working_weight", None) else ""
+    await callback.message.answer(
+        f"🏋️ {workout.exercise}\n"
+        f"{weight_line}"
+        f"🔁 Сейчас: {_format_number(workout.count)} повторений\n\n"
+        "Введи новое количество повторений:",
+        reply_markup=count_menu,
+    )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("wrk_edit_weight:"))
+async def request_workout_weight_edit(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    workout_id = int(callback.data.split(":")[1])
+    user_id = str(callback.from_user.id)
+    workout = WorkoutRepository.get_workout_by_id(workout_id, user_id)
+    if not workout or not _workout_has_working_weight(workout):
+        await callback.message.answer("❌ Для этого подхода нельзя изменить рабочий вес.")
+        return
+    await state.update_data(workout_id=workout.id, target_date=workout.date.isoformat())
+    await state.set_state(WorkoutStates.editing_weight)
+    await callback.message.answer(
+        f"🏋️ {workout.exercise}\n"
+        f"🔁 Повторения: {_format_number(workout.count)}\n"
+        f"⚖️ Сейчас: {_format_number(getattr(workout, 'working_weight', None))} кг\n\n"
+        "Укажи новый рабочий вес:",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("wrk_confirm_del:"))
+async def confirm_workout_set_delete(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    workout_id = int(callback.data.split(":")[1])
+    user_id = str(callback.from_user.id)
+    workout = WorkoutRepository.get_workout_by_id(workout_id, user_id)
+    if not workout:
+        await callback.message.answer("❌ Не нашёл подход для удаления.")
+        return
+    await state.update_data(workout_id=workout.id, target_date=workout.date.isoformat())
+    calories = workout.calories or calculate_workout_calories(user_id, workout.exercise, workout.variant, workout.count)
+    weight_line = f"⚖️ {_format_number(getattr(workout, 'working_weight', None))} кг\n" if getattr(workout, "working_weight", None) else ""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"wrk_delete_set:{workout.id}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="wrk_edit_cancel")],
+    ])
+    await callback.message.answer(
+        f"Удалить этот подход?\n\n"
+        f"🏋️ {workout.exercise}\n"
+        f"{weight_line}"
+        f"🔁 {_format_number(workout.count)} повторений\n"
+        f"🔥 ~{calories:.0f} ккал",
+        reply_markup=keyboard,
+    )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("wrk_delete_set:"))
+async def delete_workout_set(callback: CallbackQuery, state: FSMContext):
+    await callback.answer("✅ Подход удалён")
+    workout_id = int(callback.data.split(":")[1])
+    user_id = str(callback.from_user.id)
+    data = await state.get_data()
+    target_date = date.fromisoformat(data.get("target_date", date.today().isoformat()))
+    success = WorkoutRepository.delete_workout(workout_id, user_id)
+    await state.clear()
+    if not success:
+        await callback.message.answer("❌ Не удалось удалить подход")
+        return
+    await callback.message.answer("✅ Подход удалён")
+    await _send_activity_main_screen(callback.message, user_id, target_date)
+
+
+@router.message(WorkoutStates.editing_reps)
+async def handle_workout_reps_edit(message: Message, state: FSMContext):
+    """Сохраняет новое количество повторений только для выбранного подхода."""
+    user_id = str(message.from_user.id)
+    data = await state.get_data()
+    if message.text in {"❌ Отмена", "⬅️ Назад"}:
+        await state.clear()
+        await _send_activity_main_screen(message, user_id, date.fromisoformat(data.get("target_date", date.today().isoformat())))
+        return
+    try:
+        count = int((message.text or "").replace(" ", ""))
+        if count <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        await message.answer("⚠️ Введи целое положительное число повторений")
+        return
+    workout_id = data.get("workout_id")
+    workout = WorkoutRepository.get_workout_by_id(int(workout_id), user_id) if workout_id else None
+    if not workout:
+        await message.answer("❌ Не нашёл подход для изменения.")
+        await state.clear()
+        return
+    calories = calculate_workout_calories(user_id, workout.exercise, workout.variant, count)
+    success = WorkoutRepository.update_workout_reps(workout.id, user_id, count, calories)
+    target_date = workout.date
+    await state.clear()
+    if not success:
+        await message.answer("❌ Не удалось обновить подход. Попробуй позже.")
+        return
+    await _send_activity_main_screen(message, user_id, target_date)
+
+
+@router.message(WorkoutStates.editing_weight)
+async def handle_workout_weight_edit(message: Message, state: FSMContext):
+    """Сохраняет новый рабочий вес только для выбранного подхода."""
+    user_id = str(message.from_user.id)
+    data = await state.get_data()
+    if message.text in {"❌ Отмена", "⬅️ Назад"}:
+        await state.clear()
+        await _send_activity_main_screen(message, user_id, date.fromisoformat(data.get("target_date", date.today().isoformat())))
+        return
+    try:
+        weight = float((message.text or "").replace(",", ".").strip())
+        if weight <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        await message.answer("⚠️ Укажи положительный рабочий вес числом")
+        return
+    workout_id = data.get("workout_id")
+    workout = WorkoutRepository.get_workout_by_id(int(workout_id), user_id) if workout_id else None
+    if not workout or not _workout_has_working_weight(workout):
+        await message.answer("❌ Не нашёл подход с рабочим весом для изменения.")
+        await state.clear()
+        return
+    calories = calculate_workout_calories(user_id, workout.exercise, workout.variant, workout.count)
+    success = WorkoutRepository.update_workout_weight(workout.id, user_id, weight, calories)
+    target_date = workout.date
+    await state.clear()
+    if not success:
+        await message.answer("❌ Не удалось обновить вес. Попробуй позже.")
+        return
+    await _send_activity_main_screen(message, user_id, target_date)
 
 
 @router.message(WorkoutStates.editing_count)
@@ -1488,17 +1682,11 @@ async def handle_count_input(message: Message, state: FSMContext):
         return
 
     if message.text == "✅ Завершить упражнение":
-        # Завершаем и возвращаемся в меню
+        data = await state.get_data()
+        target_date = _entry_date_from_state_data(data)
         await state.clear()
-        from utils.progress_formatters import format_today_workouts_block
-
-        workouts_text = format_today_workouts_block(user_id, include_date=False, include_exercise_details=True)
-        push_menu_stack(message.bot, training_menu)
-        await message.answer(
-            f"✅ Тренировка завершена!\n\n{workouts_text}\n\nВыбери действие:",
-            reply_markup=training_menu,
-            parse_mode="HTML",
-        )
+        await message.answer("✅ Тренировка завершена!")
+        await _send_activity_main_screen(message, user_id, target_date)
         return
     
     try:
