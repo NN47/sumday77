@@ -742,7 +742,7 @@ async def paginate_recent_exercises(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(lambda c: c.data and c.data.startswith("wrk_cat_page:"))
 async def paginate_category_exercises(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    _, _, category_id, page_text = callback.data.split(":")
+    _, category_id, page_text = callback.data.split(":", maxsplit=2)
     await _show_category(callback.message, state, category_id, int(page_text))
 
 
