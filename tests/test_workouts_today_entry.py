@@ -178,9 +178,11 @@ def test_catalog_exercise_inline_pick_continues_to_duration_input():
     asyncio.run(workouts.pick_catalog_exercise(callback, state))
 
     callback.answer.assert_awaited_once()
-    state.set_state.assert_any_await(workouts.WorkoutStates.choosing_input_method)
-    callback.message.answer.assert_awaited_once()
-    assert "Как хочешь добавить активность?" in callback.message.answer.await_args.args[0]
+    state.set_state.assert_any_await(workouts.WorkoutStates.entering_duration)
+    assert callback.message.answer.await_count == 2
+    assert "Укажи продолжительность" in callback.message.answer.await_args_list[0].args[0]
+    inline_keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"].inline_keyboard
+    assert any(button.text == "📏 Добавить по расстоянию" for row in inline_keyboard for button in row)
 
 
 def test_sup_boarding_is_available_in_all_exercises_and_uses_duration_input():
