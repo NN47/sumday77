@@ -216,6 +216,27 @@ def test_gym_category_first_page_shows_hammer_curl():
     assert page == 0
     assert "Молот на бицепс" in page_items
 
+
+def test_gym_category_next_page_callback_opens_second_page():
+    callback = SimpleNamespace(
+        data="wrk_cat_page:gym:1",
+        message=SimpleNamespace(bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock()),
+        from_user=SimpleNamespace(id=12345),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(update_data=AsyncMock())
+
+    asyncio.run(workouts.paginate_category_exercises(callback, state))
+
+    callback.answer.assert_awaited_once()
+    state.update_data.assert_awaited_once_with(add_activity_screen="category", category_id="gym", category_page=1)
+    text = callback.message.answer.await_args.args[0]
+    assert "🏋️ Тренажерный зал" in text
+    button_rows = [[button.text for button in row] for row in callback.message.answer.await_args.kwargs["reply_markup"].inline_keyboard]
+    assert ["⬅️ Предыдущая страница", "➡️ Следующая страница"] in button_rows
+    assert any("Подъёмы гантелей на бицепс" in row for row in button_rows)
+
+
 def test_gym_exercise_starts_with_working_weight_input():
     callback = SimpleNamespace(
         data=f"wrk_pick:{workouts._activity_id('Тяга штанги в наклоне')}",
