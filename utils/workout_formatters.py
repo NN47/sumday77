@@ -1,6 +1,7 @@
 """Функции форматирования для тренировок."""
 import logging
 from datetime import date
+from types import SimpleNamespace
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.models import Workout
 from utils.workout_utils import calculate_workout_calories
@@ -44,14 +45,18 @@ def _positive_attr(activity: Workout, *names: str) -> float | int | None:
     return None
 
 
+def _activity_method(activity: Workout) -> ActivityInputMethod:
+    method_value = getattr(activity, "input_method", None)
+    try:
+        return ActivityInputMethod(method_value) if method_value else infer_input_method(activity.exercise, activity.variant)
+    except ValueError:
+        return infer_input_method(activity.exercise, activity.variant)
+
+
 def _activity_parameters(activity: Workout) -> str:
     variant = (activity.variant or "").casefold()
     count = activity.count or 0
-    method_value = getattr(activity, "input_method", None)
-    try:
-        method = ActivityInputMethod(method_value) if method_value else infer_input_method(activity.exercise, activity.variant)
-    except ValueError:
-        method = infer_input_method(activity.exercise, activity.variant)
+    method = _activity_method(activity)
     sets = _positive_attr(activity, "sets", "approaches", "set_count")
     weight = _positive_attr(activity, "weight", "working_weight", "work_weight")
 
@@ -79,6 +84,84 @@ def _activity_parameters(activity: Workout) -> str:
     if weight:
         params.append(f"{_format_number(weight)} кг")
     return ", ".join(params)
+
+
+def _repetition_group_variant(activity: Workout) -> str:
+    variant = (activity.variant or "").casefold()
+    return "repetitions" if variant in {"", "reps", "повторения"} else variant
+
+
+def _can_group_daily_activity(activity: Workout) -> bool:
+    return _activity_method(activity) == ActivityInputMethod.REPETITIONS and not _positive_attr(activity, "sets", "approaches", "set_count")
+
+
+def format_activity_daily_summaries(activities: list[Workout], user_id: str | None = None) -> list[str]:
+    """Форматирует дневной список активностей, суммируя одинаковые записи повторений.
+
+    Несколько подходов одного силового упражнения обычно сохраняются отдельными
+    записями. На главном экране дня пользователю важнее увидеть общий объём за
+    день, поэтому записи с одинаковым упражнением, способом ввода и рабочим
+    весом объединяются. Разный вес остаётся отдельными строками, чтобы не
+    смешивать параметры подходов.
+    """
+    grouped: dict[tuple, SimpleNamespace] = {}
+    order: list[tuple] = []
+    result: list[str] = []
+
+    for activity in activities:
+        method = _activity_method(activity)
+        weight = _positive_attr(activity, "weight", "working_weight", "work_weight")
+        if not _can_group_daily_activity(activity):
+            result.append(format_activity_summary(activity, user_id))
+            continue
+
+        calories = activity.calories
+        if (calories is None or calories == 0) and user_id:
+            calories = calculate_workout_calories(user_id, activity.exercise, activity.variant, activity.count)
+        key = (
+            _normalize_exercise_name(activity.exercise),
+            method.value,
+            _repetition_group_variant(activity),
+            float(weight) if weight is not None else None,
+        )
+        if key not in grouped:
+            grouped[key] = SimpleNamespace(
+                exercise=_normalize_exercise_name(activity.exercise),
+                variant=activity.variant,
+                count=0,
+                calories=0.0,
+                input_method=method.value,
+                working_weight=weight,
+            )
+            order.append(key)
+        grouped[key].count += activity.count or 0
+        grouped[key].calories += calories or 0
+
+    grouped_lines = [format_activity_summary(grouped[key], user_id) for key in order]
+    if not result:
+        return grouped_lines
+
+    # Сохраняем исходный порядок: первая строка группы появляется на месте
+    # первого подхода, остальные негруппируемые записи остаются как были.
+    emitted: set[tuple] = set()
+    ordered_lines: list[str] = []
+    result_iter = iter(result)
+    for activity in activities:
+        method = _activity_method(activity)
+        weight = _positive_attr(activity, "weight", "working_weight", "work_weight")
+        key = (
+            _normalize_exercise_name(activity.exercise),
+            method.value,
+            _repetition_group_variant(activity),
+            float(weight) if weight is not None else None,
+        )
+        if _can_group_daily_activity(activity) and key in grouped:
+            if key not in emitted:
+                ordered_lines.append(format_activity_summary(grouped[key], user_id))
+                emitted.add(key)
+        else:
+            ordered_lines.append(next(result_iter))
+    return ordered_lines
 
 
 def format_activity_summary(activity: Workout, user_id: str | None = None, *, include_calories: bool = True) -> str:

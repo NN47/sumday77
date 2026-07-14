@@ -40,6 +40,7 @@ from utils.activity_input_config import ActivityInputMethod, get_activity_config
 from utils.workout_formatters import (
     build_day_actions_keyboard,
     format_activity_summary,
+    format_activity_daily_summaries,
     format_activity_edit_button,
     is_steps_workout,
 )
@@ -222,7 +223,7 @@ def _format_activity_overview(user_id: str, target_date: date) -> tuple[str, lis
 
     if activities:
         lines.append("🏃 Активность:")
-        lines.extend(f"• {format_activity_summary(activity, user_id)}" for activity in activities)
+        lines.extend(f"• {summary}" for summary in format_activity_daily_summaries(activities, user_id))
     else:
         lines.append("🏃 Активность: пока не добавлена")
 
