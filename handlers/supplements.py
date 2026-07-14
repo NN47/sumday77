@@ -48,6 +48,7 @@ from utils.validators import parse_date
 from services.notification_scheduler import (
     SUPPLEMENT_REMIND_LATER_PREFIX,
     SUPPLEMENT_REMINDER_DELAY,
+    build_supplement_confirm_keyboard,
     build_supplement_notification_keyboard,
 )
 
@@ -2452,7 +2453,9 @@ async def remind_supplement_later_from_notification(callback: CallbackQuery):
             deferred.updated_at = datetime.utcnow()
 
     try:
-        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.edit_reply_markup(
+            reply_markup=build_supplement_confirm_keyboard(supplement_id, time_text)
+        )
     except Exception:
         pass
 
