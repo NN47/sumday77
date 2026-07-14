@@ -168,7 +168,7 @@ def _build_activity_report_inline(activities: list, target_date: date) -> Inline
     rows: list[list[InlineKeyboardButton]] = []
     if activities:
         rows.append([InlineKeyboardButton(text="✏️ Редактировать активность", callback_data=f"wrk_edit_menu:{target_date.isoformat()}")])
-    rows.append([InlineKeyboardButton(text="👣 Шаги", callback_data=f"wrk_steps:{target_date.isoformat()}")])
+    rows.append([InlineKeyboardButton(text="👣 Добавить шаги", callback_data=f"wrk_steps:{target_date.isoformat()}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 async def _send_activity_main_screen(message: Message, user_id: str, target_date: date | None = None):
