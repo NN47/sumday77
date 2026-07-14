@@ -16,44 +16,43 @@ def _meal_completion_prompt() -> str:
 def test_meal_completion_prompt_uses_friend_role_and_question_framing() -> None:
     prompt = _meal_completion_prompt()
 
-    assert "умный, доброжелательный друг пользователя" in prompt
+    assert "спортивный друг пользователя" in prompt
     assert "«Ну как тебе?»" in prompt
-    assert "отреагируй естественно, тепло и по-человечески" in prompt
-    assert "не пиши как диетолог" in prompt
-    assert "не начинай с сухого перечисления" in prompt
+    assert "опытный человек, который давно занимается спортом" in prompt
+    assert "Ты не диетолог" in prompt
+    assert "Не начинай с сухого перечисления" in prompt
 
 
-def test_meal_completion_prompt_requires_food_character_and_real_products() -> None:
+def test_meal_completion_prompt_requires_concrete_useful_feedback() -> None:
     prompt = _meal_completion_prompt()
 
-    assert "почувствуй характер еды" in prompt
-    assert "домашний, ресторанный, лёгкий, плотный" in prompt
-    assert "Обязательно замечай саму еду" in prompt
-    assert "домашний хачапури, чизкейк, камамбер" in prompt
-    assert "не только цифры" in prompt
-    assert "Не выдумывай атмосферу" in prompt
+    assert "Комментарий должен быть полезным" in prompt
+    assert "белка достаточно или мало" in prompt
+    assert "Если в комментарии нет конкретной пользы, перепиши его" in prompt
+    assert "Всегда сначала ищи, что получилось удачно" in prompt
+    assert "Реальным плюсом" in prompt
 
 
 def test_meal_completion_prompt_forbids_dry_mini_analysis() -> None:
     prompt = _meal_completion_prompt()
 
-    assert "Не превращай комментарий в мини-анализ" in prompt
-    assert "калорийность → белок → жиры → углеводы → совет" in prompt
-    assert "КБЖУ используй только как поддержку основной мысли" in prompt
-    assert "Максимум одна-две важные цифры" in prompt
-    assert "Если текст похож на отчёт — перепиши его живее" in prompt
+    assert "Не пытайся одновременно разобрать всё" in prompt
+    assert "одну главную мысль" in prompt
+    assert "Можно использовать одну или две важные цифры" in prompt
+    assert "Не перечисляй все КБЖУ подряд" in prompt
+    assert "Если комментарий звучит как рекламный текст, психологический пост или диетологическая статья — перепиши проще" in prompt
 
 
 def test_meal_completion_prompt_preserves_supportive_philosophy() -> None:
     prompt = _meal_completion_prompt()
 
     assert "Sumday77 всегда на стороне пользователя" in prompt
-    assert "Всегда сначала ищи положительную сторону" in prompt
-    assert "обязательно найди хотя бы одну реальную сильную сторону" in prompt
+    assert "Всегда сначала ищи, что получилось удачно" in prompt
+    assert "Реальным плюсом может быть" in prompt
     assert "баланс уже не поправить" in prompt
-    assert "придётся отрабатывать" in prompt
+    assert "нужно отработать" in prompt
     assert "Не советуй голодать" in prompt
-    assert "следующий хороший выбор всё ещё имеет значение" in prompt
+    assert "Дальше можно просто продолжить в обычном режиме" in prompt
 
 
 def test_meal_completion_prompt_forbids_current_generation_time_assumptions() -> None:
@@ -77,7 +76,7 @@ def test_meal_completion_prompt_mentions_edited_meal_context_and_format() -> Non
 def test_meal_completion_prompt_requires_short_single_focus_html_format() -> None:
     prompt = _meal_completion_prompt()
 
-    assert "Ответь коротко: один заголовок и максимум два предложения" in prompt
+    assert "Ответь коротко: один заголовок и максимум два коротких предложения" in prompt
     assert "Выбери только одну главную мысль" in prompt
     assert "Не пиши художественный текст ради красоты" in prompt
     assert "Не приписывай пользователю чувства, привычки или мотивы" in prompt
