@@ -51,8 +51,8 @@ EVENING_ANALYSIS_REMINDER_TEXT = (
 )
 
 
-def build_supplement_notification_keyboard(supplement_id: int, time_text: str) -> InlineKeyboardMarkup:
-    """Создаёт inline-кнопки для уведомления о приёме добавки."""
+def build_supplement_confirm_keyboard(supplement_id: int, time_text: str) -> InlineKeyboardMarkup:
+    """Создаёт inline-кнопку подтверждения приёма добавки."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -61,14 +61,22 @@ def build_supplement_notification_keyboard(supplement_id: int, time_text: str) -
                     callback_data=f"{SUPPLEMENT_CONFIRM_PREFIX}:{supplement_id}:{time_text}",
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="⏰ Напомнить позже",
-                    callback_data=f"{SUPPLEMENT_REMIND_LATER_PREFIX}:{supplement_id}:{time_text}",
-                )
-            ],
         ]
     )
+
+
+def build_supplement_notification_keyboard(supplement_id: int, time_text: str) -> InlineKeyboardMarkup:
+    """Создаёт inline-кнопки для уведомления о приёме добавки."""
+    keyboard = build_supplement_confirm_keyboard(supplement_id, time_text).inline_keyboard
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                text="⏰ Напомнить позже",
+                callback_data=f"{SUPPLEMENT_REMIND_LATER_PREFIX}:{supplement_id}:{time_text}",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 class NotificationScheduler:

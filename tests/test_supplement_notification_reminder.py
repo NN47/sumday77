@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("API_TOKEN", "test-token")
 
 from handlers import supplements
-from services.notification_scheduler import build_supplement_notification_keyboard
+from services.notification_scheduler import build_supplement_confirm_keyboard, build_supplement_notification_keyboard
 
 
 def _build_callback(callback_data: str):
@@ -33,7 +33,7 @@ def test_supplement_notification_keyboard_contains_confirm_and_remind_later_butt
     assert keyboard.inline_keyboard[1][0].callback_data == "sup_remind:7:21:30"
 
 
-def test_remind_later_callback_removes_keyboard_and_schedules_reminder():
+def test_remind_later_callback_keeps_confirm_button_and_schedules_reminder():
     callback = _build_callback("sup_remind:7:21:30")
     deleted = []
     added = []
@@ -82,7 +82,9 @@ def test_remind_later_callback_removes_keyboard_and_schedules_reminder():
     ), patch("handlers.supplements.get_db_session", fake_db_session):
         asyncio.run(supplements.remind_supplement_later_from_notification(callback))
 
-    callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
+    callback.message.edit_reply_markup.assert_awaited_once_with(
+        reply_markup=build_supplement_confirm_keyboard(7, "21:30")
+    )
     callback.answer.assert_awaited_once_with("Хорошо, напомню позже.")
     callback.message.answer.assert_awaited_once_with("Хорошо, напомню позже.")
     assert len(added) == 1
