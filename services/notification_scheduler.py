@@ -79,6 +79,36 @@ def build_supplement_notification_keyboard(supplement_id: int, time_text: str) -
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+def build_evening_analysis_start_keyboard(target_date) -> InlineKeyboardMarkup:
+    """Создаёт inline-кнопку запуска подробного анализа дня."""
+    date_payload = target_date.isoformat()
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Запустить подробный AI-анализ",
+                    callback_data=f"{EVENING_ANALYSIS_START_PREFIX}:{date_payload}",
+                )
+            ],
+        ]
+    )
+
+
+def build_evening_analysis_keyboard(target_date) -> InlineKeyboardMarkup:
+    """Создаёт inline-кнопки для вечернего анализа дня."""
+    keyboard = build_evening_analysis_start_keyboard(target_date).inline_keyboard
+    date_payload = target_date.isoformat()
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                text="⏰ Напомнить позже",
+                callback_data=f"{EVENING_ANALYSIS_REMIND_PREFIX}:{date_payload}",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
 class NotificationScheduler:
     """Планировщик уведомлений о приёмах пищи и добавках."""
     
@@ -144,23 +174,7 @@ class NotificationScheduler:
 
     def build_evening_analysis_keyboard(self, target_date) -> InlineKeyboardMarkup:
         """Создаёт inline-кнопки для вечернего анализа дня."""
-        date_payload = target_date.isoformat()
-        return InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="✅ Запустить подробный AI-анализ",
-                        callback_data=f"{EVENING_ANALYSIS_START_PREFIX}:{date_payload}",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="⏰ Напомнить позже",
-                        callback_data=f"{EVENING_ANALYSIS_REMIND_PREFIX}:{date_payload}",
-                    )
-                ],
-            ]
-        )
+        return build_evening_analysis_keyboard(target_date)
 
     def _get_user_timezone(self, timezone_name: str | None) -> ZoneInfo:
         """Возвращает таймзону пользователя или московскую по умолчанию."""

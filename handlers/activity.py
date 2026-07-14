@@ -44,6 +44,7 @@ from services.notification_scheduler import (
     EVENING_ANALYSIS_REMIND_PREFIX,
     EVENING_ANALYSIS_REMINDER_DELAY,
     EVENING_ANALYSIS_START_PREFIX,
+    build_evening_analysis_start_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -1411,6 +1412,12 @@ async def remind_evening_activity_analysis_later(callback: CallbackQuery):
     await callback.answer("⏰ Хорошо, напомню позже.")
     due_at = datetime.utcnow() + EVENING_ANALYSIS_REMINDER_DELAY
     reminder_number = EveningAnalysisNotificationRepository.schedule_reminder(user_id, target_date, due_at)
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=build_evening_analysis_start_keyboard(target_date)
+        )
+    except Exception:
+        pass
     if reminder_number is None:
         await callback.message.answer("На сегодня больше не буду напоминать об анализе дня ⏰")
         return
