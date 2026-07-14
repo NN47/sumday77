@@ -205,6 +205,17 @@ def test_sup_boarding_search_matches_synonyms():
     assert "катание на сапе" in tokens
 
 
+def test_gym_category_first_page_shows_hammer_curl():
+    gym_exercises = [
+        workouts._normalize_exercise_name(ex)
+        for ex in workouts.ACTIVITY_CATEGORIES["gym"]["activities"]
+    ]
+
+    page_items, page = workouts._paginate(gym_exercises, 0)
+
+    assert page == 0
+    assert "Молот на бицепс" in page_items
+
 def test_gym_exercise_starts_with_working_weight_input():
     callback = SimpleNamespace(
         data=f"wrk_pick:{workouts._activity_id('Тяга штанги в наклоне')}",
