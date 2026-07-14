@@ -23,6 +23,7 @@ class WorkoutRepository:
         duration_minutes: float | None = None,
         distance_km: float | None = None,
         jumps_count: int | None = None,
+        working_weight: float | None = None,
     ) -> Workout:
         """Сохраняет тренировку."""
         with get_db_session() as session:
@@ -37,6 +38,7 @@ class WorkoutRepository:
                 duration_minutes=duration_minutes,
                 distance_km=distance_km,
                 jumps_count=jumps_count,
+                working_weight=working_weight,
             )
             session.add(workout)
             session.commit()
@@ -108,6 +110,7 @@ class WorkoutRepository:
         duration_minutes: float | None = None,
         distance_km: float | None = None,
         jumps_count: int | None = None,
+        working_weight: float | None = None,
     ) -> bool:
         """Обновляет количество и калории тренировки."""
         with get_db_session() as session:
@@ -125,6 +128,7 @@ class WorkoutRepository:
                     workout.duration_minutes = duration_minutes
                     workout.distance_km = distance_km
                     workout.jumps_count = jumps_count
+                workout.working_weight = working_weight
                 session.commit()
                 logger.info(f"Updated workout {workout_id} for user {user_id}: count={count}, calories={calories}")
                 return True

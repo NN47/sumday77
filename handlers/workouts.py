@@ -22,6 +22,7 @@ from utils.keyboards import (
     jumps_menu,
     plank_duration_menu,
     count_menu,
+    working_weight_menu,
     push_menu_stack,
     add_another_set_menu,
     add_another_exercise_menu,
@@ -108,6 +109,57 @@ def _exercise_input_type(exercise: str) -> str:
     if method == ActivityInputMethod.JUMPS:
         return "jumps"
     return "reps"
+
+
+def _gym_exercises() -> set[str]:
+    """Возвращает упражнения категории «Тренажёрный зал» из централизованного каталога."""
+    gym_category = ACTIVITY_CATEGORIES.get("gym", {})
+    return {_normalize_exercise_name(ex) for ex in gym_category.get("activities", [])}
+
+
+def _is_gym_exercise(exercise: str | None) -> bool:
+    return bool(exercise) and _normalize_exercise_name(exercise) in _gym_exercises()
+
+
+def _format_working_weight(weight: float | int | None) -> str:
+    if weight is None or float(weight) <= 0:
+        return "без веса"
+    number = float(weight)
+    return f"{int(number) if number.is_integer() else str(number).replace('.', ',')} кг"
+
+
+def _parse_working_weight(text: str | None) -> float | None:
+    raw = (text or "").strip().casefold()
+    if raw == "без веса":
+        return None
+    raw = raw.replace("кг", "").replace(",", ".").strip()
+    weight = float(raw)
+    if weight < 0:
+        raise ValueError
+    return weight
+
+
+async def _open_working_weight_input(message: Message, state: FSMContext, exercise: str) -> None:
+    await state.update_data(exercise=_normalize_exercise_name(exercise), variant="reps", input_method=ActivityInputMethod.REPETITIONS.value)
+    await state.set_state(WorkoutStates.entering_working_weight)
+    push_menu_stack(message.bot, working_weight_menu)
+    await message.answer(
+        f"🏋️ {exercise}\n\n"
+        "1️⃣ Укажи рабочий вес:",
+        reply_markup=working_weight_menu,
+    )
+
+
+async def _open_reps_input(message: Message, state: FSMContext, exercise: str, working_weight: float | None, *, step_prefix: str = "2️⃣ ") -> None:
+    await state.set_state(WorkoutStates.entering_count)
+    push_menu_stack(message.bot, count_menu)
+    weight_line = f"⚖️ Рабочий вес: {_format_working_weight(working_weight)}\n\n" if _is_gym_exercise(exercise) else ""
+    await message.answer(
+        f"🏋️ {exercise}\n"
+        f"{weight_line}"
+        f"{step_prefix}Выбери количество повторений:",
+        reply_markup=count_menu,
+    )
 
 
 def _format_minutes(minutes: float) -> str:
@@ -649,6 +701,10 @@ async def _continue_with_selected_exercise(message: Message, state: FSMContext, 
         await message.answer("Каким хватом выполнял подтягивания?", reply_markup=grip_type_menu)
         return
 
+    if _is_gym_exercise(exercise):
+        await _open_working_weight_input(message, state, exercise)
+        return
+
     methods = get_activity_methods(exercise)
     method = methods[0]
     if method == ActivityInputMethod.STEPS:
@@ -887,6 +943,7 @@ async def edit_workout(callback: CallbackQuery, state: FSMContext):
         workout_id=workout_id,
         workout_exercise=workout.exercise,
         workout_variant=workout.variant,
+        workout_working_weight=getattr(workout, "working_weight", None),
         workout_date=workout.date.isoformat(),
         target_date=target_date.isoformat(),
     )
@@ -910,6 +967,7 @@ async def handle_workout_edit_count(message: Message, state: FSMContext):
     workout_id = data.get("workout_id")
     exercise = data.get("workout_exercise")
     variant = data.get("workout_variant")
+    working_weight = data.get("workout_working_weight")
     input_method = infer_input_method(exercise, variant)
     target_date_str = data.get("target_date", date.today().isoformat())
 
@@ -940,6 +998,7 @@ async def handle_workout_edit_count(message: Message, state: FSMContext):
         duration_minutes=count if input_method == ActivityInputMethod.TIME else None,
         distance_km=count if input_method == ActivityInputMethod.DISTANCE else None,
         jumps_count=int(count) if input_method == ActivityInputMethod.JUMPS else None,
+        working_weight=working_weight if _is_gym_exercise(exercise) else None,
     )
     
     if success:
@@ -1427,6 +1486,39 @@ async def handle_custom_exercise(message: Message, state: FSMContext):
     )
 
 
+@router.message(WorkoutStates.entering_working_weight)
+async def handle_working_weight_input(message: Message, state: FSMContext):
+    """Обрабатывает выбор рабочего веса для упражнений тренажёрного зала."""
+    if message.text == "✍️ Ввести вручную":
+        await message.answer("Введи рабочий вес в килограммах, например 32,5. Если упражнение без веса — нажми «Без веса».")
+        return
+    if message.text in {"❌ Отмена", "⬅️ Назад"}:
+        await state.clear()
+        push_menu_stack(message.bot, training_menu)
+        await message.answer("⬇️ Меню тренировок", reply_markup=training_menu)
+        return
+    if message.text in MAIN_MENU_BUTTON_ALIASES:
+        from handlers.common import go_main_menu
+        await go_main_menu(message, state)
+        return
+
+    try:
+        working_weight = _parse_working_weight(message.text)
+    except (ValueError, TypeError):
+        await message.answer("⚠️ Введи рабочий вес положительным числом или нажми «Без веса».")
+        return
+
+    data = await state.get_data()
+    exercise = data.get("exercise")
+    if not exercise:
+        await message.answer("❌ Ошибка: данные потеряны. Начни добавление тренировки заново.")
+        await state.clear()
+        return
+
+    await state.update_data(working_weight=working_weight)
+    await _open_reps_input(message, state, exercise, working_weight)
+
+
 @router.message(WorkoutStates.entering_count)
 async def handle_count_input(message: Message, state: FSMContext):
     """Обрабатывает ввод количества."""
@@ -1450,6 +1542,15 @@ async def handle_count_input(message: Message, state: FSMContext):
         return
     
     # Обработка ответа на вопрос "добавить еще подход?"
+    if message.text == "⚖️ Изменить вес":
+        data = await state.get_data()
+        exercise = data.get("exercise")
+        if not exercise or not _is_gym_exercise(exercise):
+            await message.answer("Сменить вес можно для упражнений тренажёрного зала.")
+            return
+        await _open_working_weight_input(message, state, exercise)
+        return
+
     if message.text == "💪 Добавить еще подход":
         # Остаемся в том же состоянии, просто просим ввести количество
         # Явно убеждаемся, что состояние установлено правильно и данные сохранены
@@ -1474,12 +1575,8 @@ async def handle_count_input(message: Message, state: FSMContext):
         )
         await state.set_state(WorkoutStates.entering_count)
         
-        # Показываем клавиатуру для выбора количества
-        push_menu_stack(message.bot, count_menu)
-        await message.answer(
-            f"Введи количество повторений для {exercise}:",
-            reply_markup=count_menu
-        )
+        # Показываем клавиатуру для выбора количества, сохраняя рабочий вес текущего упражнения.
+        await _open_reps_input(message, state, exercise, data.get("working_weight"), step_prefix="")
         return
     
     if message.text == "➕ Добавить другое упражнение":
@@ -1535,6 +1632,8 @@ async def handle_count_input(message: Message, state: FSMContext):
         entry_date=entry_date,
         variant=variant,
         calories=calories,
+        input_method=ActivityInputMethod.REPETITIONS.value,
+        working_weight=data.get("working_weight") if _is_gym_exercise(exercise) else None,
     )
     
     logger.info(f"User {user_id} saved workout: {exercise} x {count} on {entry_date}")
@@ -1547,16 +1646,23 @@ async def handle_count_input(message: Message, state: FSMContext):
     # Формируем ответ
     formatted_count = format_count_with_unit(count, variant)
     total_formatted = format_count_with_unit(total_count, variant)
+    working_weight = data.get("working_weight") if _is_gym_exercise(exercise) else None
+    weight_line = f"⚖️ {_format_working_weight(working_weight)}\n" if _is_gym_exercise(exercise) else ""
+    total_weight_line = f"• Рабочий вес: {_format_working_weight(working_weight)}\n" if _is_gym_exercise(exercise) else ""
+    title_icon = "🏋️" if _is_gym_exercise(exercise) else "💪"
     
     date_label = "сегодня" if entry_date == date.today() else entry_date.strftime("%d.%m.%Y")
     
     await message.answer(
-        f"✅ Записал! 👍\n"
-        f"💪 {exercise}\n"
+        f"✅ Записал! 👍\n\n"
+        f"{title_icon} {exercise}\n"
+        f"{weight_line}"
         f"📊 {formatted_count}\n"
         f"🔥 ~{calories:.0f} ккал\n"
-        f"📅 {date_label}\n\n"
-        f"Всего {exercise} за {date_label}: {total_formatted}\n\n"
+        f"📅 {date_label.capitalize()}\n\n"
+        f"Всего за {date_label}:\n"
+        f"• {total_formatted}\n"
+        f"{total_weight_line}\n"
         f"Хотите внести еще подход?",
         reply_markup=add_another_set_menu,
     )

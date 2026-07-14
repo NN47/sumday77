@@ -58,6 +58,7 @@ class Workout(Base):
     duration_minutes = Column(Float, nullable=True)
     distance_km = Column(Float, nullable=True)
     jumps_count = Column(Integer, nullable=True)
+    working_weight = Column(Float, nullable=True)
 
 
 class CustomWorkoutExercise(Base):
