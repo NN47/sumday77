@@ -253,3 +253,45 @@ def test_evening_analysis_notification_is_skipped_when_analysis_already_generate
     mark_sent.assert_not_called()
     assert session.states["12345"].last_daily_analysis_date == date(2026, 4, 8)
     assert session.states["12345"].reminder_due_at is None
+
+
+def test_evening_analysis_remind_later_keeps_start_button_and_schedules_reminder():
+    from handlers import activity
+    from services.notification_scheduler import build_evening_analysis_start_keyboard
+
+    callback = SimpleNamespace(
+        data="evening_analysis_remind:2026-04-08",
+        from_user=SimpleNamespace(id=12345),
+        message=SimpleNamespace(
+            edit_reply_markup=AsyncMock(),
+            answer=AsyncMock(),
+        ),
+        answer=AsyncMock(),
+    )
+
+    with patch(
+        "handlers.activity.EveningAnalysisNotificationRepository.has_analysis_for_date",
+        return_value=False,
+    ), patch(
+        "handlers.activity.EveningAnalysisNotificationRepository.schedule_reminder",
+        return_value=1,
+    ) as schedule_reminder:
+        asyncio.run(activity.remind_evening_activity_analysis_later(callback))
+
+    callback.message.edit_reply_markup.assert_awaited_once_with(
+        reply_markup=build_evening_analysis_start_keyboard(date(2026, 4, 8))
+    )
+    callback.answer.assert_awaited_once_with("⏰ Хорошо, напомню позже.")
+    callback.message.answer.assert_awaited_once_with("⏰ Хорошо, напомню позже.")
+    assert schedule_reminder.call_args.args[0] == "12345"
+    assert schedule_reminder.call_args.args[1] == date(2026, 4, 8)
+
+
+def test_evening_analysis_start_keyboard_contains_only_start_button():
+    from services.notification_scheduler import build_evening_analysis_start_keyboard
+
+    keyboard = build_evening_analysis_start_keyboard(date(2026, 4, 8))
+
+    assert len(keyboard.inline_keyboard) == 1
+    assert keyboard.inline_keyboard[0][0].text == "✅ Запустить подробный AI-анализ"
+    assert keyboard.inline_keyboard[0][0].callback_data == "evening_analysis_start:2026-04-08"
