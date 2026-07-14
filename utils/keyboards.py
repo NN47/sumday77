@@ -253,6 +253,18 @@ count_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+working_weight_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Без веса")],
+        [KeyboardButton(text="5 кг"), KeyboardButton(text="10 кг"), KeyboardButton(text="15 кг"), KeyboardButton(text="20 кг")],
+        [KeyboardButton(text="25 кг"), KeyboardButton(text="30 кг"), KeyboardButton(text="35 кг"), KeyboardButton(text="40 кг")],
+        [KeyboardButton(text="45 кг"), KeyboardButton(text="50 кг"), KeyboardButton(text="60 кг"), KeyboardButton(text="70 кг")],
+        [KeyboardButton(text="✍️ Ввести вручную")],
+        [KeyboardButton(text="❌ Отмена"), main_menu_button],
+    ],
+    resize_keyboard=True,
+)
+
 # Меню выбора даты тренировки
 training_date_menu = ReplyKeyboardMarkup(
     keyboard=[
@@ -802,7 +814,7 @@ activity_analysis_menu = ReplyKeyboardMarkup(
 # Меню для добавления еще подхода
 add_another_set_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="💪 Добавить еще подход")],
+        [KeyboardButton(text="💪 Добавить еще подход"), KeyboardButton(text="⚖️ Изменить вес")],
         [KeyboardButton(text="➕ Добавить другое упражнение")],
         [KeyboardButton(text="✅ Завершить упражнение")],
     ],

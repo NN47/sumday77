@@ -67,7 +67,7 @@ def test_add_another_set_menu_contains_add_different_exercise_button():
     rows = [[button.text for button in row] for row in add_another_set_menu.keyboard]
 
     assert rows == [
-        ["💪 Добавить еще подход"],
+        ["💪 Добавить еще подход", "⚖️ Изменить вес"],
         ["➕ Добавить другое упражнение"],
         ["✅ Завершить упражнение"],
     ]
@@ -179,11 +179,9 @@ def test_catalog_exercise_inline_pick_continues_to_duration_input():
 
     callback.answer.assert_awaited_once()
     state.set_state.assert_any_await(workouts.WorkoutStates.entering_duration)
-    assert callback.message.answer.await_count == 2
-    assert "Укажи продолжительность" in callback.message.answer.await_args_list[0].args[0]
-    reply_keyboard = callback.message.answer.await_args_list[0].kwargs["reply_markup"].keyboard
-    assert [[button.text for button in row] for row in reply_keyboard] == [["📏 Добавить по расстоянию"], ["⬅️ Назад"]]
-    inline_keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"].inline_keyboard
+    assert callback.message.answer.await_count == 1
+    assert "Выбери время" in callback.message.answer.await_args_list[0].args[0]
+    inline_keyboard = callback.message.answer.await_args_list[0].kwargs["reply_markup"].inline_keyboard
     assert [[button.text for button in row] for row in inline_keyboard] == [
         ["5 мин", "10 мин", "15 мин"],
         ["20 мин", "25 мин", "30 мин"],
@@ -205,3 +203,54 @@ def test_sup_boarding_search_matches_synonyms():
     assert "сапсерфинг" in tokens
     assert "гребля на сапе" in tokens
     assert "катание на сапе" in tokens
+
+
+def test_gym_exercise_starts_with_working_weight_input():
+    callback = SimpleNamespace(
+        data=f"wrk_pick:{workouts._activity_id('Тяга штанги в наклоне')}",
+        message=SimpleNamespace(bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock()),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(update_data=AsyncMock(), set_state=AsyncMock())
+
+    asyncio.run(workouts.pick_catalog_exercise(callback, state))
+
+    state.set_state.assert_any_await(workouts.WorkoutStates.entering_working_weight)
+    text = callback.message.answer.await_args.args[0]
+    assert "🏋️ Тяга штанги в наклоне" in text
+    assert "1️⃣ Укажи рабочий вес" in text
+    keyboard_rows = [[button.text for button in row] for row in callback.message.answer.await_args.kwargs["reply_markup"].keyboard]
+    assert keyboard_rows[0] == ["Без веса"]
+    assert "30 кг" in keyboard_rows[2]
+
+
+def test_gym_weight_selection_opens_reps_without_asking_weight_again():
+    message = SimpleNamespace(text="30 кг", bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock())
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"exercise": "Тяга штанги в наклоне"}),
+        update_data=AsyncMock(),
+        set_state=AsyncMock(),
+    )
+
+    asyncio.run(workouts.handle_working_weight_input(message, state))
+
+    state.update_data.assert_any_await(working_weight=30.0)
+    state.set_state.assert_any_await(workouts.WorkoutStates.entering_count)
+    text = message.answer.await_args.args[0]
+    assert "⚖️ Рабочий вес: 30 кг" in text
+    assert "2️⃣ Выбери количество повторений" in text
+
+
+def test_add_another_gym_set_reuses_selected_working_weight():
+    message = SimpleNamespace(text="💪 Добавить еще подход", from_user=SimpleNamespace(id=12345), bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock())
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"exercise": "Тяга штанги в наклоне", "variant": "reps", "working_weight": 30.0, "entry_date": "2026-06-03"}),
+        update_data=AsyncMock(),
+        set_state=AsyncMock(),
+    )
+
+    asyncio.run(workouts.handle_count_input(message, state))
+
+    text = message.answer.await_args.args[0]
+    assert "⚖️ Рабочий вес: 30 кг" in text
+    assert "Выбери количество повторений" in text
