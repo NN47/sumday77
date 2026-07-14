@@ -29,8 +29,8 @@ def test_quick_weight_uses_callback_user_id(monkeypatch):
 
     calls = []
 
-    async def fake_start_add_weight_for_user(message, state, user_id):
-        calls.append((message, state, user_id))
+    async def fake_start_add_weight_for_user(message, state, user_id, source=None):
+        calls.append((message, state, user_id, source))
 
     monkeypatch.setattr(weight_module, "start_add_weight_for_user", fake_start_add_weight_for_user)
 
@@ -40,4 +40,4 @@ def test_quick_weight_uses_callback_user_id(monkeypatch):
     asyncio.run(common.quick_weight(callback, state))
 
     assert callback.answered is True
-    assert calls == [(callback.message, state, "12345")]
+    assert calls == [(callback.message, state, "12345", weight_module.WEIGHT_SOURCE_QUICK_ADD)]

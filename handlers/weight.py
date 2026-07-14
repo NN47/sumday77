@@ -14,6 +14,7 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from typing import Optional
 from utils.keyboards import (
+    LEGACY_MAIN_MENU_BUTTON_TEXT,
     WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT,
     main_menu,
     push_menu_stack,
@@ -46,16 +47,27 @@ WEIGHT_SOURCE_QUICK_ADD = "quick_add"
 WEIGHT_SOURCE_WEIGHT_SECTION = "weight_section"
 WEIGHT_SOURCE_CALENDAR = "calendar"
 
+quick_weight_saved_menu = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text=LEGACY_MAIN_MENU_BUTTON_TEXT)]],
+    resize_keyboard=True,
+)
 
-
-def _to_weight_decimal(raw_value: str | float | int | Decimal | None) -> Optional[Decimal]:
-    """Преобразует вес или дельту в Decimal с точностью до сотых."""
+def _to_raw_weight_decimal(raw_value: str | float | int | Decimal | None) -> Optional[Decimal]:
+    """Преобразует вес или дельту в Decimal без промежуточного округления."""
     if raw_value is None:
         return None
     try:
-        return Decimal(str(raw_value).replace(",", ".")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return Decimal(str(raw_value).replace(",", "."))
     except (InvalidOperation, ValueError, TypeError):
         return None
+
+
+def _to_weight_decimal(raw_value: str | float | int | Decimal | None) -> Optional[Decimal]:
+    """Преобразует вес или дельту в Decimal с точностью до сотых для UI-шагов."""
+    value = _to_raw_weight_decimal(raw_value)
+    if value is None:
+        return None
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _apply_weight_delta(base_weight: str | float | int | Decimal | None, delta_kg: str | float | int | Decimal) -> Optional[float]:
@@ -89,6 +101,90 @@ _WEIGHT_QUICK_DELTAS_BY_LABEL.update({
     "+1": Decimal("1.00"),
 })
 
+
+
+def _format_signed_weight_change(change_kg: Decimal | float) -> str:
+    """Форматирует изменение веса с двумя знаками и типографским минусом."""
+    change = _to_raw_weight_decimal(change_kg) or Decimal("0")
+    displayed = change.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if displayed > 0:
+        return f"+{displayed:.2f}"
+    if displayed < 0:
+        return f"−{abs(displayed):.2f}"
+    return "0.00"
+
+
+def _get_weight_change_icon(change_kg: Decimal | float) -> str:
+    """Возвращает иконку направления изменения веса."""
+    change = _to_raw_weight_decimal(change_kg) or Decimal("0")
+    if change >= Decimal("0.10"):
+        return "📈"
+    if change <= Decimal("-0.10"):
+        return "📉"
+    return "⚖️"
+
+
+def get_first_weight_message() -> str:
+    """Поддерживающее сообщение для первой записи веса."""
+    return (
+        "💬 Первая запись добавлена.\n"
+        "Теперь бот сможет отслеживать изменения и показывать динамику веса."
+    )
+
+
+def get_weight_change_message(change_kg: Decimal | float) -> str:
+    """Подбирает поддерживающий текст по изменению веса относительно предыдущей записи."""
+    change = _to_raw_weight_decimal(change_kg) or Decimal("0")
+
+    if change < Decimal("-1.00"):
+        return (
+            "🎉 Отличный прогресс!\n"
+            "Вес заметно уменьшился. Продолжай придерживаться своих привычек и оценивай результат по динамике за несколько недель."
+        )
+    if Decimal("-1.00") <= change <= Decimal("-0.10"):
+        return (
+            "👍 Хорошее движение в нужную сторону.\n"
+            "Даже небольшие изменения со временем складываются в заметный результат. Продолжай в том же духе!"
+        )
+    if Decimal("-0.09") <= change <= Decimal("0.09"):
+        return (
+            "💬 Вес остаётся стабильным.\n"
+            "Это нормально — организм не меняет вес равномерно каждый день. Главное — смотреть на общую тенденцию."
+        )
+    if Decimal("0.10") <= change <= Decimal("0.50"):
+        return (
+            "💬 Небольшие колебания веса — естественная часть процесса.\n"
+            "На результат могут влиять вода, питание и время взвешивания. Следи за общей динамикой, а не за одним измерением."
+        )
+    if Decimal("0.51") <= change <= Decimal("1.00"):
+        return (
+            "💬 Сегодня вес немного выше предыдущего.\n"
+            "Не спеши делать выводы: такие изменения нередко связаны с временными колебаниями. Несколько измерений покажут реальную тенденцию."
+        )
+    return (
+        "💬 Вес увеличился заметнее обычного.\n"
+        "Одно измерение ещё не показывает реальную тенденцию. Продолжай регулярно взвешиваться и оценивай изменения за более длительный период."
+    )
+
+
+def _format_weight_saved_text(action_text: str, weight_value: float, previous_weight_value: Optional[float]) -> str:
+    """Формирует единый результат сохранения/обновления веса."""
+    lines = [f"✅ <b>{action_text}</b>", "", f"⚖️ <b>{weight_value:.2f} кг</b>"]
+    if previous_weight_value is None:
+        lines.extend(["", get_first_weight_message()])
+        return "\n".join(lines)
+
+    change = (_to_raw_weight_decimal(weight_value) or Decimal("0")) - (
+        _to_raw_weight_decimal(previous_weight_value) or Decimal("0")
+    )
+    lines.extend([
+        "",
+        f"{_get_weight_change_icon(change)} <b>Изменение:</b>",
+        f"{_format_signed_weight_change(change)} кг с прошлой записи",
+        "",
+        get_weight_change_message(change),
+    ])
+    return "\n".join(lines)
 
 def _build_weight_quick_adjust_keyboard(_base_weight: float, *, has_changes: bool = False) -> InlineKeyboardMarkup:
     """Инлайн-клавиатура быстрых изменений веса относительно текущего черновика."""
@@ -991,8 +1087,7 @@ async def _show_weight_saved_result(
     await state.clear()
     if source == WEIGHT_SOURCE_QUICK_ADD:
         push_menu_stack(message.bot, main_menu)
-        await message.answer(success_text)
-        await _send_main_menu_after_quick_weight(message, user_id)
+        await message.answer(success_text, reply_markup=quick_weight_saved_menu, parse_mode="HTML")
         return
 
     if source == WEIGHT_SOURCE_CALENDAR and updated_weight is not None:
@@ -1003,7 +1098,7 @@ async def _show_weight_saved_result(
         return
 
     push_menu_stack(message.bot, weight_menu)
-    await message.answer(success_text, reply_markup=weight_menu)
+    await message.answer(success_text, reply_markup=weight_menu, parse_mode="HTML")
 
 
 async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, data: dict):
@@ -1026,23 +1121,13 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
             success = WeightRepository.update_weight(weight_id, user_id, stored_weight_value)
             if success:
                 logger.info(f"User {user_id} updated weight {weight_id}: {weight_value} kg on {entry_date}")
-                delta_text = ""
-                if previous_weight_value is not None:
-                    delta = weight_value - previous_weight_value
-                    direction = "📉" if delta < 0 else "📈" if delta > 0 else "⚖️"
-                    delta_text = f"\n\n<b>Изменение:</b>\n{delta:+.2f} кг с прошлой записи {direction}"
                 updated_weight = WeightRepository.get_weight_for_date(user_id, entry_date)
                 await _show_weight_saved_result(
                     message,
                     state,
                     user_id,
                     source,
-                    (
-                        f"✅ <b>Вес обновлён!</b>\n\n"
-                        f"⚖️ <b>{weight_value:.2f} кг</b>\n"
-                        f"📅 {entry_date.strftime('%d.%m.%Y')}"
-                        f"{delta_text}"
-                    ),
+                    _format_weight_saved_text("Вес обновлён!", weight_value, previous_weight_value),
                     entry_date=entry_date,
                     updated_weight=updated_weight,
                 )
@@ -1054,30 +1139,13 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
             logger.info(f"User {user_id} saved weight: {weight_value} kg on {entry_date}")
             AnalyticsRepository.track_event(user_id, "add_weight", section="weight")
 
-            delta_text = "\n<b>Изменение:</b>\nНедостаточно данных"
-            comment_text = ""
-            if previous_weight_value is not None:
-                delta = weight_value - previous_weight_value
-                direction = "📉" if delta < 0 else "📈" if delta > 0 else "⚖️"
-                delta_text = f"\n<b>Изменение:</b>\n{delta:+.2f} кг с прошлой записи {direction}"
-                if delta < 0:
-                    comment_text = "\n\n<b>Отличная динамика.</b>"
-                elif delta > 0:
-                    comment_text = "\n\n<b>Вес немного вырос.</b>\nОбрати внимание на питание и воду."
-                else:
-                    comment_text = "\n\n<b>Вес без изменений.</b> Продолжай в том же ритме."
             saved_weight = WeightRepository.get_weight_for_date(user_id, entry_date)
             await _show_weight_saved_result(
                 message,
                 state,
                 user_id,
                 source,
-                (
-                    f"✅ <b>Вес сохранён!</b>\n\n"
-                    f"⚖️ <b>{weight_value:.2f} кг</b>"
-                    f"{delta_text}"
-                    f"{comment_text}"
-                ),
+                _format_weight_saved_text("Вес сохранён!", weight_value, previous_weight_value),
                 entry_date=entry_date,
                 updated_weight=saved_weight,
             )
