@@ -160,7 +160,7 @@ def test_start_exercise_selection_shows_recent_inline_and_categories():
     assert [[button.text for button in row] for row in recent_call.kwargs["reply_markup"].inline_keyboard] == [
         ["1️⃣ Бег"],
         ["2️⃣ Отжимания"],
-        ["🔍 Поиск упражнения"],
+        ["🔎 Поиск упражнения"],
     ]
     category_call = message.answer.await_args_list[1]
     assert category_call.args[0] == "📂 Или выбери категорию:"
@@ -181,8 +181,15 @@ def test_catalog_exercise_inline_pick_continues_to_duration_input():
     state.set_state.assert_any_await(workouts.WorkoutStates.entering_duration)
     assert callback.message.answer.await_count == 2
     assert "Укажи продолжительность" in callback.message.answer.await_args_list[0].args[0]
+    reply_keyboard = callback.message.answer.await_args_list[0].kwargs["reply_markup"].keyboard
+    assert [[button.text for button in row] for row in reply_keyboard] == [["📏 Добавить по расстоянию"], ["⬅️ Назад"]]
     inline_keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"].inline_keyboard
-    assert any(button.text == "📏 Добавить по расстоянию" for row in inline_keyboard for button in row)
+    assert [[button.text for button in row] for row in inline_keyboard] == [
+        ["5 мин", "10 мин", "15 мин"],
+        ["20 мин", "25 мин", "30 мин"],
+        ["35 мин", "40 мин", "45 мин"],
+        ["50 мин", "55 мин", "60 мин"],
+    ]
 
 
 def test_sup_boarding_is_available_in_all_exercises_and_uses_duration_input():
