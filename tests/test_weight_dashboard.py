@@ -23,8 +23,8 @@ class DummyMessage:
         self.bot = DummyBot()
         self.answers = []
 
-    async def answer(self, text, reply_markup=None):
-        self.answers.append((text, reply_markup))
+    async def answer(self, text, reply_markup=None, **kwargs):
+        self.answers.append((text, reply_markup, kwargs))
 
 
 def weight_entry(value, entry_date, entry_id=1):
@@ -60,7 +60,7 @@ def test_weight_dashboard_hides_progress_bar_and_shows_decrease_trend():
         asyncio.run(my_weight(message))
 
     assert len(message.answers) == 1
-    text, reply_markup = message.answers[0]
+    text, reply_markup, _ = message.answers[0]
     assert reply_markup is weight_menu
     assert "Прогресс:" not in text
     assert "█" not in text
@@ -96,7 +96,7 @@ def test_weight_dashboard_period_change_ignores_entries_older_than_period():
     ):
         asyncio.run(my_weight(message))
 
-    text, _ = message.answers[0]
+    text, _, _ = message.answers[0]
 
     assert "<b>За 7 дней:</b> +0.9 кг" in text
     assert "<b>За 30 дней:</b> +0.9 кг" in text
@@ -124,7 +124,7 @@ def test_weight_archive_shows_only_entered_weights_without_graph_or_range():
         asyncio.run(show_weight_archive(message))
 
     assert len(message.answers) == 1
-    text, reply_markup = message.answers[0]
+    text, reply_markup, _ = message.answers[0]
     assert reply_markup is None
     assert text.startswith("📅 Все введённые веса:\n")
     assert "29.05.2026 — 76.40 кг" in text
@@ -218,7 +218,7 @@ def test_weight_input_keeps_quick_buttons_and_requires_save_before_repository_wr
     assert state.state == WeightStates.entering_weight
     assert state.data["draft_weight_value"] == 76.4
     assert state.data["quick_base_weight"] == 76.4
-    text, reply_markup = message.answers[-1]
+    text, reply_markup, _ = message.answers[-1]
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows[0] == ["-1,00", "-0,50", "+0,50", "+1,00"]
     assert rows[4] == ["✅ Сохранить"]
@@ -247,7 +247,7 @@ def test_weight_input_from_quick_add_uses_compact_draft_text():
     with patch("handlers.weight.WeightRepository.get_weights", return_value=[weight_entry(76.0, date(2026, 7, 11), 1)]):
         asyncio.run(handle_weight_input(message, state))
 
-    text, _ = message.answers[-1]
+    text, reply_markup, _ = message.answers[-1]
     assert text == (
         "Предыдущая запись:\n"
         "📅 11.07.2026\n"
@@ -274,7 +274,7 @@ def test_weight_quick_adjustment_repeats_from_unsaved_new_weight():
 
     assert round(state.data["draft_weight_value"], 1) == 76.0
     assert round(state.data["quick_base_weight"], 1) == 76.0
-    text, reply_markup = message.answers[-1]
+    text, reply_markup, _ = message.answers[-1]
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
     assert rows[1] == ["-0,25", "-0,20", "+0,20", "+0,25"]
     assert "<b>⚖️ Вес сейчас: 76.00 кг</b>" in text
@@ -334,7 +334,7 @@ def test_show_day_weight_formats_float_artifacts():
     with patch("handlers.weight.WeightRepository.get_weight_for_date", return_value=entry):
         asyncio.run(show_day_weight(message, "12345", date(2026, 5, 29)))
 
-    text, reply_markup = message.answers[0]
+    text, reply_markup, _ = message.answers[0]
     assert "76.20000000000003" not in text
     assert "⚖️ Вес: 76.20 кг" in text
     rows = [[button.text for button in row] for row in reply_markup.inline_keyboard]
@@ -370,7 +370,7 @@ def test_update_weight_sends_only_success_message_with_day_actions():
     show_day_weight.assert_not_called()
     assert state.cleared is True
     assert len(message.answers) == 1
-    text, reply_markup = message.answers[0]
+    text, reply_markup, _ = message.answers[0]
     assert "✅ <b>Вес обновлён!</b>" in text
     assert "⚖️ <b>76.20 кг</b>" in text
     assert "76.20000000000003" not in text
@@ -379,3 +379,104 @@ def test_update_weight_sends_only_success_message_with_day_actions():
         ["✏️ Редактировать", "🗑 Удалить"],
         ["🔄 Вернуться в главное меню"],
     ]
+
+
+def test_weight_change_support_messages_cover_boundaries():
+    from handlers.weight import get_weight_change_message
+
+    cases = {
+        "-1.01": "🎉 Отличный прогресс!",
+        "-1.00": "👍 Хорошее движение",
+        "-0.10": "👍 Хорошее движение",
+        "-0.09": "💬 Вес остаётся стабильным.",
+        "0.00": "💬 Вес остаётся стабильным.",
+        "0.09": "💬 Вес остаётся стабильным.",
+        "0.10": "💬 Небольшие колебания веса",
+        "0.50": "💬 Небольшие колебания веса",
+        "0.51": "💬 Сегодня вес немного выше",
+        "1.00": "💬 Сегодня вес немного выше",
+        "1.01": "💬 Вес увеличился заметнее обычного.",
+    }
+
+    for change, expected in cases.items():
+        assert expected in get_weight_change_message(change)
+
+
+def test_quick_weight_save_shows_only_notice_with_main_menu_button():
+    from handlers.weight import WEIGHT_SOURCE_QUICK_ADD, _save_weight_draft
+
+    message = DummyMessage()
+    state = DummyState({
+        "draft_weight_value": 76.45,
+        "draft_previous_weight_value": 76.20,
+        "entry_date": date(2026, 7, 14).isoformat(),
+        "weight_entry_source": WEIGHT_SOURCE_QUICK_ADD,
+    })
+
+    with (
+        patch("handlers.weight.WeightRepository.save_weight") as save_weight,
+        patch("handlers.weight.WeightRepository.get_weight_for_date", return_value=weight_entry(76.45, date(2026, 7, 14), 10)),
+        patch("handlers.weight.AnalyticsRepository.track_event"),
+        patch("handlers.weight.push_menu_stack"),
+    ):
+        asyncio.run(_save_weight_draft(message, state, "12345", state.data))
+
+    save_weight.assert_called_once_with("12345", "76.45", date(2026, 7, 14))
+    assert len(message.answers) == 1
+    text, reply_markup, kwargs = message.answers[0]
+    assert "✅ <b>Вес сохранён!</b>" in text
+    assert "⚖️ <b>76.45 кг</b>" in text
+    assert "📈 <b>Изменение:</b>" in text
+    assert "+0.25 кг с прошлой записи" in text
+    assert "Обрати внимание на питание и воду" not in text
+    assert kwargs["parse_mode"] == "HTML"
+    assert [[button.text for button in row] for row in reply_markup.keyboard] == [["🏠 Главное меню"]]
+
+
+def test_weight_section_save_keeps_weight_menu_navigation():
+    from handlers.weight import WEIGHT_SOURCE_WEIGHT_SECTION, _save_weight_draft, weight_menu
+
+    message = DummyMessage()
+    state = DummyState({
+        "draft_weight_value": 76.20,
+        "draft_previous_weight_value": 76.45,
+        "entry_date": date(2026, 7, 14).isoformat(),
+        "weight_entry_source": WEIGHT_SOURCE_WEIGHT_SECTION,
+    })
+
+    with (
+        patch("handlers.weight.WeightRepository.save_weight"),
+        patch("handlers.weight.WeightRepository.get_weight_for_date", return_value=weight_entry(76.20, date(2026, 7, 14), 11)),
+        patch("handlers.weight.AnalyticsRepository.track_event"),
+        patch("handlers.weight.push_menu_stack"),
+    ):
+        asyncio.run(_save_weight_draft(message, state, "12345", state.data))
+
+    assert len(message.answers) == 1
+    text, reply_markup, _ = message.answers[0]
+    assert reply_markup is weight_menu
+    assert "📉 <b>Изменение:</b>" in text
+    assert "−0.25 кг с прошлой записи" in text
+
+
+def test_first_quick_weight_entry_has_first_record_message():
+    from handlers.weight import WEIGHT_SOURCE_QUICK_ADD, _save_weight_draft
+
+    message = DummyMessage()
+    state = DummyState({
+        "draft_weight_value": 76.45,
+        "entry_date": date(2026, 7, 14).isoformat(),
+        "weight_entry_source": WEIGHT_SOURCE_QUICK_ADD,
+    })
+
+    with (
+        patch("handlers.weight.WeightRepository.save_weight"),
+        patch("handlers.weight.WeightRepository.get_weight_for_date", return_value=weight_entry(76.45, date(2026, 7, 14), 12)),
+        patch("handlers.weight.AnalyticsRepository.track_event"),
+        patch("handlers.weight.push_menu_stack"),
+    ):
+        asyncio.run(_save_weight_draft(message, state, "12345", state.data))
+
+    text, _, _ = message.answers[0]
+    assert "💬 Первая запись добавлена." in text
+    assert "Изменение:" not in text
