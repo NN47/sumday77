@@ -49,3 +49,19 @@ def test_meal_completion_prompt_encodes_supportive_philosophy() -> None:
     assert "придётся отрабатывать" in prompt
     assert "Не советуй голодать" in prompt
     assert "следующий хороший выбор всё ещё имеет значение" in prompt
+
+
+def test_meal_completion_prompt_forbids_current_generation_time_assumptions() -> None:
+    prompt = _meal_completion_prompt()
+
+    assert "Не предполагай время употребления еды по времени генерации ответа" in prompt
+    assert "Ориентируйся только на данные приёма пищи" in prompt
+    for forbidden_phrase in ("сейчас", "вечером", "на ночь", "перед сном", "утром", "в начале дня", "завершить день", "закончить вечер"):
+        assert forbidden_phrase in prompt
+
+
+def test_meal_completion_prompt_mentions_edited_meal_context() -> None:
+    prompt = _meal_completion_prompt()
+
+    assert "завершил или отредактировал" in prompt
+    assert "Если пользователь редактирует старый приём пищи" in prompt
