@@ -45,9 +45,9 @@ class ProgressFormatterActivityAdjustmentTests(unittest.TestCase):
         self.assertIn("🔥 <b>Сожжено:</b> 517 ккал", text)
         self.assertNotIn("⚠️ <b>Превышение:</b>", text)
         self.assertIn("🔥 <b>Калории</b>: 1500/2372 ккал (63%)", text)
-        self.assertIn("💪 <b>Белки</b>: 100/142 г (70%)", text)
+        self.assertIn("🥩 <b>Белки</b>: 100/142 г (70%)", text)
         self.assertIn("🥑 <b>Жиры</b>: 50/83 г (60%)", text)
-        self.assertIn("🍩 <b>Углеводы</b>: 180/285 г (63%)", text)
+        self.assertIn("🍞 <b>Углеводы</b>: 180/285 г (63%)", text)
 
     def test_unknown_activity_defaults_to_medium_coefficient(self):
         settings = SimpleNamespace(

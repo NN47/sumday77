@@ -2,7 +2,7 @@
 
 EMOJI_MAP = {
     "calories": "🔥",
-    "protein": "💪",
+    "protein": "🥩",
     "fat": "🥑",
-    "carbs": "🍩",
+    "carbs": "🍞",
 }

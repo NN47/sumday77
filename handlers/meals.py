@@ -215,9 +215,9 @@ def _format_kbju_summary_block(totals: dict, *, bold_values: bool = False) -> st
     carbs = value_template.format(value=f"{float(totals.get('carbs', 0) or 0):.1f} г")
     return (
         f"🔥 <b>Калории:</b> {calories}\n"
-        f"💪 <b>Белки:</b> {protein}\n"
+        f"🥩 <b>Белки:</b> {protein}\n"
         f"🥑 <b>Жиры:</b> {fat}\n"
-        f"🍩 <b>Углеводы:</b> {carbs}"
+        f"🍞 <b>Углеводы:</b> {carbs}"
     )
 
 
@@ -372,9 +372,9 @@ def _format_label_weight_prompt(
         f"📦 <b>Продукт:</b> {safe_product_name}",
         "📊 <b>КБЖУ на 100 г:</b>",
         f"🔥 <b>Калории:</b> {kcal_100g:.0f} ккал",
-        f"💪 <b>Белки:</b> {protein_100g:.1f} г",
+        f"🥩 <b>Белки:</b> {protein_100g:.1f} г",
         f"🥑 <b>Жиры:</b> {fat_100g:.1f} г",
-        f"🍩 <b>Углеводы:</b> {carbs_100g:.1f} г",
+        f"🍞 <b>Углеводы:</b> {carbs_100g:.1f} г",
         "",
     ]
 
@@ -641,9 +641,9 @@ def _format_photo_item_block(item: dict, index: int | None = None) -> str:
         [
             f"{prefix}{html.escape(str(item.get('name') or 'Продукт'))} — {_safe_float(item.get('grams')):.0f} г",
             f"🔥 {_safe_float(item.get('kcal') or item.get('calories')):.0f} ккал",
-            f"💪 Б: {_safe_float(item.get('protein') or item.get('protein_g')):.1f} г",
+            f"🥩 Б: {_safe_float(item.get('protein') or item.get('protein_g')):.1f} г",
             f"🥑 Ж: {_safe_float(item.get('fat') or item.get('fat_total_g')):.1f} г",
-            f"🍩 У: {_safe_float(item.get('carbs') or item.get('carbohydrates_total_g')):.1f} г",
+            f"🍞 У: {_safe_float(item.get('carbs') or item.get('carbohydrates_total_g')):.1f} г",
         ]
     )
 
@@ -662,9 +662,9 @@ def _format_photo_analysis_confirmation_text(items: list[dict]) -> str:
                 "📊 <b>Итого:</b>",
                 f"📦 Общий вес: {total_weight:.0f} г",
                 f"🔥 Калории: {totals['calories']:.0f} ккал",
-                f"💪 Белки: {totals['protein']:.1f} г",
+                f"🥩 Белки: {totals['protein']:.1f} г",
                 f"🥑 Жиры: {totals['fat']:.1f} г",
-                f"🍩 Углеводы: {totals['carbs']:.1f} г",
+                f"🍞 Углеводы: {totals['carbs']:.1f} г",
                 "",
                 "Выберите продукт для редактирования или нажмите <b>✅ Сохранить</b>.",
             ]
@@ -697,9 +697,9 @@ def _format_photo_weight_editor_text(item: dict) -> str:
             f"📦 Вес: {_safe_float(item.get('grams')):.0f} г",
             "",
             f"🔥 {_safe_float(item.get('kcal') or item.get('calories')):.0f} ккал",
-            f"💪 Б: {_safe_float(item.get('protein') or item.get('protein_g')):.1f} г",
+            f"🥩 Б: {_safe_float(item.get('protein') or item.get('protein_g')):.1f} г",
             f"🥑 Ж: {_safe_float(item.get('fat') or item.get('fat_total_g')):.1f} г",
-            f"🍩 У: {_safe_float(item.get('carbs') or item.get('carbohydrates_total_g')):.1f} г",
+            f"🍞 У: {_safe_float(item.get('carbs') or item.get('carbohydrates_total_g')):.1f} г",
         ]
     )
 
@@ -1260,7 +1260,7 @@ CUSTOM_PRODUCT_FIELDS = {
     "protein": {
         "state": MealEntryStates.custom_product_protein,
         "step": 3,
-        "title": "💪 Введите белки продукта",
+        "title": "🥩 Введите белки продукта",
         "unit": "г",
         "note": "Укажи <b>белки на 100 г продукта</b>.",
         "next_field": "fat",
@@ -1276,7 +1276,7 @@ CUSTOM_PRODUCT_FIELDS = {
     "carbs": {
         "state": MealEntryStates.custom_product_carbs,
         "step": 5,
-        "title": "🍩 Введите углеводы продукта",
+        "title": "🍞 Введите углеводы продукта",
         "unit": "г",
         "note": "Укажи <b>углеводы на 100 г продукта</b>.",
         "next_field": "amount",
@@ -2442,9 +2442,9 @@ def _render_my_product_confirm_text(meal_type: str, meal, amount_g: int = 100) -
         f"<b>Продукт:</b> {safe_title}\n\n"
         f"⚖️ <b>Вес:</b> {amount_g} г\n"
         f"🔥 <b>Калории:</b> {calories:.0f} ккал\n"
-        f"💪 <b>Белки:</b> {protein:.1f} г\n"
+        f"🥩 <b>Белки:</b> {protein:.1f} г\n"
         f"🥑 <b>Жиры:</b> {fat:.1f} г\n"
-        f"🍩 <b>Углеводы:</b> {carbs:.1f} г\n\n"
+        f"🍞 <b>Углеводы:</b> {carbs:.1f} г\n\n"
         f"<b>Выбери действие:</b>"
     )
 
@@ -4191,9 +4191,9 @@ async def handle_food_input(message: Message, state: FSMContext):
     lines.append("\nИТОГО:")
     lines.append(
         f"🔥 Калории: {float(totals['calories']):.0f} ккал\n"
-        f"💪 Белки: {float(totals['protein_g']):.1f} г\n"
+        f"🥩 Белки: {float(totals['protein_g']):.1f} г\n"
         f"🥑 Жиры: {float(totals['fat_total_g']):.1f} г\n"
-        f"🍩 Углеводы: {float(totals['carbohydrates_total_g']):.1f} г"
+        f"🍞 Углеводы: {float(totals['carbohydrates_total_g']):.1f} г"
     )
     
     api_details = "\n".join(api_details_lines)
@@ -5289,9 +5289,9 @@ async def handle_barcode_photo(message: Message, state: FSMContext):
     text_parts.append(f"🔢 Штрих-код: {barcode}\n")
     text_parts.append(f"\n📊 КБЖУ на 100 г:\n")
     text_parts.append(f"🔥 Калории: {kcal_100g:.0f} ккал\n")
-    text_parts.append(f"💪 Белки: {protein_100g:.1f} г\n")
+    text_parts.append(f"🥩 Белки: {protein_100g:.1f} г\n")
     text_parts.append(f"🥑 Жиры: {fat_100g:.1f} г\n")
-    text_parts.append(f"🍩 Углеводы: {carbs_100g:.1f} г\n")
+    text_parts.append(f"🍞 Углеводы: {carbs_100g:.1f} г\n")
     
     # Если есть вес упаковки в базе, упоминаем его, но все равно спрашиваем
     if weight:
@@ -5623,7 +5623,7 @@ def _format_product_macro_summary(
     """Форматирует блок КБЖУ для карточки редактирования продукта."""
     return (
         f"🔥 <b>Калории:</b> {calories:.0f} ккал\n"
-        f"💪 <b>Белки:</b> {protein:.1f} г\n"
+        f"🥩 <b>Белки:</b> {protein:.1f} г\n"
         f"🥑 <b>Жиры:</b> {fat:.1f} г\n"
         f"{CARBS_EMOJI} <b>Углеводы:</b> {carbs:.1f} г"
     )
@@ -5888,7 +5888,7 @@ def _build_kbju_editor_keyboard(product_idx: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="🔥 Калории", callback_data=f"meal_kfield:{product_idx}:calories"),
-                InlineKeyboardButton(text="💪 Белки", callback_data=f"meal_kfield:{product_idx}:protein"),
+                InlineKeyboardButton(text="🥩 Белки", callback_data=f"meal_kfield:{product_idx}:protein"),
             ],
             [
                 InlineKeyboardButton(text="🥑 Жиры", callback_data=f"meal_kfield:{product_idx}:fat"),
@@ -5916,7 +5916,7 @@ def _render_kbju_editor_text(product: dict, draft: Optional[dict] = None) -> str
         f"<b>Текущий вес:</b> {grams:.0f} г",
         "",
         f"🔥 <b>Калории:</b> {calories:.0f} ккал",
-        f"💪 <b>Белки:</b> {protein:.1f} г",
+        f"🥩 <b>Белки:</b> {protein:.1f} г",
         f"🥑 <b>Жиры:</b> {fat:.1f} г",
         f"{CARBS_EMOJI} <b>Углеводы:</b> {carbs:.1f} г",
     ]
@@ -5965,7 +5965,7 @@ def _render_kbju_field_editor_text(product: dict, field: str, current_value: flo
     grams = float(product.get("grams") or 0)
     field_meta = {
         "calories": ("🔥", "калорий", "ккал", 0),
-        "protein": ("💪", "белков", "г", 1),
+        "protein": ("🥩", "белков", "г", 1),
         "fat": ("🥑", "жиров", "г", 1),
         "carbs": (CARBS_EMOJI, "углеводов", "г", 1),
     }
