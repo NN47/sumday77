@@ -72,7 +72,7 @@ def test_kbju_editor_uses_shared_carbs_emoji():
     keyboard = _build_kbju_editor_keyboard(0)
     texts = [button.text for row in keyboard.inline_keyboard for button in row]
     assert f"{EMOJI_MAP['carbs']} Углеводы" in texts
-    assert "🍞 Углеводы" not in texts
+    assert "🍩 Углеводы" not in texts
     assert "✅ Сохранить" not in texts
 
 
@@ -172,7 +172,7 @@ def test_custom_product_macro_editors_use_fractional_gram_step():
 def test_format_product_macro_summary_matches_edit_card_example():
     assert _format_product_macro_summary(112, 1.8, 0, 26.9) == (
         "🔥 <b>Калории:</b> 112 ккал\n"
-        "💪 <b>Белки:</b> 1.8 г\n"
+        "🥩 <b>Белки:</b> 1.8 г\n"
         "🥑 <b>Жиры:</b> 0.0 г\n"
         f"{EMOJI_MAP['carbs']} <b>Углеводы:</b> 26.9 г"
     )
@@ -194,7 +194,7 @@ def test_product_actions_text_shows_bold_product_label_and_plain_name():
     assert "<b>Творог</b>" not in text
     assert "⚖️ <b>Вес:</b> 50 г" in text
     assert "🔥 <b>Калории:</b> 182 ккал" in text
-    assert "💪 <b>Белки:</b> 10.0 г" in text
+    assert "🥩 <b>Белки:</b> 10.0 г" in text
     assert "🥑 <b>Жиры:</b> 8.0 г" in text
     assert f"{EMOJI_MAP['carbs']} <b>Углеводы:</b> 5.0 г" in text
 

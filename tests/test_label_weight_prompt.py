@@ -26,9 +26,9 @@ def test_format_label_weight_prompt_bolds_requested_labels() -> None:
     assert "📦 <b>Продукт:</b> SHOCKS! Peanut + Chocolate" in text
     assert "📊 <b>КБЖУ на 100 г:</b>" in text
     assert "🔥 <b>Калории:</b> 454 ккал" in text
-    assert "💪 <b>Белки:</b> 9.7 г" in text
+    assert "🥩 <b>Белки:</b> 9.7 г" in text
     assert "🥑 <b>Жиры:</b> 29.6 г" in text
-    assert "🍩 <b>Углеводы:</b> 28.7 г" in text
+    assert "🍞 <b>Углеводы:</b> 28.7 г" in text
     assert "📦 <b>В упаковке 35 г, сколько Вы съели?</b>" in text
 
 
@@ -81,4 +81,4 @@ def test_format_label_weight_confirmation_text_recalculates_kbju() -> None:
 
     assert "✅ <b>Вы выбрали:</b> 240 г" in text
     assert "🔥 <b>Калории:</b> 240 ккал" in text
-    assert "💪 <b>Белки:</b> 24.0 г" in text
+    assert "🥩 <b>Белки:</b> 24.0 г" in text
