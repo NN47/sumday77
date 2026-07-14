@@ -53,3 +53,25 @@ def test_activity_overview_shows_sup_boarding_duration_and_calories():
         text = _format_today_activity_overview("user-id")
 
     assert "• 🏄 Сапбординг — 80 мин (~557 ккал)" in text
+
+
+def test_activity_overview_sums_repeated_repetition_sets_with_same_weight():
+    workouts = [
+        workout("Шаги", 9000, 373, "Количество шагов"),
+        workout("Подтягивания", 15, 29),
+        workout("Тяга штанги в наклоне", 25, 16, "reps"),
+        workout("Тяга штанги в наклоне", 15, 9, "reps"),
+        workout("Тяга штанги в наклоне", 20, 12, "reps"),
+        workout("Тяга штанги в наклоне", 20, 12, "reps"),
+        workout("Тяга штанги в наклоне", 20, 12, "reps"),
+    ]
+    for entry in workouts[2:]:
+        entry.working_weight = 30.0
+
+    with patch("handlers.workouts.WorkoutRepository.get_workouts_for_day", return_value=workouts):
+        text = _format_today_activity_overview("user-id")
+
+    assert "• Подтягивания — 15 раз (~29 ккал)" in text
+    assert "• Тяга штанги в наклоне — 100 раз, 30 кг (~61 ккал)" in text
+    assert text.count("Тяга штанги в наклоне") == 1
+    assert "🔥 Всего сожжено: ~463 ккал" in text
