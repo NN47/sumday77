@@ -59,6 +59,17 @@ DURATION_EXERCISES = {
 }
 STEPS_EXERCISES = {"Шаги", "Ходьба", "Шаги (Ходьба)"}
 SUP_BOARDING_EXERCISE = "🏄 Сапбординг"
+EXERCISE_SEARCH_BUTTON_TEXT = "🔎 Поиск упражнения"
+CARDIO_CATEGORY_ID = "cardio"
+
+cardio_category_reply_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text=EXERCISE_SEARCH_BUTTON_TEXT)],
+        [KeyboardButton(text="⬅️ Назад")],
+    ],
+    resize_keyboard=True,
+)
+
 EXERCISE_SEARCH_SYNONYMS = {
     SUP_BOARDING_EXERCISE: (
         "сап",
@@ -253,7 +264,7 @@ def _get_recent_exercises(user_id: str, limit: int | None = None) -> list[str]:
     return recent
 
 
-def _build_activity_inline(exercises: list[str], prefix: str, page: int, has_prev: bool, has_next: bool, *, numbered: bool = False) -> InlineKeyboardMarkup:
+def _build_activity_inline(exercises: list[str], prefix: str, page: int, has_prev: bool, has_next: bool, *, numbered: bool = False, include_search: bool = True) -> InlineKeyboardMarkup:
     numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
     rows = [[InlineKeyboardButton(text=f"{numbers[i]} {ex}" if numbered and i < len(numbers) else ex, callback_data=f"wrk_pick:{_activity_id(ex)}")] for i, ex in enumerate(exercises)]
     nav = []
@@ -263,7 +274,8 @@ def _build_activity_inline(exercises: list[str], prefix: str, page: int, has_pre
         nav.append(InlineKeyboardButton(text="➡️ Следующая страница", callback_data=f"{prefix}:{page + 1}"))
     if nav:
         rows.append(nav)
-    rows.append([InlineKeyboardButton(text="🔎 Поиск упражнения", callback_data="wrk_search")])
+    if include_search:
+        rows.append([InlineKeyboardButton(text=EXERCISE_SEARCH_BUTTON_TEXT, callback_data="wrk_search")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -288,12 +300,19 @@ async def _show_category(message: Message, state: FSMContext, category_id: str, 
     exercises = [_normalize_exercise_name(ex) for ex in category["activities"] if _normalize_exercise_name(ex) not in STEPS_EXERCISES]
     page_items, page = _paginate(exercises, page)
     await state.update_data(add_activity_screen="category", category_id=category_id, category_page=page)
+    category_reply = cardio_category_reply_menu if category_id == CARDIO_CATEGORY_ID else search_back_menu
+    push_menu_stack(message.bot, category_reply)
     await message.answer(
         f"{category['title']}\n\nВыбери упражнение:",
-        reply_markup=_build_activity_inline(page_items, f"wrk_cat_page:{category_id}", page, page > 0, (page + 1) * 8 < len(exercises)),
+        reply_markup=_build_activity_inline(
+            page_items,
+            f"wrk_cat_page:{category_id}",
+            page,
+            page > 0,
+            (page + 1) * 8 < len(exercises),
+            include_search=category_id != CARDIO_CATEGORY_ID,
+        ),
     )
-    push_menu_stack(message.bot, search_back_menu)
-    await message.answer("Навигация:", reply_markup=search_back_menu)
 
 
 async def _show_search_results(message: Message, state: FSMContext, query: str, page: int = 0) -> None:
@@ -366,10 +385,10 @@ def _activity_input_reply_keyboard(exercise: str, method: ActivityInputMethod) -
 
 def _input_prompt(method: ActivityInputMethod) -> str:
     return {
-        ActivityInputMethod.TIME: "Укажи продолжительность в минутах или введи своё значение:",
-        ActivityInputMethod.DISTANCE: "Укажи расстояние в километрах или введи своё значение:",
-        ActivityInputMethod.JUMPS: "Укажи количество прыжков или введи своё значение:",
-    }.get(method, "Выбери значение:")
+        ActivityInputMethod.TIME: "Выбери время кнопкой ниже или введи количество минут сообщением:",
+        ActivityInputMethod.DISTANCE: "Выбери расстояние кнопкой ниже или введи количество километров сообщением:",
+        ActivityInputMethod.JUMPS: "Выбери количество кнопкой ниже или введи число прыжков сообщением:",
+    }.get(method, "Выбери значение кнопкой ниже или введи число сообщением:")
 
 def _build_input_method_keyboard(exercise: str) -> InlineKeyboardMarkup:
     rows = [
@@ -390,9 +409,8 @@ async def _open_input_method(message: Message, state: FSMContext, exercise: str,
         push_menu_stack(message.bot, reply_keyboard)
         await message.answer(
             f"{title}\n\n{_input_prompt(method)}",
-            reply_markup=reply_keyboard,
+            reply_markup=_build_activity_input_keyboard(exercise, method),
         )
-        await message.answer("Выбери готовое значение:", reply_markup=_build_activity_input_keyboard(exercise, method))
         return
     if method == ActivityInputMethod.DISTANCE:
         await state.update_data(variant="Км")
@@ -401,9 +419,8 @@ async def _open_input_method(message: Message, state: FSMContext, exercise: str,
         push_menu_stack(message.bot, reply_keyboard)
         await message.answer(
             f"{title}\n\n{_input_prompt(method)}",
-            reply_markup=reply_keyboard,
+            reply_markup=_build_activity_input_keyboard(exercise, method),
         )
-        await message.answer("Выбери готовое значение:", reply_markup=_build_activity_input_keyboard(exercise, method))
         return
     if method == ActivityInputMethod.JUMPS:
         await state.update_data(variant="Прыжки")
@@ -412,9 +429,8 @@ async def _open_input_method(message: Message, state: FSMContext, exercise: str,
         push_menu_stack(message.bot, reply_keyboard)
         await message.answer(
             f"{title}\n\n{_input_prompt(method)}",
-            reply_markup=reply_keyboard,
+            reply_markup=_build_activity_input_keyboard(exercise, method),
         )
-        await message.answer("Выбери готовое значение:", reply_markup=_build_activity_input_keyboard(exercise, method))
         return
     await state.update_data(variant="reps")
     await state.set_state(WorkoutStates.entering_count)
@@ -738,8 +754,10 @@ async def switch_activity_input_method(callback: CallbackQuery, state: FSMContex
     await state.set_state(state_by_method[method])
     reply_keyboard = _activity_input_reply_keyboard(exercise, method)
     push_menu_stack(callback.message.bot, reply_keyboard)
-    await callback.message.answer(f"{title}\n\n{_input_prompt(method)}", reply_markup=reply_keyboard)
-    await callback.message.answer("Выбери готовое значение:", reply_markup=_build_activity_input_keyboard(exercise, method))
+    await callback.message.answer(
+        f"{title}\n\n{_input_prompt(method)}",
+        reply_markup=_build_activity_input_keyboard(exercise, method),
+    )
 
 
 @router.callback_query(lambda c: c.data == "wrk_manual")
@@ -988,7 +1006,7 @@ async def choose_exercise(message: Message, state: FSMContext):
         await _show_category(message, state, category_by_title[text])
         return
 
-    if text == "🔍 Поиск упражнения":
+    if text in {EXERCISE_SEARCH_BUTTON_TEXT, "🔍 Поиск упражнения"}:
         await state.set_state(WorkoutStates.searching_exercise)
         push_menu_stack(message.bot, search_back_menu)
         await message.answer("🔍 Введи название упражнения или его часть:", reply_markup=search_back_menu)
@@ -998,7 +1016,7 @@ async def choose_exercise(message: Message, state: FSMContext):
         await _continue_with_selected_exercise(message, state, text)
         return
 
-    await message.answer("Выбери категорию ниже или нажми «🔍 Поиск упражнения».", reply_markup=activity_category_menu)
+    await message.answer("Выбери категорию ниже или нажми «🔎 Поиск упражнения».", reply_markup=activity_category_menu)
 
 
 @router.message(WorkoutStates.searching_exercise)
