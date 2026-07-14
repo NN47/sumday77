@@ -70,5 +70,18 @@ def test_meal_completion_prompt_mentions_edited_meal_context_and_format() -> Non
 
     assert "завершил или отредактировал" in prompt
     assert "Если пользователь редактирует старый приём пищи" in prompt
-    assert "2–4 коротких предложения" in prompt
-    assert "Оптимальная длина — 250–600 символов" in prompt
+    assert "максимум два коротких предложения" in prompt
+    assert "Целевой объём — 120–300 символов" in prompt
+
+
+def test_meal_completion_prompt_requires_short_single_focus_html_format() -> None:
+    prompt = _meal_completion_prompt()
+
+    assert "Ответь коротко: один заголовок и максимум два предложения" in prompt
+    assert "Выбери только одну главную мысль" in prompt
+    assert "Не пиши художественный текст ради красоты" in prompt
+    assert "Не приписывай пользователю чувства, привычки или мотивы" in prompt
+    assert "Жирным выделяй только заголовок. Основной текст всегда обычный" in prompt
+    assert "Общая длина ответа — не более 350 символов" in prompt
+    assert "Если последнее предложение можно удалить без потери смысла, удали его" in prompt
+    assert "Разрешён только один тег: <b>...</b>" in prompt
