@@ -36,12 +36,12 @@ def test_activity_overview_shows_exercise_details_separately_from_steps():
 
     assert "🏃 Активность за день" in text
     assert "👣 Шаги: 5 500 (~229 ккал)" in text
-    assert "🏃 Активность:" in text
-    assert "• Отжимания — 30 раз (~12 ккал)" in text
-    assert "• Планка — 2 мин (~7 ккал)" in text
-    assert "• Сгибание рук — 12 раз (~9 ккал)" in text
-    assert "• Бег — 20 мин (~30 ккал)" in text
-    assert "🔥 Всего сожжено: ~287 ккал" in text
+    assert "🏃 Активность" in text
+    assert "<b>Отжимания</b>\n• 30 раз\n≈ 12 ккал" in text
+    assert "<b>Планка</b>\n• 2 мин\n≈ 7 ккал" in text
+    assert "<b>Сгибание рук</b>\n• 12 раз\n≈ 9 ккал" in text
+    assert "<b>Бег</b>\n• 20 мин\n≈ 30 ккал" in text
+    assert "🔥 <b>Всего сожжено: ~287 ккал</b>" in text
 
 
 def test_activity_overview_shows_sup_boarding_duration_and_calories():
@@ -54,7 +54,7 @@ def test_activity_overview_shows_sup_boarding_duration_and_calories():
     ):
         text = _format_today_activity_overview("user-id")
 
-    assert "• 🏄 Сапбординг — 80 мин (~557 ккал)" in text
+    assert "<b>🏄 Сапбординг</b>\n• 80 мин\n≈ 557 ккал" in text
 
 
 def test_activity_overview_sums_repeated_repetition_sets_with_same_weight():
@@ -73,11 +73,13 @@ def test_activity_overview_sums_repeated_repetition_sets_with_same_weight():
     with patch("handlers.workouts.WorkoutRepository.get_workouts_for_day", return_value=workouts):
         text = _format_today_activity_overview("user-id")
 
-    assert "• Подтягивания — 15 раз (~29 ккал)" in text
-    assert "• Тяга штанги в наклоне — 25 раз, 30 кг (~16 ккал)" in text
-    assert "• Тяга штанги в наклоне — 15 раз, 30 кг (~9 ккал)" in text
-    assert text.count("Тяга штанги в наклоне") == 5
-    assert "🔥 Всего сожжено: ~463 ккал" in text
+    assert "<b>Подтягивания</b>\n• 15 раз\n≈ 29 ккал" in text
+    assert "<b>Тяга штанги в наклоне</b>" in text
+    assert "• 30 кг × 25" in text
+    assert "• 30 кг × 15" in text
+    assert text.count("Тяга штанги в наклоне") == 1
+    assert "≈ 61 ккал" in text
+    assert "🔥 <b>Всего сожжено: ~463 ккал</b>" in text
 
 
 def test_finished_workout_report_groups_sets_and_keeps_total_calories():
@@ -92,12 +94,12 @@ def test_finished_workout_report_groups_sets_and_keeps_total_calories():
     with patch("handlers.workouts.WorkoutRepository.get_workouts_for_day", return_value=workouts):
         text, _ = _format_activity_overview("user-id", date.today(), group_workout_sets=True)
 
-    assert "👣 Шаги: <b>0</b> (~0 ккал)" in text
+    assert "👣 Шаги: 0 (~0 ккал)" in text
     assert "<b>Армейский жим с гантелями</b>\n• 30 кг × 12\n• 30 кг × 12\n• 30 кг × 12\n≈ 15 ккал" in text
     assert "<b>Отжимания</b>\n• 20 раз\n≈ 11 ккал" in text
     assert "12 раз, 30 кг" not in text
     assert text.count("≈ 15 ккал") == 1
-    assert "🔥 <b>Всего сожжено:</b> <b>~26 ккал</b>" in text
+    assert "🔥 <b>Всего сожжено: ~26 ккал</b>" in text
 
 
 def test_finished_workout_report_preserves_mixed_weight_set_order():
@@ -112,7 +114,17 @@ def test_finished_workout_report_preserves_mixed_weight_set_order():
 
     expected = "<b>Тяга штанги в наклоне</b>\n• 60 кг × 10\n• 60 кг × 8\n• 55 кг × 10\n≈ 17 ккал"
     assert expected in text
-    assert text.count("<b>") == 4  # exercise name + total label/value
+    assert text.count("<b>") == 2  # exercise name + total line
+
+
+def test_grouped_activity_report_escapes_dynamic_exercise_names():
+    workouts = [SimpleNamespace(exercise="Жим <опасный>", count=10, calories=5, variant="reps")]
+
+    with patch("handlers.workouts.WorkoutRepository.get_workouts_for_day", return_value=workouts):
+        text, _ = _format_activity_overview("user-id", date.today())
+
+    assert "<b>Жим &lt;опасный&gt;</b>" in text
+    assert "<b>Жим <опасный></b>" not in text
 
 
 def test_activity_category_menu_uses_new_logical_order():

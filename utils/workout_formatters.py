@@ -1,5 +1,6 @@
 """Функции форматирования для тренировок."""
 import logging
+from html import escape
 from datetime import date
 from types import SimpleNamespace
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -170,8 +171,22 @@ def format_activity_daily_summaries(activities: list[Workout], user_id: str | No
 
 
 def _format_set_line(activity: Workout) -> str:
-    reps = _format_number(activity.count or 0)
+    """Форматирует одну строку подхода/активности внутри сгруппированного отчёта."""
+    method = _activity_method(activity)
+    count = activity.count or 0
     weight = _positive_attr(activity, "weight", "working_weight", "work_weight")
+
+    if method == ActivityInputMethod.TIME:
+        minutes = _positive_attr(activity, "duration_minutes") or count
+        return f"• {_format_number(minutes)} мин"
+    if method == ActivityInputMethod.DISTANCE:
+        distance = _positive_attr(activity, "distance_km") or count
+        return f"• {_format_number(distance)} км"
+    if method == ActivityInputMethod.JUMPS:
+        jumps = _positive_attr(activity, "jumps_count") or count
+        return f"• {int(jumps):,} прыжков".replace(",", " ")
+
+    reps = _format_number(count)
     if weight:
         return f"• {_format_number(weight)} кг × {reps}"
     return f"• {reps} раз"
@@ -197,7 +212,7 @@ def format_grouped_workout_sets_report(activities: list[Workout], user_id: str |
     for name in order:
         if lines:
             lines.append("")
-        lines.append(f"<b>{name}</b>")
+        lines.append(f"<b>{escape(name)}</b>")
         lines.extend(groups[name]["lines"])
         lines.append(f"≈ {groups[name]['calories']:.0f} ккал")
     return lines
