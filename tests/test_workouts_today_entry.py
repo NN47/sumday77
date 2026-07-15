@@ -73,6 +73,19 @@ def test_add_another_set_menu_contains_add_different_exercise_button():
     ]
 
 
+def test_activity_category_menu_displays_free_weights_title_without_old_gym_title():
+    rows = [[button.text for button in row] for row in workouts.activity_category_menu.keyboard]
+    flat = [text for row in rows for text in row]
+
+    assert "🏋️ Свободные веса и тренажёры" in flat
+    assert "🏋️ Тренажерный зал" not in flat
+    assert "🏋️ Тренажёрный зал" not in flat
+
+
+def test_gym_category_keeps_stable_internal_identifier_and_new_display_title():
+    assert "gym" in workouts.ACTIVITY_CATEGORIES
+    assert workouts.ACTIVITY_CATEGORIES["gym"]["title"] == "🏋️ Свободные веса и тренажёры"
+
 def test_count_menu_uses_cancel_instead_of_back():
     from utils.keyboards import count_menu
 
@@ -204,6 +217,12 @@ def test_sup_boarding_search_matches_synonyms():
     assert "катание на сапе" in tokens
 
 
+def test_unweighted_deadlift_variants_are_bodyweight_not_gym():
+    assert "Становая тяга без утяжелителя" not in workouts.ACTIVITY_CATEGORIES["gym"]["activities"]
+    assert "Румынская тяга без утяжелителя" not in workouts.ACTIVITY_CATEGORIES["gym"]["activities"]
+    assert "Становая тяга без утяжелителя" in workouts.ACTIVITY_CATEGORIES["bodyweight"]["activities"]
+    assert "Румынская тяга без утяжелителя" in workouts.ACTIVITY_CATEGORIES["bodyweight"]["activities"]
+
 def test_gym_category_main_list_is_sorted_by_russian_alphabet():
     gym_exercises = sorted([
         workouts._normalize_exercise_name(ex)
@@ -230,7 +249,7 @@ def test_gym_category_next_page_callback_opens_second_page():
     callback.answer.assert_awaited_once()
     state.update_data.assert_awaited_once_with(add_activity_screen="category", category_id="gym", category_page=1)
     text = callback.message.answer.await_args.args[0]
-    assert "🏋️ Тренажерный зал" in text
+    assert "🏋️ Свободные веса и тренажёры" in text
     button_rows = [[button.text for button in row] for row in callback.message.answer.await_args.kwargs["reply_markup"].inline_keyboard]
     assert ["⬅️ Предыдущая", "2/3", "Следующая ➡️"] in button_rows
     assert any("Разведения гантелей" in row for row in button_rows)
@@ -281,10 +300,11 @@ def test_gym_exercise_starts_with_working_weight_input():
     state.set_state.assert_any_await(workouts.WorkoutStates.entering_working_weight)
     text = callback.message.answer.await_args.args[0]
     assert "🏋️ Тяга штанги в наклоне" in text
-    assert "🏋️ Укажи рабочий вес упражнения" in text
+    assert "Укажи рабочий вес:" in text
+    assert "🏋️ Укажи рабочий вес" not in text
     keyboard_rows = [[button.text for button in row] for row in callback.message.answer.await_args.kwargs["reply_markup"].keyboard]
-    assert keyboard_rows[0] == ["Без веса"]
-    assert "30 кг" in keyboard_rows[2]
+    assert all("Без веса" not in row for row in keyboard_rows)
+    assert "30 кг" in keyboard_rows[1]
 
 
 def test_gym_weight_selection_opens_reps_without_asking_weight_again():
@@ -332,7 +352,8 @@ def test_hammer_curl_is_gym_dumbbell_exercise_and_asks_one_dumbbell_weight():
     state.set_state.assert_any_await(workouts.WorkoutStates.entering_working_weight)
     text = callback.message.answer.await_args.args[0]
     assert "🏋️ Молот на бицепс" in text
-    assert "🏋️ Укажи рабочий вес упражнения" in text
+    assert "Укажи рабочий вес:" in text
+    assert "🏋️ Укажи рабочий вес" not in text
 
 
 def test_hammer_curl_weight_selection_saves_single_dumbbell_weight_and_reps_prompt():
@@ -421,8 +442,9 @@ def test_dumbbell_military_press_flow_asks_weight_first_with_one_dumbbell_hint()
     state.set_state.assert_any_await(workouts.WorkoutStates.entering_working_weight)
     text = callback.message.answer.await_args.args[0]
     assert "🏋️ Армейский жим с гантелями" in text
-    assert "🏋️ Укажи рабочий вес упражнения" in text
-    assert "🏋️ Укажи рабочий вес упражнения:" in text
+    assert "Укажи рабочий вес:" in text
+    assert "🏋️ Укажи рабочий вес" not in text
+    assert text.count("🏋️") == 1
 
 
 def test_dumbbell_military_press_weight_then_reps_and_next_set_reuse_weight():
@@ -542,7 +564,8 @@ def test_forearm_dumbbell_exercise_flow_asks_weight_first_with_one_dumbbell_hint
     state.set_state.assert_any_await(workouts.WorkoutStates.entering_working_weight)
     text = callback.message.answer.await_args.args[0]
     assert "🏋️ Сгибания кистей с гантелями" in text
-    assert "🏋️ Укажи рабочий вес упражнения" in text
+    assert "Укажи рабочий вес:" in text
+    assert "🏋️ Укажи рабочий вес" not in text
 
     message = SimpleNamespace(text="8 кг", bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock())
     next_state = SimpleNamespace(
