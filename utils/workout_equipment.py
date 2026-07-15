@@ -9,23 +9,18 @@ class ExerciseEquipmentConfig:
     equipment_type: str
     weight_label: str
     saved_weight_description: str
-    weight_input_hint: str = ""
 
 
 EQUIPMENT_LABELS = {
     "dumbbell": ExerciseEquipmentConfig(
         equipment_type="dumbbell",
-        weight_label="Вес одной гантели",
-        saved_weight_description="вес одной гантели",
-        weight_input_hint=(
-            "\n\nУкажи вес одной гантели.\n"
-            "Если выполняешь упражнение с двумя гантелями по 8 кг, введи 8 кг."
-        ),
+        weight_label="Рабочий вес",
+        saved_weight_description="рабочий вес",
     ),
     "barbell": ExerciseEquipmentConfig(
         equipment_type="barbell",
-        weight_label="Общий вес штанги",
-        saved_weight_description="общий вес штанги",
+        weight_label="Рабочий вес",
+        saved_weight_description="рабочий вес",
     ),
     "machine": ExerciseEquipmentConfig(
         equipment_type="machine",

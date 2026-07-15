@@ -199,11 +199,9 @@ async def _open_working_weight_input(message: Message, state: FSMContext, exerci
     await state.update_data(exercise=_normalize_exercise_name(exercise), variant="reps", input_method=ActivityInputMethod.REPETITIONS.value)
     await state.set_state(WorkoutStates.entering_working_weight)
     push_menu_stack(message.bot, working_weight_menu)
-    equipment_config = get_equipment_config(exercise)
     await message.answer(
         f"🏋️ {exercise}\n\n"
-        f"1️⃣ Укажи {equipment_config.weight_label.lower()}:"
-        f"{equipment_config.weight_input_hint}",
+        "🏋️ Укажи рабочий вес упражнения:",
         reply_markup=working_weight_menu,
     )
 
@@ -1131,7 +1129,7 @@ async def request_workout_weight_edit(callback: CallbackQuery, state: FSMContext
         f"🏋️ {workout.exercise}\n"
         f"🔁 Повторения: {int(workout.count or 0)}\n"
         f"⚖️ Сейчас: {_format_working_weight(getattr(workout, 'working_weight', None))}\n\n"
-        f"Укажи {_weight_label(workout.exercise).lower()}:",
+        "🏋️ Укажи рабочий вес упражнения:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="wrk_edit_cancel")]]),
     )
 
@@ -1767,9 +1765,7 @@ async def handle_custom_exercise(message: Message, state: FSMContext):
 async def handle_working_weight_input(message: Message, state: FSMContext):
     """Обрабатывает выбор рабочего веса для упражнений тренажёрного зала."""
     if message.text == "✍️ Ввести вручную":
-        data = await state.get_data()
-        label = _weight_label(data.get("exercise"))
-        await message.answer(f"Введи {label.lower()} в килограммах, например 32,5. Если упражнение без веса — нажми «Без веса».")
+        await message.answer("Введи рабочий вес упражнения в килограммах, например 32,5. Если упражнение без веса — нажми «Без веса».")
         return
     if message.text in {"❌ Отмена", "⬅️ Назад"}:
         await state.clear()
@@ -1784,10 +1780,7 @@ async def handle_working_weight_input(message: Message, state: FSMContext):
     try:
         working_weight = _parse_working_weight(message.text)
     except (ValueError, TypeError):
-        data = await state.get_data()
-        exercise = data.get("exercise")
-        weight_label = _weight_label(exercise).lower()
-        await message.answer(f"⚠️ Введи {weight_label} положительным числом или нажми «Без веса».")
+        await message.answer("⚠️ Введи рабочий вес упражнения положительным числом или нажми «Без веса».")
         return
 
     data = await state.get_data()
