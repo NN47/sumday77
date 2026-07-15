@@ -1007,8 +1007,9 @@ def test_my_product_meals_keyboard_uses_full_emoji_numbers_on_later_pages():
     assert keyboard.inline_keyboard[2][0].text.startswith("1️⃣1️⃣ ")
     assert keyboard.inline_keyboard[3][0].text.startswith("1️⃣2️⃣ ")
     assert [button.text for button in keyboard.inline_keyboard[4]] == [
-        "⬅️ Предыдущая страница",
-        "➡️ Следующая страница",
+        "⬅️ Предыдущая",
+        "2/3",
+        "Следующая ➡️",
     ]
     assert keyboard.inline_keyboard[-1][0].text == "🔎 Поиск продукта"
 

@@ -160,7 +160,6 @@ def test_start_exercise_selection_shows_recent_inline_and_categories():
     assert [[button.text for button in row] for row in recent_call.kwargs["reply_markup"].inline_keyboard] == [
         ["1️⃣ Бег"],
         ["2️⃣ Отжимания"],
-        ["🔎 Поиск упражнения"],
     ]
     category_call = message.answer.await_args_list[1]
     assert category_call.args[0] == "📂 Или выбери категорию:"
@@ -205,16 +204,16 @@ def test_sup_boarding_search_matches_synonyms():
     assert "катание на сапе" in tokens
 
 
-def test_gym_category_first_page_shows_hammer_curl():
-    gym_exercises = [
+def test_gym_category_main_list_is_sorted_by_russian_alphabet():
+    gym_exercises = sorted([
         workouts._normalize_exercise_name(ex)
         for ex in workouts.ACTIVITY_CATEGORIES["gym"]["activities"]
-    ]
+    ], key=workouts._russian_sort_key)
 
     page_items, page = workouts._paginate(gym_exercises, 0)
 
     assert page == 0
-    assert "Молот на бицепс" in page_items
+    assert page_items == sorted(page_items, key=workouts._russian_sort_key)
 
 
 def test_gym_category_next_page_callback_opens_second_page():
@@ -233,8 +232,40 @@ def test_gym_category_next_page_callback_opens_second_page():
     text = callback.message.answer.await_args.args[0]
     assert "🏋️ Тренажерный зал" in text
     button_rows = [[button.text for button in row] for row in callback.message.answer.await_args.kwargs["reply_markup"].inline_keyboard]
-    assert ["⬅️ Предыдущая страница", "➡️ Следующая страница"] in button_rows
-    assert any("Подъёмы гантелей на бицепс" in row for row in button_rows)
+    assert ["⬅️ Предыдущая", "2/3", "Следующая ➡️"] in button_rows
+    assert any("Разведения гантелей" in row for row in button_rows)
+
+
+def test_gym_category_sets_search_back_reply_keyboard_and_recent_buttons():
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=12345),
+        bot=SimpleNamespace(menu_stack=[]),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(update_data=AsyncMock())
+
+    with patch("handlers.workouts._get_recent_exercises", return_value=["Жим штанги лёжа", "Жим штанги лёжа", "Бег", "Молот на бицепс"]):
+        asyncio.run(workouts._show_category(message, state, "gym", user_id="12345", send_reply_keyboard=True))
+
+    reply_call = message.answer.await_args_list[0]
+    assert [[button.text for button in row] for row in reply_call.kwargs["reply_markup"].keyboard] == [
+        ["🔍 Поиск упражнения"],
+        ["⬅️ Назад"],
+    ]
+    list_call = message.answer.await_args_list[1]
+    rows = [[button.text for button in row] for row in list_call.kwargs["reply_markup"].inline_keyboard]
+    assert rows[0] == ["⭐ Жим штанги лёжа"]
+    assert rows[1] == ["⭐ Молот на бицепс"]
+    assert all("Бег" not in row[0] for row in rows)
+    assert all("🔍 Поиск упражнения" not in row[0] for row in rows)
+
+
+def test_pagination_first_and_last_page_hide_unavailable_directions():
+    first = workouts._build_activity_inline(["Бег"], "wrk_search_page", 0, 3)
+    last = workouts._build_activity_inline(["Йога"], "wrk_search_page", 2, 3)
+
+    assert [button.text for button in first.inline_keyboard[-1]] == ["1/3", "Следующая ➡️"]
+    assert [button.text for button in last.inline_keyboard[-1]] == ["⬅️ Предыдущая", "3/3"]
 
 
 def test_gym_exercise_starts_with_working_weight_input():
