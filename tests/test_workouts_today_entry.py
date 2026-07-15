@@ -423,7 +423,7 @@ def test_dumbbell_military_press_flow_asks_weight_first_with_one_dumbbell_hint()
     assert "🏋️ Армейский жим с гантелями" in text
     assert "1️⃣ Укажи вес одной гантели" in text
     assert "Укажи вес одной гантели." in text
-    assert "Если выполняешь упражнение с двумя гантелями по 15 кг, введи 15 кг." in text
+    assert "Если выполняешь упражнение с двумя гантелями по 8 кг, введи 8 кг." in text
 
 
 def test_dumbbell_military_press_weight_then_reps_and_next_set_reuse_weight():
@@ -473,3 +473,122 @@ def test_dumbbell_military_press_catalog_initialization_is_idempotent():
 
     assert all_exercises.count("Армейский жим с гантелями") == 1
     assert workouts.ACTIVITY_CATEGORIES["gym"]["activities"].count("Армейский жим с гантелями") == 1
+
+
+def _search_matches(query: str) -> list[str]:
+    return [
+        ex for ex in sorted(workouts._all_catalog_exercises(), key=workouts._russian_sort_key)
+        if any(workouts._search_key(query) in workouts._search_key(token) for token in workouts._exercise_search_tokens(ex))
+    ]
+
+
+def test_forearm_dumbbell_exercises_are_gym_exercises_with_stable_slugs():
+    flexion = "Сгибания кистей с гантелями"
+    extension = "Разгибания кистей с гантелями"
+
+    assert flexion in workouts.ACTIVITY_CATEGORIES["gym"]["activities"]
+    assert extension in workouts.ACTIVITY_CATEGORIES["gym"]["activities"]
+    assert workouts._is_gym_exercise(flexion)
+    assert workouts._is_gym_exercise(extension)
+    assert workouts._activity_id(flexion) == "dumbbell_wrist_curl"
+    assert workouts._activity_id(extension) == "dumbbell_reverse_wrist_curl"
+    assert workouts._activity_by_id("dumbbell_wrist_curl") == flexion
+    assert workouts._activity_by_id("dumbbell_reverse_wrist_curl") == extension
+
+
+def test_forearm_dumbbell_exercises_search_synonyms_and_deduplication():
+    assert "Сгибания кистей с гантелями" in _search_matches("  сгибания   кистей  ")
+    assert "Сгибания кистей с гантелями" in _search_matches("wrist curl")
+    assert "Разгибания кистей с гантелями" in _search_matches("разгибания кистей")
+    assert "Разгибания кистей с гантелями" in _search_matches("reverse wrist curl")
+
+    wrist_matches = _search_matches("кисти")
+    assert "Сгибания кистей с гантелями" in wrist_matches
+    assert "Разгибания кистей с гантелями" in wrist_matches
+    assert len(wrist_matches) == len(set(wrist_matches))
+
+
+def test_forearm_dumbbell_exercises_appear_in_sorted_gym_list():
+    gym_exercises = sorted([
+        workouts._normalize_exercise_name(ex)
+        for ex in workouts.ACTIVITY_CATEGORIES["gym"]["activities"]
+    ], key=workouts._russian_sort_key)
+
+    assert "Сгибания кистей с гантелями" in gym_exercises
+    assert "Разгибания кистей с гантелями" in gym_exercises
+
+
+def test_forearm_dumbbell_exercises_appear_in_recent_after_use():
+    entries = [
+        SimpleNamespace(exercise="Разгибания кистей с гантелями", variant="reps"),
+        SimpleNamespace(exercise="Сгибания кистей с гантелями", variant="reps"),
+    ]
+
+    with patch("handlers.workouts.WorkoutRepository.get_workouts_for_period", return_value=entries):
+        recent = workouts._get_recent_exercises("12345")
+
+    assert recent == ["Сгибания кистей с гантелями", "Разгибания кистей с гантелями"]
+
+
+def test_forearm_dumbbell_exercise_flow_asks_weight_first_with_one_dumbbell_hint():
+    callback = SimpleNamespace(
+        data="wrk_pick:dumbbell_wrist_curl",
+        message=SimpleNamespace(bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock()),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(update_data=AsyncMock(), set_state=AsyncMock())
+
+    asyncio.run(workouts.pick_catalog_exercise(callback, state))
+
+    state.set_state.assert_any_await(workouts.WorkoutStates.entering_working_weight)
+    text = callback.message.answer.await_args.args[0]
+    assert "🏋️ Сгибания кистей с гантелями" in text
+    assert "1️⃣ Укажи вес одной гантели" in text
+    assert "Если выполняешь упражнение с двумя гантелями по 8 кг, введи 8 кг." in text
+
+    message = SimpleNamespace(text="8 кг", bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock())
+    next_state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"exercise": "Сгибания кистей с гантелями"}),
+        update_data=AsyncMock(),
+        set_state=AsyncMock(),
+    )
+
+    asyncio.run(workouts.handle_working_weight_input(message, next_state))
+
+    next_state.update_data.assert_any_await(working_weight=8.0)
+    next_state.set_state.assert_any_await(workouts.WorkoutStates.entering_count)
+    assert "⚖️ Вес одной гантели: 8 кг" in message.answer.await_args.args[0]
+    assert "2️⃣ Выбери количество повторений" in message.answer.await_args.args[0]
+
+
+def test_forearm_dumbbell_next_set_reuses_weight_and_summary_displays_sets():
+    message = SimpleNamespace(text="💪 Добавить еще подход", from_user=SimpleNamespace(id=12345), bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock())
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"exercise": "Разгибания кистей с гантелями", "variant": "reps", "working_weight": 5.0, "entry_date": "2026-06-03"}),
+        update_data=AsyncMock(),
+        set_state=AsyncMock(),
+    )
+
+    asyncio.run(workouts.handle_count_input(message, state))
+
+    assert "⚖️ Вес одной гантели: 5 кг" in message.answer.await_args.args[0]
+    summaries = workouts.format_activity_daily_summaries([
+        SimpleNamespace(exercise="Разгибания кистей с гантелями", variant="reps", count=15, calories=7, input_method="repetitions", working_weight=5.0),
+        SimpleNamespace(exercise="Разгибания кистей с гантелями", variant="reps", count=12, calories=6, input_method="repetitions", working_weight=5.0),
+        SimpleNamespace(exercise="Разгибания кистей с гантелями", variant="reps", count=10, calories=5, input_method="repetitions", working_weight=5.0),
+    ], "12345")
+
+    assert summaries == [
+        "Разгибания кистей с гантелями — 15 раз, 5 кг (~7 ккал)",
+        "Разгибания кистей с гантелями — 12 раз, 5 кг (~6 ккал)",
+        "Разгибания кистей с гантелями — 10 раз, 5 кг (~5 ккал)",
+    ]
+
+
+def test_forearm_dumbbell_catalog_initialization_is_idempotent():
+    all_exercises = workouts._all_catalog_exercises()
+
+    assert all_exercises.count("Сгибания кистей с гантелями") == 1
+    assert all_exercises.count("Разгибания кистей с гантелями") == 1
+    assert workouts.ACTIVITY_CATEGORIES["gym"]["activities"].count("Сгибания кистей с гантелями") == 1
+    assert workouts.ACTIVITY_CATEGORIES["gym"]["activities"].count("Разгибания кистей с гантелями") == 1
