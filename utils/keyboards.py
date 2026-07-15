@@ -255,7 +255,6 @@ count_menu = ReplyKeyboardMarkup(
 
 working_weight_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="Без веса")],
         [KeyboardButton(text="5 кг"), KeyboardButton(text="10 кг"), KeyboardButton(text="15 кг"), KeyboardButton(text="20 кг")],
         [KeyboardButton(text="25 кг"), KeyboardButton(text="30 кг"), KeyboardButton(text="35 кг"), KeyboardButton(text="40 кг")],
         [KeyboardButton(text="45 кг"), KeyboardButton(text="50 кг"), KeyboardButton(text="60 кг"), KeyboardButton(text="70 кг")],
@@ -285,18 +284,19 @@ other_day_menu = ReplyKeyboardMarkup(
 
 ACTIVITY_CATEGORIES = {
     "cardio": {"title": "🏃 Кардио", "activities": ["Бег", "Скакалка"]},
-    "gym": {"title": "🏋️ Тренажерный зал", "activities": [
-        "Армейский жим с гантелями", "Становая тяга без утяжелителя", "Становая тяга с утяжелителем", "Тяга верхнего блока",
+    "gym": {"title": "🏋️ Свободные веса и тренажёры", "activities": [
+        "Армейский жим с гантелями", "Становая тяга с утяжелителем", "Тяга верхнего блока",
         "Тяга горизонтального блока", "Тяга нижнего блока", "Тяга штанги в наклоне",
         "Молот на бицепс", "Приседания со штангой", "Подъёмы гантелей на бицепс",
         "Разведения гантелей", "Разгибание ног в тренажёре", "Разгибания кистей с гантелями",
-        "Румынская тяга без утяжелителя", "Румынская тяга с утяжелителем", "Сгибание ног в тренажёре",
+        "Румынская тяга с утяжелителем", "Сгибание ног в тренажёре",
         "Сгибания кистей с гантелями",
         "Гиперэкстензия с утяжелителем", "Жим гантелей лёжа", "Жим гантелей сидя",
         "Жим ногами", "Жим штанги лёжа",
     ]},
     "bodyweight": {"title": "💪 Собственный вес", "activities": [
         "Отжимания", "Подтягивания", "Приседания", "Планка", "Пресс", "Берпи",
+        "Становая тяга без утяжелителя", "Румынская тяга без утяжелителя",
         "Гиперэкстензия без утяжелителя",
     ]},
     "sport": {"title": "🏄 Спорт и активный отдых", "activities": ["🏄 Сапбординг", "Йога"]},
@@ -305,7 +305,7 @@ ACTIVITY_CATEGORIES = {
 activity_category_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🏃 Кардио")],
-        [KeyboardButton(text="🏋️ Тренажерный зал")],
+        [KeyboardButton(text="🏋️ Свободные веса и тренажёры")],
         [KeyboardButton(text="💪 Собственный вес")],
         [KeyboardButton(text="🏄 Спорт и активный отдых")],
         [KeyboardButton(text="⬅️ Назад")],

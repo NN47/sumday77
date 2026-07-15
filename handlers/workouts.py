@@ -160,7 +160,7 @@ def _exercise_input_type(exercise: str) -> str:
 
 
 def _gym_exercises() -> set[str]:
-    """Возвращает упражнения категории «Тренажёрный зал» из централизованного каталога."""
+    """Возвращает упражнения категории «Свободные веса и тренажёры» из централизованного каталога."""
     gym_category = ACTIVITY_CATEGORIES.get("gym", {})
     return {_normalize_exercise_name(ex) for ex in gym_category.get("activities", [])}
 
@@ -201,7 +201,7 @@ async def _open_working_weight_input(message: Message, state: FSMContext, exerci
     push_menu_stack(message.bot, working_weight_menu)
     await message.answer(
         f"🏋️ {exercise}\n\n"
-        "🏋️ Укажи рабочий вес упражнения:",
+        "Укажи рабочий вес:",
         reply_markup=working_weight_menu,
     )
 
@@ -1129,7 +1129,7 @@ async def request_workout_weight_edit(callback: CallbackQuery, state: FSMContext
         f"🏋️ {workout.exercise}\n"
         f"🔁 Повторения: {int(workout.count or 0)}\n"
         f"⚖️ Сейчас: {_format_working_weight(getattr(workout, 'working_weight', None))}\n\n"
-        "🏋️ Укажи рабочий вес упражнения:",
+        "Укажи рабочий вес:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="wrk_edit_cancel")]]),
     )
 
@@ -1215,7 +1215,7 @@ async def handle_workout_edit_weight(message: Message, state: FSMContext):
     except (ValueError, TypeError):
         await message.answer("⚠️ Укажи положительный вес числом, например 7,5")
         return
-    if weight is not None and weight <= 0:
+    if weight is None or weight <= 0:
         await message.answer("⚠️ Укажи положительный вес числом, например 7,5")
         return
     workout = WorkoutRepository.get_workout_by_id(int(workout_id), user_id) if workout_id else None
@@ -1763,9 +1763,9 @@ async def handle_custom_exercise(message: Message, state: FSMContext):
 
 @router.message(WorkoutStates.entering_working_weight)
 async def handle_working_weight_input(message: Message, state: FSMContext):
-    """Обрабатывает выбор рабочего веса для упражнений тренажёрного зала."""
+    """Обрабатывает выбор рабочего веса для упражнений раздела свободных весов и тренажёров."""
     if message.text == "✍️ Ввести вручную":
-        await message.answer("Введи рабочий вес упражнения в килограммах, например 32,5. Если упражнение без веса — нажми «Без веса».")
+        await message.answer("Введи рабочий вес в килограммах, например 32,5.")
         return
     if message.text in {"❌ Отмена", "⬅️ Назад"}:
         await state.clear()
@@ -1780,7 +1780,7 @@ async def handle_working_weight_input(message: Message, state: FSMContext):
     try:
         working_weight = _parse_working_weight(message.text)
     except (ValueError, TypeError):
-        await message.answer("⚠️ Введи рабочий вес упражнения положительным числом или нажми «Без веса».")
+        await message.answer("⚠️ Введи рабочий вес положительным числом, например 32,5.")
         return
 
     data = await state.get_data()
@@ -1788,6 +1788,10 @@ async def handle_working_weight_input(message: Message, state: FSMContext):
     if not exercise:
         await message.answer("❌ Ошибка: данные потеряны. Начни добавление тренировки заново.")
         await state.clear()
+        return
+
+    if working_weight is None or working_weight <= 0:
+        await message.answer("⚠️ Введи рабочий вес положительным числом, например 32,5.")
         return
 
     await state.update_data(working_weight=working_weight)
@@ -1821,7 +1825,7 @@ async def handle_count_input(message: Message, state: FSMContext):
         data = await state.get_data()
         exercise = data.get("exercise")
         if not exercise or not _is_gym_exercise(exercise):
-            await message.answer("Сменить вес можно для упражнений тренажёрного зала.")
+            await message.answer("Сменить вес можно для упражнений раздела свободных весов и тренажёров.")
             return
         await _open_working_weight_input(message, state, exercise)
         return
