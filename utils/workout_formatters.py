@@ -92,7 +92,11 @@ def _repetition_group_variant(activity: Workout) -> str:
 
 
 def _can_group_daily_activity(activity: Workout) -> bool:
-    return _activity_method(activity) == ActivityInputMethod.REPETITIONS and not _positive_attr(activity, "sets", "approaches", "set_count")
+    return (
+        _activity_method(activity) == ActivityInputMethod.REPETITIONS
+        and not _positive_attr(activity, "sets", "approaches", "set_count")
+        and not _positive_attr(activity, "weight", "working_weight", "work_weight")
+    )
 
 
 def format_activity_daily_summaries(activities: list[Workout], user_id: str | None = None) -> list[str]:

@@ -364,3 +364,112 @@ def test_hammer_curl_add_another_set_reuses_one_dumbbell_weight():
     text = message.answer.await_args.args[0]
     assert "⚖️ Вес одной гантели: 30 кг" in text
     assert "Выбери количество повторений" in text
+
+
+def test_dumbbell_military_press_is_gym_exercise_with_stable_slug():
+    exercise = "Армейский жим с гантелями"
+
+    assert exercise in workouts.ACTIVITY_CATEGORIES["gym"]["activities"]
+    assert workouts._is_gym_exercise(exercise)
+    assert workouts._activity_id(exercise) == "dumbbell_military_press"
+    assert workouts._activity_by_id("dumbbell_military_press") == exercise
+
+
+def test_dumbbell_military_press_search_synonyms_and_deduplication():
+    queries = ["  армейский   жим  ", "жим гантелей стоя", "shoulder press"]
+
+    for query in queries:
+        matches = [
+            ex for ex in sorted(workouts._all_catalog_exercises(), key=workouts._russian_sort_key)
+            if any(workouts._search_key(query) in workouts._search_key(token) for token in workouts._exercise_search_tokens(ex))
+        ]
+        assert "Армейский жим с гантелями" in matches
+
+    multi_synonym_matches = [
+        ex for ex in sorted(workouts._all_catalog_exercises(), key=workouts._russian_sort_key)
+        if any(workouts._search_key("жим") in workouts._search_key(token) for token in workouts._exercise_search_tokens(ex))
+    ]
+    assert multi_synonym_matches.count("Армейский жим с гантелями") == 1
+
+
+def test_dumbbell_military_press_is_under_a_in_sorted_gym_list():
+    gym_exercises = sorted([
+        workouts._normalize_exercise_name(ex)
+        for ex in workouts.ACTIVITY_CATEGORIES["gym"]["activities"]
+    ], key=workouts._russian_sort_key)
+
+    assert gym_exercises[0] == "Армейский жим с гантелями"
+
+
+def test_dumbbell_military_press_appears_in_recent_after_use():
+    entry = SimpleNamespace(exercise="Армейский жим с гантелями", variant="reps")
+
+    with patch("handlers.workouts.WorkoutRepository.get_workouts_for_period", return_value=[entry]):
+        assert workouts._get_recent_exercises("12345") == ["Армейский жим с гантелями"]
+
+
+def test_dumbbell_military_press_flow_asks_weight_first_with_one_dumbbell_hint():
+    callback = SimpleNamespace(
+        data="wrk_pick:dumbbell_military_press",
+        message=SimpleNamespace(bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock()),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(update_data=AsyncMock(), set_state=AsyncMock())
+
+    asyncio.run(workouts.pick_catalog_exercise(callback, state))
+
+    state.set_state.assert_any_await(workouts.WorkoutStates.entering_working_weight)
+    text = callback.message.answer.await_args.args[0]
+    assert "🏋️ Армейский жим с гантелями" in text
+    assert "1️⃣ Укажи вес одной гантели" in text
+    assert "Укажи вес одной гантели." in text
+    assert "Если выполняешь упражнение с двумя гантелями по 15 кг, введи 15 кг." in text
+
+
+def test_dumbbell_military_press_weight_then_reps_and_next_set_reuse_weight():
+    message = SimpleNamespace(text="15 кг", bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock())
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"exercise": "Армейский жим с гантелями"}),
+        update_data=AsyncMock(),
+        set_state=AsyncMock(),
+    )
+
+    asyncio.run(workouts.handle_working_weight_input(message, state))
+
+    state.update_data.assert_any_await(working_weight=15.0)
+    state.set_state.assert_any_await(workouts.WorkoutStates.entering_count)
+    text = message.answer.await_args.args[0]
+    assert "⚖️ Вес одной гантели: 15 кг" in text
+    assert "2️⃣ Выбери количество повторений" in text
+
+    next_message = SimpleNamespace(text="💪 Добавить еще подход", from_user=SimpleNamespace(id=12345), bot=SimpleNamespace(menu_stack=[]), answer=AsyncMock())
+    next_state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"exercise": "Армейский жим с гантелями", "variant": "reps", "working_weight": 15.0, "entry_date": "2026-06-03"}),
+        update_data=AsyncMock(),
+        set_state=AsyncMock(),
+    )
+
+    asyncio.run(workouts.handle_count_input(next_message, next_state))
+
+    assert "⚖️ Вес одной гантели: 15 кг" in next_message.answer.await_args.args[0]
+
+
+def test_dumbbell_military_press_saved_sets_display_one_dumbbell_weight():
+    activities = [
+        SimpleNamespace(exercise="Армейский жим с гантелями", variant="reps", count=10, calories=12, input_method="repetitions", working_weight=15.0),
+        SimpleNamespace(exercise="Армейский жим с гантелями", variant="reps", count=8, calories=10, input_method="repetitions", working_weight=15.0),
+    ]
+
+    summaries = workouts.format_activity_daily_summaries(activities, "12345")
+
+    assert summaries == [
+        "Армейский жим с гантелями — 10 раз, 15 кг (~12 ккал)",
+        "Армейский жим с гантелями — 8 раз, 15 кг (~10 ккал)",
+    ]
+
+
+def test_dumbbell_military_press_catalog_initialization_is_idempotent():
+    all_exercises = workouts._all_catalog_exercises()
+
+    assert all_exercises.count("Армейский жим с гантелями") == 1
+    assert workouts.ACTIVITY_CATEGORIES["gym"]["activities"].count("Армейский жим с гантелями") == 1
