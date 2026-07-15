@@ -1692,7 +1692,9 @@ async def handle_working_weight_input(message: Message, state: FSMContext):
         working_weight = _parse_working_weight(message.text)
     except (ValueError, TypeError):
         data = await state.get_data()
-        await message.answer(f"⚠️ Введи {_weight_label(data.get("exercise")).lower()} положительным числом или нажми «Без веса».")
+        exercise = data.get("exercise")
+        weight_label = _weight_label(exercise).lower()
+        await message.answer(f"⚠️ Введи {weight_label} положительным числом или нажми «Без веса».")
         return
 
     data = await state.get_data()
