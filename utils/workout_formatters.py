@@ -168,6 +168,40 @@ def format_activity_daily_summaries(activities: list[Workout], user_id: str | No
     return ordered_lines
 
 
+
+def _format_set_line(activity: Workout) -> str:
+    reps = _format_number(activity.count or 0)
+    weight = _positive_attr(activity, "weight", "working_weight", "work_weight")
+    if weight:
+        return f"• {_format_number(weight)} кг × {reps}"
+    return f"• {reps} раз"
+
+
+def format_grouped_workout_sets_report(activities: list[Workout], user_id: str | None = None) -> list[str]:
+    """Форматирует подходы журналом тренировки, группируя только одинаковые упражнения."""
+    groups: dict[str, dict] = {}
+    order: list[str] = []
+
+    for activity in activities:
+        name = _normalize_exercise_name(activity.exercise)
+        if name not in groups:
+            groups[name] = {"lines": [], "calories": 0.0}
+            order.append(name)
+        groups[name]["lines"].append(_format_set_line(activity))
+        calories = activity.calories
+        if (calories is None or calories == 0) and user_id:
+            calories = calculate_workout_calories(user_id, activity.exercise, activity.variant, activity.count)
+        groups[name]["calories"] += calories or 0
+
+    lines: list[str] = []
+    for name in order:
+        if lines:
+            lines.append("")
+        lines.append(f"<b>{name}</b>")
+        lines.extend(groups[name]["lines"])
+        lines.append(f"≈ {groups[name]['calories']:.0f} ккал")
+    return lines
+
 def format_activity_summary(activity: Workout, user_id: str | None = None, *, include_calories: bool = True) -> str:
     """Форматирует одну запись активности для отчётов и меню редактирования."""
     name = _normalize_exercise_name(activity.exercise)
