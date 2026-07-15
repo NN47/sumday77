@@ -117,3 +117,66 @@ def test_openai_food_photo_service_requires_api_key() -> None:
 
     with pytest.raises(OpenAILabelServiceConfigError):
         service.analyze_food_photo_openai(b"fake-image")
+
+
+def test_extract_label_uses_label_prompt_without_comment_name_error(monkeypatch) -> None:
+    captured = {}
+
+    class _FakeResponses:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return type(
+                "Response",
+                (),
+                {
+                    "output_text": '{"name":"Йогурт","calories_per_100g":80,"protein_per_100g":5,"fat_per_100g":2,"carbs_per_100g":10}',
+                    "usage": None,
+                    "id": "resp_test",
+                },
+            )()
+
+    class _FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+            self.responses = _FakeResponses()
+
+    monkeypatch.setattr("services.openai_label_service.OpenAI", _FakeOpenAI)
+
+    result = OpenAILabelService(api_key="test-key").extract_kbju_from_label(b"fake-image")
+
+    prompt_text = captured["input"][0]["content"][0]["text"]
+    assert "Проанализируй фото этикетки" in prompt_text
+    assert "Проанализируй фото блюда" not in prompt_text
+    assert result["product_name"] == "Йогурт"
+
+
+def test_extract_label_accepts_optional_comment(monkeypatch) -> None:
+    captured = {}
+
+    class _FakeResponses:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return type(
+                "Response",
+                (),
+                {
+                    "output_text": '{"name":"Кефир","calories_per_100g":50,"protein_per_100g":3,"fat_per_100g":1,"carbs_per_100g":4}',
+                    "usage": None,
+                    "id": "resp_test",
+                },
+            )()
+
+    class _FakeOpenAI:
+        def __init__(self, **kwargs):
+            self.responses = _FakeResponses()
+
+    monkeypatch.setattr("services.openai_label_service.OpenAI", _FakeOpenAI)
+
+    result = OpenAILabelService(api_key="test-key").extract_kbju_from_label(
+        b"fake-image",
+        comment="вес указан справа",
+    )
+
+    prompt_text = captured["input"][0]["content"][0]["text"]
+    assert "вес указан справа" in prompt_text
+    assert result["product_name"] == "Кефир"
