@@ -75,7 +75,25 @@ category_search_reply_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
+
+EXERCISE_ACTIVITY_IDS = {
+    "Армейский жим с гантелями": "dumbbell_military_press",
+}
+_ACTIVITY_BY_STABLE_ID = {activity_id: exercise for exercise, activity_id in EXERCISE_ACTIVITY_IDS.items()}
+
 EXERCISE_SEARCH_SYNONYMS = {
+    "Армейский жим с гантелями": (
+        "армейский жим",
+        "жим гантелей стоя",
+        "жим гантелей над головой",
+        "жим над головой",
+        "жим на плечи",
+        "плечевой жим",
+        "dumbbell shoulder press",
+        "dumbbell overhead press",
+        "shoulder press",
+        "overhead press",
+    ),
     SUP_BOARDING_EXERCISE: (
         "сап",
         "sup",
@@ -155,9 +173,11 @@ async def _open_working_weight_input(message: Message, state: FSMContext, exerci
     await state.update_data(exercise=_normalize_exercise_name(exercise), variant="reps", input_method=ActivityInputMethod.REPETITIONS.value)
     await state.set_state(WorkoutStates.entering_working_weight)
     push_menu_stack(message.bot, working_weight_menu)
+    equipment_config = get_equipment_config(exercise)
     await message.answer(
         f"🏋️ {exercise}\n\n"
-        f"1️⃣ Укажи {_weight_label(exercise).lower()}:",
+        f"1️⃣ Укажи {equipment_config.weight_label.lower()}:"
+        f"{equipment_config.weight_input_hint}",
         reply_markup=working_weight_menu,
     )
 
@@ -264,6 +284,8 @@ async def _send_activity_main_screen(message: Message, user_id: str, target_date
 
 def _activity_id(exercise: str) -> str:
     normalized = _normalize_exercise_name(exercise)
+    if normalized in EXERCISE_ACTIVITY_IDS:
+        return EXERCISE_ACTIVITY_IDS[normalized]
     for index, catalog_exercise in enumerate(_all_catalog_exercises()):
         if _search_key(catalog_exercise) == _search_key(normalized):
             return f"ex{index}"
@@ -271,6 +293,8 @@ def _activity_id(exercise: str) -> str:
 
 
 def _activity_by_id(activity_id: str) -> str | None:
+    if activity_id in _ACTIVITY_BY_STABLE_ID:
+        return _ACTIVITY_BY_STABLE_ID[activity_id]
     if not activity_id.startswith("ex"):
         return None
     try:
@@ -297,7 +321,7 @@ def _all_catalog_exercises() -> list[str]:
 
 
 def _search_key(text: str) -> str:
-    return (text or "").casefold().replace("ё", "е")
+    return " ".join((text or "").casefold().replace("ё", "е").split())
 
 
 def _paginate(items: list[str], page: int, per_page: int = 8) -> tuple[list[str], int]:
