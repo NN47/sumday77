@@ -105,7 +105,14 @@ class OpenAILabelService:
         self.model = model
         self.timeout_seconds = 45.0
 
-    def extract_kbju_from_label(self, image_bytes: bytes, *, user_id: str | int | None = None, feature: str = "label_analysis") -> Optional[dict]:
+    def extract_kbju_from_label(
+        self,
+        image_bytes: bytes,
+        *,
+        user_id: str | int | None = None,
+        feature: str = "label_analysis",
+        comment: str | None = None,
+    ) -> Optional[dict]:
         """Return label data in the same normalized shape as Gemini label analysis."""
         if not self.api_key:
             log_ai_usage(
@@ -123,13 +130,12 @@ class OpenAILabelService:
         mime_type = self._detect_mime_type(image_bytes)
         client = OpenAI(api_key=self.api_key, timeout=self.timeout_seconds)
 
-        prompt = OPENAI_FOOD_PHOTO_PROMPT
+        prompt = OPENAI_LABEL_PROMPT
         if comment:
             prompt += (
-                "\n\nДополнительное уточнение пользователя к фото:\n"
+                "\n\nДополнительное уточнение пользователя к фото этикетки:\n"
                 f"{comment.strip()}\n"
-                "Используй это уточнение как контекст: состав блюда, общий/съеденный вес, "
-                "количество съеденного, наличие масла, соусов, сыра, майонеза и других добавок."
+                "Используй это уточнение только как контекст для распознавания видимых на фото данных."
             )
 
         try:
@@ -139,7 +145,7 @@ class OpenAILabelService:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "input_text", "text": OPENAI_LABEL_PROMPT},
+                            {"type": "input_text", "text": prompt},
                             {
                                 "type": "input_image",
                                 "image_url": f"data:{mime_type};base64,{image_base64}",

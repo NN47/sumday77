@@ -42,3 +42,13 @@ def test_backoff_schedule() -> None:
     assert svc.get_backoff_delay(2) == 4.0
     assert svc.get_backoff_delay(3) == 8.0
     assert svc.get_backoff_delay(5) == 8.0
+
+
+def test_classify_failed_precondition_location_as_non_retryable_provider_error() -> None:
+    svc = _service_stub()
+    error = Exception("400 FAILED_PRECONDITION User location is not supported for the API use.")
+
+    error_type = svc.classify_gemini_error(error)
+
+    assert error_type == "unknown"
+    assert svc.should_retry(error_type) is False
