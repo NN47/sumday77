@@ -379,7 +379,7 @@ exercise_picker_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="Отжимания"), KeyboardButton(text="Подтягивания")],
         [KeyboardButton(text="Приседания"), KeyboardButton(text="Планка")],
         [KeyboardButton(text="Бег"), KeyboardButton(text="Йога")],
-        [KeyboardButton(text="🕒 Недавние"), KeyboardButton(text="🔎 Поиск упражнения")],
+        [KeyboardButton(text="🕒 Недавние"), KeyboardButton(text="🔍 Поиск упражнения")],
         [KeyboardButton(text="📂 Все упражнения")],
         [KeyboardButton(text="◀️ Назад")],
         [main_menu_button],

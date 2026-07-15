@@ -10,6 +10,7 @@ from datetime import date
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.exceptions import TelegramBadRequest
+from utils.pagination import build_pagination_keyboard
 from typing import Optional
 from aiogram.fsm.context import FSMContext
 from states.user_states import MealEntryStates
@@ -1050,18 +1051,12 @@ def _build_my_products_keyboard(
             ]
         )
 
-    nav_row: list[InlineKeyboardButton] = []
-    if has_prev:
-        nav_row.append(InlineKeyboardButton(text="⬅️ Предыдущая страница", callback_data=f"my_products_page:{meal_type}:{page-1}"))
-    if has_next:
-        nav_row.append(InlineKeyboardButton(text="➡️ Следующая страница", callback_data=f"my_products_page:{meal_type}:{page+1}"))
-    if nav_row:
-        rows.append(nav_row)
-
-    rows.append([InlineKeyboardButton(text="🔎 Поиск продукта", callback_data=f"my_products_search_start:{meal_type}")])
+    total_pages = page + (1 if has_next else 0)
+    keyboard = build_pagination_keyboard(page - 1, total_pages, f"my_products_page:{meal_type}", rows, page_base=1)
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="🔎 Поиск продукта", callback_data=f"my_products_search_start:{meal_type}")])
     if page >= 3:
-        rows.append([InlineKeyboardButton(text="⬅️ В начало", callback_data=f"my_products_page:{meal_type}:1")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+        keyboard.inline_keyboard.append([InlineKeyboardButton(text="⬅️ В начало", callback_data=f"my_products_page:{meal_type}:1")])
+    return keyboard
 
 
 def _build_custom_products_keyboard(
@@ -1086,14 +1081,8 @@ def _build_custom_products_keyboard(
             ]
         )
 
-    nav_row: list[InlineKeyboardButton] = []
-    if has_prev:
-        nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"custom_product_page:{meal_type}:{page-1}"))
-    if has_next:
-        nav_row.append(InlineKeyboardButton(text="➡️ Показать ещё", callback_data=f"custom_product_page:{meal_type}:{page+1}"))
-    if nav_row:
-        rows.append(nav_row)
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    total_pages = page + (1 if has_next else 0)
+    return build_pagination_keyboard(page - 1, total_pages, f"custom_product_page:{meal_type}", rows, page_base=1)
 
 
 def _build_my_products_search_results_keyboard(
@@ -1118,16 +1107,11 @@ def _build_my_products_search_results_keyboard(
             ]
         )
 
-    nav_row: list[InlineKeyboardButton] = []
-    if has_prev:
-        nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_products_search_page:{meal_type}:{page-1}"))
-    if has_next:
-        nav_row.append(InlineKeyboardButton(text="➡️ Показать ещё", callback_data=f"my_products_search_page:{meal_type}:{page+1}"))
-    if nav_row:
-        rows.append(nav_row)
-    rows.append([InlineKeyboardButton(text="🔎 Искать ещё", callback_data=f"my_products_search_start:{meal_type}")])
-    rows.append([InlineKeyboardButton(text="⬅️ К моим продуктам", callback_data=f"my_products_search_back:{meal_type}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    total_pages = page + (1 if has_next else 0)
+    keyboard = build_pagination_keyboard(page - 1, total_pages, f"my_products_search_page:{meal_type}", rows, page_base=1)
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="🔎 Искать ещё", callback_data=f"my_products_search_start:{meal_type}")])
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="⬅️ К моим продуктам", callback_data=f"my_products_search_back:{meal_type}")])
+    return keyboard
 
 
 def _build_my_products_search_empty_keyboard(meal_type: str) -> InlineKeyboardMarkup:
