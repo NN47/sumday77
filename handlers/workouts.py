@@ -43,6 +43,7 @@ from utils.workout_formatters import (
     build_day_actions_keyboard,
     format_activity_summary,
     format_activity_daily_summaries,
+    format_grouped_workout_sets_report,
     format_activity_edit_button,
     is_steps_workout,
 )
@@ -240,7 +241,7 @@ def _entry_date_from_state_data(data: dict) -> date:
 
 
 
-def _format_activity_overview(user_id: str, target_date: date) -> tuple[str, list]:
+def _format_activity_overview(user_id: str, target_date: date, *, group_workout_sets: bool = False) -> tuple[str, list]:
     """Форматирует компактную сводку активности за выбранный день."""
     workouts = WorkoutRepository.get_workouts_for_day(user_id, target_date)
     steps = 0
@@ -249,9 +250,11 @@ def _format_activity_overview(user_id: str, target_date: date) -> tuple[str, lis
     activities_kcal = 0.0
 
     for workout in workouts:
-        calories = workout.calories or calculate_workout_calories(
-            user_id, workout.exercise, workout.variant, workout.count
-        )
+        calories = workout.calories
+        if calories is None:
+            calories = calculate_workout_calories(
+                user_id, workout.exercise, workout.variant, workout.count
+            )
         if is_steps_workout(workout):
             steps += int(workout.count or 0)
             steps_kcal += calories
@@ -263,18 +266,24 @@ def _format_activity_overview(user_id: str, target_date: date) -> tuple[str, lis
     lines = [
         "🏃 Активность за день",
         "",
-        f"👣 Шаги: {steps_text} (~{steps_kcal:.0f} ккал)",
+        f"👣 Шаги: <b>{steps_text}</b> (~{steps_kcal:.0f} ккал)" if group_workout_sets else f"👣 Шаги: {steps_text} (~{steps_kcal:.0f} ккал)",
         "",
     ]
 
     if activities:
-        lines.append("🏃 Активность:")
-        lines.extend(f"• {summary}" for summary in format_activity_daily_summaries(activities, user_id))
+        if group_workout_sets:
+            lines.append("🏃 Активность")
+            lines.append("")
+            lines.extend(format_grouped_workout_sets_report(activities, user_id))
+        else:
+            lines.append("🏃 Активность:")
+            lines.extend(f"• {summary}" for summary in format_activity_daily_summaries(activities, user_id))
     else:
         lines.append("🏃 Активность: пока не добавлена")
 
     total_kcal = steps_kcal + activities_kcal
-    lines.extend(["", f"🔥 Всего сожжено: ~{total_kcal:.0f} ккал"])
+    total_line = f"🔥 <b>Всего сожжено:</b> <b>~{total_kcal:.0f} ккал</b>" if group_workout_sets else f"🔥 Всего сожжено: ~{total_kcal:.0f} ккал"
+    lines.extend(["", total_line])
     return "\n".join(lines), activities
 
 
@@ -293,7 +302,7 @@ def _build_activity_report_inline(activities: list, target_date: date) -> Inline
 async def _send_activity_main_screen(message: Message, user_id: str, target_date: date | None = None, *, prefix: str | None = None):
     """Отправляет главный экран раздела активности."""
     report_date = target_date or date.today()
-    workouts_text, activities = _format_activity_overview(user_id, report_date)
+    workouts_text, activities = _format_activity_overview(user_id, report_date, group_workout_sets=bool(prefix))
     if prefix:
         workouts_text = f"{prefix}\n\n{workouts_text}"
     push_menu_stack(message.bot, training_menu)
