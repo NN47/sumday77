@@ -78,6 +78,8 @@ category_search_reply_menu = ReplyKeyboardMarkup(
 
 EXERCISE_ACTIVITY_IDS = {
     "Армейский жим с гантелями": "dumbbell_military_press",
+    "Сгибания кистей с гантелями": "dumbbell_wrist_curl",
+    "Разгибания кистей с гантелями": "dumbbell_reverse_wrist_curl",
 }
 _ACTIVITY_BY_STABLE_ID = {activity_id: exercise for exercise, activity_id in EXERCISE_ACTIVITY_IDS.items()}
 
@@ -93,6 +95,30 @@ EXERCISE_SEARCH_SYNONYMS = {
         "dumbbell overhead press",
         "shoulder press",
         "overhead press",
+    ),
+    "Сгибания кистей с гантелями": (
+        "кисти",
+        "сгибания кистей",
+        "сгибание кистей",
+        "сгибания запястий",
+        "сгибание запястий",
+        "кистевые сгибания",
+        "упражнение на предплечья",
+        "wrist curl",
+        "dumbbell wrist curl",
+        "wrist curls",
+    ),
+    "Разгибания кистей с гантелями": (
+        "кисти",
+        "разгибания кистей",
+        "разгибание кистей",
+        "разгибания запястий",
+        "разгибание запястий",
+        "обратные сгибания кистей",
+        "обратные сгибания запястий",
+        "reverse wrist curl",
+        "dumbbell reverse wrist curl",
+        "wrist extension",
     ),
     SUP_BOARDING_EXERCISE: (
         "сап",
