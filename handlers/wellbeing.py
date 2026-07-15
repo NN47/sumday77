@@ -37,6 +37,7 @@ FACTOR_LABELS = {
     "energy": "💪 Много энергии",
     "tired": "😴 Усталость",
     "headache": "🤕 Головная боль",
+    "body_pain": "🤒 Боль в теле",
     "bad_sleep": "💤 Плохой сон",
     "stress": "😈 Стресс",
     "overeating": "🍔 Переедание",
@@ -51,6 +52,7 @@ FACTOR_CALLBACK_TO_KEY = {
     "toggle_factor_energy": "energy",
     "toggle_factor_tired": "tired",
     "toggle_factor_headache": "headache",
+    "toggle_factor_body_pain": "body_pain",
     "toggle_factor_sleep": "bad_sleep",
     "toggle_factor_stress": "stress",
     "toggle_factor_overeat": "overeating",
@@ -62,6 +64,26 @@ FACTOR_CALLBACK_TO_KEY = {
 }
 
 RATING_TEXT_TO_VALUE = {text: value for value, text in RATING_LABELS.items()}
+
+FACTORS_PROMPT = (
+    "Что повлияло на самочувствие? (можно несколько)\n"
+    "Можно выбрать из кнопок или вписать свой вариант текстом."
+)
+
+CUSTOM_FACTOR_PROMPT = (
+    "Укажи только краткий фактор, который повлиял на самочувствие.\n\n"
+    "Например:\n"
+    "• Боль в позвоночнике\n"
+    "• Жара\n"
+    "• Аллергия\n"
+    "• Ссора\n\n"
+    "Подробный комментарий можно будет добавить на следующем шаге."
+)
+
+NOTE_TEXT_PROMPT = (
+    "✏️ Добавь подробный комментарий (необязательно)\n\n"
+    "Можно описать ситуацию подробнее — например, что именно произошло или как это повлияло на день."
+)
 
 
 @router.message(
@@ -166,7 +188,7 @@ async def select_rating(callback: CallbackQuery, state: FSMContext):
     await state.update_data(day_rating=rating, factors=data.get("factors", []))
     await state.set_state(WellbeingStates.note_factors)
     await callback.message.answer(
-        "Что повлияло на самочувствие? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
+        FACTORS_PROMPT,
         reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", [])), show_continue=bool(data.get("factors", []))),
     )
 
@@ -178,7 +200,7 @@ async def select_rating_message(message: Message, state: FSMContext):
     await state.update_data(day_rating=rating, factors=data.get("factors", []))
     await state.set_state(WellbeingStates.note_factors)
     await message.answer(
-        "Что повлияло на самочувствие? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
+        FACTORS_PROMPT,
         reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", [])), show_continue=bool(data.get("factors", []))),
     )
 
@@ -195,7 +217,7 @@ async def toggle_factor(callback: CallbackQuery, state: FSMContext):
         selected.append(factor)
     await state.update_data(factors=selected)
     await callback.message.answer(
-        "Что повлияло на самочувствие? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
+        FACTORS_PROMPT,
         reply_markup=build_factors_keyboard(selected),
     )
 
@@ -227,7 +249,7 @@ async def toggle_factor_message(message: Message, state: FSMContext):
     if text == "✅ Продолжить":
         await state.set_state(WellbeingStates.note_text)
         await message.answer(
-            "✏️ Добавь заметку (необязательно)\n\nНапример:\nСегодня было тяжело держать питание.",
+            NOTE_TEXT_PROMPT,
             reply_markup=notes_text_menu,
         )
         return
@@ -235,7 +257,7 @@ async def toggle_factor_message(message: Message, state: FSMContext):
         await state.update_data(factors=[])
         await state.set_state(WellbeingStates.note_text)
         await message.answer(
-            "✏️ Добавь заметку (необязательно)\n\nНапример:\nСегодня было тяжело держать питание.",
+            NOTE_TEXT_PROMPT,
             reply_markup=notes_text_menu,
         )
         return
@@ -244,18 +266,22 @@ async def toggle_factor_message(message: Message, state: FSMContext):
         await message.answer("📝 Как ты себя чувствуешь?\n\nВыбери вариант:", reply_markup=notes_rating_menu)
         return
     if text == "✍️ Свой вариант":
-        await message.answer("Напиши свой фактор одним сообщением, и я добавлю его в список.")
+        await state.update_data(awaiting_custom_factor=True)
+        await message.answer(CUSTOM_FACTOR_PROMPT)
         return
 
     clean_label = text.removeprefix("✅ ").strip()
     label_to_key = {label: key for key, label in FACTOR_LABELS.items()}
     factor = label_to_key.get(clean_label)
-    if not factor:
+    is_custom_factor = factor is None
+    if is_custom_factor:
         factor = clean_label.removeprefix("✍️ ").strip()
         if not factor:
             return
         if len(factor) > 80:
-            await message.answer("Слишком длинно. Напиши фактор короче (до 80 символов).")
+            await message.answer(
+                "Слишком длинно. Укажи краткий фактор до 80 символов — подробности можно будет добавить на следующем шаге."
+            )
             return
 
     data = await state.get_data()
@@ -264,9 +290,14 @@ async def toggle_factor_message(message: Message, state: FSMContext):
         selected.remove(factor)
     else:
         selected.append(factor)
-    await state.update_data(factors=selected)
+    awaiting_custom_factor = bool(data.get("awaiting_custom_factor"))
+    await state.update_data(factors=selected, awaiting_custom_factor=False)
+    if awaiting_custom_factor and is_custom_factor and factor in selected:
+        await state.set_state(WellbeingStates.note_text)
+        await message.answer(NOTE_TEXT_PROMPT, reply_markup=notes_text_menu)
+        return
     await message.answer(
-        "Что повлияло на самочувствие? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
+        FACTORS_PROMPT,
         reply_markup=build_notes_factors_menu(_build_factor_labels(selected), show_continue=bool(selected)),
     )
 
@@ -284,7 +315,7 @@ async def done_factors_step(callback: CallbackQuery, state: FSMContext):
         await state.update_data(factors=[])
     await state.set_state(WellbeingStates.note_text)
     await callback.message.answer(
-        "✏️ Добавь заметку (необязательно)\n\nНапример:\nСегодня было тяжело держать питание.",
+        NOTE_TEXT_PROMPT,
         reply_markup=notes_text_menu,
     )
 
@@ -357,7 +388,7 @@ async def back_to_factors(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     await state.set_state(WellbeingStates.note_factors)
     await callback.message.answer(
-        "Что повлияло на самочувствие? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
+        FACTORS_PROMPT,
         reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", [])), show_continue=bool(data.get("factors", []))),
     )
 
@@ -445,7 +476,7 @@ async def note_text_back(message: Message, state: FSMContext):
     data = await state.get_data()
     await state.set_state(WellbeingStates.note_factors)
     await message.answer(
-        "Что повлияло на самочувствие? (можно несколько)\nМожно выбрать из кнопок или вписать свой вариант текстом.",
+        FACTORS_PROMPT,
         reply_markup=build_notes_factors_menu(_build_factor_labels(data.get("factors", [])), show_continue=bool(data.get("factors", []))),
     )
 
