@@ -40,3 +40,29 @@ def test_show_calendar_back_button_pushes_calendar_menu_to_stack():
     assert bot.menu_stack[-1] is calendar_back_menu
     message.answer.assert_awaited_once()
     assert message.answer.await_args.kwargs["reply_markup"] is calendar_back_menu
+
+
+def test_activity_analysis_calendar_marks_days_with_brain(monkeypatch):
+    from utils.calendar_utils import build_activity_analysis_calendar_keyboard
+
+    monkeypatch.setattr(
+        "utils.calendar_utils.get_month_activity_analysis_days",
+        lambda user_id, year, month: {15},
+    )
+
+    keyboard = build_activity_analysis_calendar_keyboard("user", 2026, 7)
+    texts = _button_texts(keyboard)
+
+    assert "15🧠" in texts
+    assert "15AI" not in texts
+
+
+def test_activity_analysis_day_add_button_starts_detailed_analysis():
+    from datetime import date
+    from utils.calendar_utils import build_activity_analysis_day_actions_keyboard
+
+    keyboard = build_activity_analysis_day_actions_keyboard([], date(2026, 7, 15))
+    add_button = keyboard.inline_keyboard[0][0]
+
+    assert add_button.text == "🧠 Подробный AI-анализ"
+    assert add_button.callback_data == "act_cal_add:2026-07-15"

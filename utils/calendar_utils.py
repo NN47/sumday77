@@ -502,7 +502,7 @@ def build_activity_analysis_calendar_keyboard(user_id: str, year: int, month: in
         year=year,
         month=month,
         callback_prefix="act_cal",
-        marker="AI",
+        marker="🧠",
         get_days_func=get_month_activity_analysis_days,
     )
 
@@ -512,7 +512,7 @@ def build_activity_analysis_day_actions_keyboard(entries: list, target_date: dat
     rows: list[list[InlineKeyboardButton]] = []
 
     for entry in entries:
-        source_label = "ИИ" if getattr(entry, "source", "manual") == "generated" else "ручной"
+        source_label = "AI" if getattr(entry, "source", "manual") != "manual" else "ручной"
         rows.append(
             [
                 InlineKeyboardButton(
@@ -525,7 +525,7 @@ def build_activity_analysis_day_actions_keyboard(entries: list, target_date: dat
     rows.append(
         [
             InlineKeyboardButton(
-                text="➕ Добавить анализ",
+                text="🧠 Подробный AI-анализ",
                 callback_data=f"act_cal_add:{target_date.isoformat()}",
             ),
         ]

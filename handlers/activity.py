@@ -1286,40 +1286,13 @@ async def select_activity_analysis_day(callback: CallbackQuery):
 
 @router.callback_query(lambda c: c.data.startswith("act_cal_add:"))
 async def add_activity_analysis_from_calendar(callback: CallbackQuery, state: FSMContext):
-    """Генерирует ИИ-анализ за выбранный день и сохраняет его в календарь."""
+    """Запускает подробный AI-анализ за выбранный в календаре день."""
     await callback.answer()
     target_date = date.fromisoformat(callback.data.split(":")[1])
     await state.clear()
 
-    await callback.message.answer(
-        f"⏳ Подожди немного, бот анализирует день {target_date.strftime('%d.%m.%Y')}...",
-        reply_markup=activity_analysis_menu,
-    )
-
     user_id = str(callback.from_user.id)
-    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
-    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
-    try:
-        analysis = await generate_activity_analysis(user_id, target_date, target_date, "за день")
-        ActivityAnalysisRepository.create_entry(user_id, analysis, target_date, source="generated")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
-    except Exception as e:
-        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
-        if _is_gemini_temporarily_unavailable_error(e):
-            await callback.message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT)
-            return
-        log_app_error(
-            source="gemini",
-            error=e,
-            user_id=user_id,
-            context="daily_analysis",
-            extra={"handler": "add_activity_analysis_from_calendar"},
-        )
-        await callback.message.answer("⚠️ Не удалось сгенерировать анализ дня. Попробуй позже.")
-        return
-
-    await callback.message.answer("✅ Анализ сохранён в календаре.")
-    await show_activity_analysis_day(callback.message, user_id, target_date)
+    await run_detailed_activity_analysis(callback.message, user_id, target_date)
 
 
 @router.callback_query(lambda c: c.data.startswith("act_cal_del:"))
@@ -1354,7 +1327,7 @@ async def show_activity_analysis_day(message: Message, user_id: str, target_date
 
     lines = [f"📅 {target_date.strftime('%d.%m.%Y')}\n\nСохранённые анализы:"]
     for idx, entry in enumerate(entries, start=1):
-        source = "ИИ" if entry.source == "generated" else "📝 Ручной"
+        source = "🧠 AI" if entry.source != "manual" else "📝 Ручной"
         full_analysis = (entry.analysis_text or "").strip()
         if not full_analysis:
             full_analysis = "—"
