@@ -12,7 +12,9 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
+from psycopg2 import OperationalError as PsycopgOperationalError
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, OperationalError
 
 from config import API_TOKEN, KEEPALIVE_PORT
 from middlewares import OnboardingMiddleware, UserActivityMiddleware
@@ -69,6 +71,63 @@ from handlers import (
 from services.notification_scheduler import NotificationScheduler
 
 TELEGRAM_POLLING_LOCK_KEY = 8471265468
+POLLING_LOCK_DB_ERRORS = (OperationalError, DBAPIError, PsycopgOperationalError)
+
+
+def is_connection_open(connection) -> bool:
+    """Проверяет, можно ли использовать уже существующее соединение без переподключения."""
+    if connection is None:
+        return False
+    if connection.closed:
+        return False
+    if getattr(connection, "invalidated", False):
+        return False
+
+    try:
+        dbapi_connection = connection.connection.driver_connection
+    except POLLING_LOCK_DB_ERRORS as error:
+        logger.warning(
+            "Не удалось проверить состояние соединения для polling lock: %s",
+            error,
+        )
+        return False
+
+    dbapi_closed = getattr(dbapi_connection, "closed", None)
+    return dbapi_closed in (None, False, 0)
+
+
+def release_polling_lock_safely(connection) -> None:
+    """Освобождает PostgreSQL advisory lock, не мешая корректному завершению процесса."""
+    if not is_connection_open(connection):
+        logger.warning(
+            "Advisory lock для polling не был освобождён вручную: "
+            "соединение с БД уже закрыто или недоступно. "
+            "PostgreSQL освободит lock автоматически при закрытии сессии."
+        )
+        return
+
+    try:
+        connection.execute(
+            text("SELECT pg_advisory_unlock(:lock_key)"),
+            {"lock_key": TELEGRAM_POLLING_LOCK_KEY},
+        )
+    except POLLING_LOCK_DB_ERRORS as error:
+        logger.warning(
+            "Не удалось вручную освободить advisory lock для polling: %s. "
+            "Вероятно, соединение с БД уже потеряно; PostgreSQL освободит lock "
+            "автоматически при закрытии сессии.",
+            error,
+        )
+
+
+def close_connection_safely(connection) -> None:
+    """Закрывает соединение с БД без ошибки при повторном или неудачном закрытии."""
+    if connection is None or connection.closed:
+        return
+    try:
+        connection.close()
+    except Exception as error:
+        logger.warning("Ошибка при закрытии соединения polling lock: %s", error)
 
 
 def acquire_polling_lock():
@@ -157,12 +216,9 @@ async def main():
         except asyncio.CancelledError:
             pass
         try:
-            polling_lock_conn.execute(
-                text("SELECT pg_advisory_unlock(:lock_key)"),
-                {"lock_key": TELEGRAM_POLLING_LOCK_KEY},
-            )
+            release_polling_lock_safely(polling_lock_conn)
         finally:
-            polling_lock_conn.close()
+            close_connection_safely(polling_lock_conn)
 
 
 if __name__ == "__main__":
