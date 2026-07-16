@@ -2581,25 +2581,20 @@ def _render_my_product_weight_editor_text(item: MyProductItem, draft_amount_g: i
         "",
         f"<b>Продукт:</b> {html.escape(item.title or 'Продукт')}",
         "",
+        _format_kbju_summary_block(
+            {
+                "calories": float(item.calories) * ratio,
+                "protein": float(item.protein) * ratio,
+                "fat": float(item.fat) * ratio,
+                "carbs": float(item.carbs) * ratio,
+            }
+        ),
+        "",
         f"⚖️ <b>Текущий вес:</b> {current_amount} г",
     ]
     if new_amount != current_amount:
         lines.append(f"⚖️ <b>Новый вес:</b> {new_amount} г")
-    lines.extend(
-        [
-            "",
-            _format_kbju_summary_block(
-                {
-                    "calories": float(item.calories) * ratio,
-                    "protein": float(item.protein) * ratio,
-                    "fat": float(item.fat) * ratio,
-                    "carbs": float(item.carbs) * ratio,
-                }
-            ),
-            "",
-            "<b>Выбери действие:</b>",
-        ]
-    )
+    lines.extend(["", "<b>Выбери действие или введи вручную:</b>"])
     return "\n".join(lines)
 
 
@@ -5916,12 +5911,14 @@ def _render_weight_editor_text(product: dict, draft_weight: Optional[float] = No
         "",
         f"<b>Продукт:</b> {name}",
         "",
+        _format_product_macro_summary(calories, protein, fat, carbs),
+        "",
         f"<b>Текущий вес:</b> {current_weight:.0f} г",
     ]
     if has_changes:
         lines.append(f"<b>Новый вес:</b> {float(draft_weight):.0f} г")
 
-    lines.extend(["", _format_product_macro_summary(calories, protein, fat, carbs), "", "<b>Выбери действие:</b>"])
+    lines.extend(["", "<b>Выбери действие или введи вручную:</b>"])
     return "\n".join(lines)
 
 
