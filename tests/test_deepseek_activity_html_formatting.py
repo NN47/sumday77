@@ -75,3 +75,22 @@ def test_detailed_deepseek_prompt_encodes_supportive_sumday77_philosophy() -> No
     assert "Не назначай наказание за еду" in prompt
     assert "один день не отменяет общий прогресс" in prompt
     assert "следующий хороший выбор всё ещё важен" in prompt
+
+
+def test_calendar_add_analysis_runs_detailed_for_selected_day() -> None:
+    from handlers.activity import add_activity_analysis_from_calendar
+
+    callback = SimpleNamespace(
+        data="act_cal_add:2026-07-15",
+        from_user=SimpleNamespace(id=12345),
+        message=SimpleNamespace(),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(clear=AsyncMock())
+
+    with patch("handlers.activity.run_detailed_activity_analysis", new=AsyncMock()) as run_detailed:
+        asyncio.run(add_activity_analysis_from_calendar(callback, state))
+
+    callback.answer.assert_awaited_once()
+    state.clear.assert_awaited_once()
+    run_detailed.assert_awaited_once_with(callback.message, "12345", date(2026, 7, 15))
