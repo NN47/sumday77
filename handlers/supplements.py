@@ -141,9 +141,9 @@ def build_supplement_time_step_text(name: str, times: list[str] | None = None) -
     """Формирует текст шага выбора времени при создании добавки."""
     current_times = times or []
     lines = [
-        f"✅ Название: {name}",
+        f"✅ <b>Название:</b> {html.escape(name)}",
         "",
-        "⏰ Шаг 2: Укажи время приёма добавки",
+        "⏰ <b>Шаг 2:</b> Укажи время приёма добавки",
         "",
         "Выбери готовое время кнопкой с 06:00 до 23:00 или введи время вручную цифрами:",
         "• 9 или 09 → 09:00",
@@ -188,10 +188,11 @@ async def go_to_supplement_days_step(message: Message, state: FSMContext, prefix
     await state.set_state(SupplementStates.selecting_days)
     push_menu_stack(message.bot, days_menu([], show_cancel=True))
     await message.answer(
-        f"{prefix}\n\n"
-        "📅 Шаг 3: Выбери дни приёма добавки\n\n"
+        f"<b>{html.escape(prefix)}</b>\n\n"
+        "📅 <b>Шаг 3:</b> Выбери дни приёма добавки\n\n"
         "Можешь выбрать несколько дней или нажми «⏭️ Пропустить».",
         reply_markup=days_menu([], show_cancel=True),
+        parse_mode="HTML",
     )
 
 
@@ -288,10 +289,11 @@ async def start_create_supplement(message: Message, state: FSMContext):
     await state.set_state(SupplementStates.entering_name)
     push_menu_stack(message.bot, supplement_creation_cancel_menu())
     await message.answer(
-        "✨ Начинаем создание добавки!\n\n"
-        "Шаг 1 из 5 — напиши название добавки. Например: «Магний», «Витамин D» или «Омега‑3».\n\n"
+        "<b>✨ Начинаем создание добавки!</b>\n\n"
+        "<b>Шаг 1 из 5</b> — напиши название добавки. Например: «Магний», «Витамин D» или «Омега‑3».\n\n"
         "Если нажал кнопку случайно, просто выбери «❌ Отменить» внизу.",
         reply_markup=supplement_creation_cancel_menu(),
+        parse_mode="HTML",
     )
 
 
@@ -319,6 +321,7 @@ async def handle_supplement_name(message: Message, state: FSMContext):
     await message.answer(
         build_supplement_time_step_text(name),
         reply_markup=supplement_test_time_inline_menu([]),
+        parse_mode="HTML",
     )
 
 
@@ -1357,6 +1360,7 @@ async def handle_create_supplement_time_callback(callback: CallbackQuery, state:
         await callback.message.edit_text(
             build_supplement_time_step_text(name, current_times),
             reply_markup=supplement_test_time_inline_menu(current_times),
+            parse_mode="HTML",
         )
         return
 
@@ -1480,6 +1484,7 @@ async def handle_time_value(message: Message, state: FSMContext):
             await message.answer(
                 build_supplement_time_step_text(name, current_times),
                 reply_markup=supplement_test_time_inline_menu(current_times),
+                parse_mode="HTML",
             )
             return
         
@@ -1495,6 +1500,7 @@ async def handle_time_value(message: Message, state: FSMContext):
             f"✅ Добавлено время: {parsed_time}\n\n"
             + build_supplement_time_step_text(name, times),
             reply_markup=supplement_test_time_inline_menu(times),
+            parse_mode="HTML",
         )
         return
     
@@ -1604,10 +1610,11 @@ async def toggle_day(message: Message, state: FSMContext):
                 from utils.supplement_keyboards import supplement_test_skip_menu, duration_menu
                 push_menu_stack(message.bot, supplement_test_skip_menu())
                 await message.answer(
-                    "⏭️ Дни пропущены\n\n"
-                    "⏳ Шаг 4: Выбери длительность приёма добавки\n\n"
+                    "<b>⏭️ Дни пропущены</b>\n\n"
+                    "⏳ <b>Шаг 4:</b> Выбери длительность приёма добавки\n\n"
                     "Или нажми «⏭️ Пропустить», чтобы оставить «Постоянно».",
                     reply_markup=duration_menu(),
+                    parse_mode="HTML",
                 )
                 return
             
@@ -1629,6 +1636,7 @@ async def toggle_day(message: Message, state: FSMContext):
                     "⏪ Возвращаемся к шагу 2\n\n"
                     + build_supplement_time_step_text(name, times),
                     reply_markup=supplement_test_time_inline_menu(times),
+                    parse_mode="HTML",
                 )
                 return
             
@@ -1653,10 +1661,11 @@ async def toggle_day(message: Message, state: FSMContext):
                 push_menu_stack(message.bot, duration_menu())
                 days_text = ", ".join(days) if days else "не выбрано"
                 await message.answer(
-                    f"✅ Дни сохранены: {days_text}\n\n"
-                    "⏳ Шаг 4: Выбери длительность приёма добавки\n\n"
+                    f"✅ <b>Дни сохранены:</b> {html.escape(days_text)}\n\n"
+                    "⏳ <b>Шаг 4:</b> Выбери длительность приёма добавки\n\n"
                     "Или нажми «⏭️ Пропустить», чтобы оставить «Постоянно».",
                     reply_markup=duration_menu(),
+                    parse_mode="HTML",
                 )
                 return
             
@@ -1781,12 +1790,13 @@ async def ask_notifications_in_test(message: Message, state: FSMContext):
     days_text = ", ".join(days) if days and len(days) > 0 else "не выбрано"
     
     await message.answer(
-        f"🔔 Шаг 5: Включить уведомления о приёме добавки?\n\n"
+        f"🔔 <b>Шаг 5:</b> Включить уведомления о приёме добавки?\n\n"
         f"Если включишь уведомления, я буду напоминать тебе о приёме добавки в указанное время.\n\n"
-        f"⏰ Время: {times_text}\n"
-        f"📅 Дни: {days_text}\n\n"
-        f"⚠️ Для уведомлений нужно указать время и дни приёма.",
+        f"⏰ <b>Время:</b> {html.escape(times_text)}\n"
+        f"📅 <b>Дни:</b> {html.escape(days_text)}\n\n"
+        f"<b>⚠️ Для уведомлений нужно указать время и дни приёма.</b>",
         reply_markup=supplement_test_notifications_menu(),
+        parse_mode="HTML",
     )
 
 
@@ -2028,13 +2038,14 @@ async def save_supplement_from_test(message: Message, state: FSMContext):
             notifications_status = "включены" if supplement_payload.get("notifications_enabled", False) else "выключены"
             push_menu_stack(message.bot, supplements_main_menu(has_items=True))
             await message.answer(
-                "✅ Добавка успешно создана!\n\n"
-                f"💊 {supplement_payload['name']}\n"
-                f"⏰ Время: {', '.join(supplement_payload['times']) or 'не указано'}\n"
-                f"📅 Дни: {', '.join(supplement_payload['days']) or 'не указано'}\n"
-                f"⏳ Длительность: {supplement_payload['duration']}\n"
-                f"🔔 Уведомления: {notifications_status}",
+                "<b>✅ Добавка успешно создана!</b>\n\n"
+                f"💊 <b>{html.escape(supplement_payload['name'])}</b>\n"
+                f"⏰ <b>Время:</b> {html.escape(', '.join(supplement_payload['times']) or 'не указано')}\n"
+                f"📅 <b>Дни:</b> {html.escape(', '.join(supplement_payload['days']) or 'не указано')}\n"
+                f"⏳ <b>Длительность:</b> {html.escape(supplement_payload['duration'])}\n"
+                f"🔔 <b>Уведомления:</b> {html.escape(notifications_status)}",
                 reply_markup=supplements_main_menu(has_items=True),
+                parse_mode="HTML",
             )
         else:
             await message.answer("❌ Не удалось сохранить добавку. Попробуйте позже.")
