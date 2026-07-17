@@ -9,6 +9,7 @@ if str(ROOT_PATH) not in sys.path:
     sys.path.insert(0, str(ROOT_PATH))
 
 from handlers.water import build_water_added_text
+from utils.progress_formatters import build_progress_bar, build_water_progress_bar
 from utils.keyboards import (
     quick_actions_inline,
     steps_confirmation_menu,
@@ -39,6 +40,22 @@ def test_build_water_added_text_formats_negative_adjustment():
         "<b>📈 Прогресс</b>: 63%\n"
         "🟦🟦🟦🟦🟦🟦⬜⬜⬜⬜"
     )
+
+
+def test_build_water_progress_bar_stays_blue_when_goal_is_exceeded():
+    assert build_water_progress_bar(1000, 1000) == "🟦" * 10
+    assert build_water_progress_bar(1100, 1000) == "🟦" * 10
+    assert build_water_progress_bar(1400, 1000) == "🟦" * 10
+    assert build_water_progress_bar(1800, 1000) == "🟦" * 10
+
+
+def test_build_water_progress_bar_keeps_gradual_blue_fill_below_goal():
+    assert build_water_progress_bar(500, 1000) == "🟦" * 5 + "⬜" * 5
+
+
+def test_build_progress_bar_keeps_warning_colors_for_kbju_overages():
+    assert build_progress_bar(1100, 1000) == "🟨" * 10
+    assert build_progress_bar(1400, 1000) == "🟥" * 10
 
 
 def test_water_quick_add_inline_has_requested_adjustment_buttons():

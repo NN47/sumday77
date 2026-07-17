@@ -46,26 +46,17 @@ def build_progress_bar(current: float, target: float, length: int = 10) -> str:
 
 def build_water_progress_bar(current: float, target: float, length: int = 10) -> str:
     """
-    Строит индикатор прогресса по воде (аналогично build_progress_bar, но с синими кубиками):
+    Строит индикатор прогресса по воде:
     - ⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ - Пустое значение (target <= 0 или current == 0)
-    - 🟦🟦🟦🟦⬜⬜⬜⬜⬜⬜ - Обычный прогресс (0-101%)
-    - 🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦 - 101% (ровно)
-    - 🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨 - 102-135%
-    - 🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥 - >135%
+    - 🟦🟦🟦🟦⬜⬜⬜⬜⬜⬜ - Обычный прогресс (0-100%)
+    - 🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦 - 100% и выше
     """
     if target <= 0 or current <= 0:
         return "⬜" * length
-    
-    percent = (current / target) * 100
-    
-    if percent > 135:
-        return "🟥" * length
-    elif percent > 101:
-        return "🟨" * length
-    else:
-        filled_blocks = min(int(round((current / target) * length)), length)
-        empty_blocks = max(length - filled_blocks, 0)
-        return "🟦" * filled_blocks + "⬜" * empty_blocks
+
+    filled_blocks = min(int(round((current / target) * length)), length)
+    empty_blocks = max(length - filled_blocks, 0)
+    return "🟦" * filled_blocks + "⬜" * empty_blocks
 
 
 
