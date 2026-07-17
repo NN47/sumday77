@@ -700,7 +700,7 @@ def test_my_product_weight_editor_text_bolds_labels_and_uses_kbju_block():
     assert "🔥 <b>Калории:</b> 158 ккал" in text
     assert "🥩 <b>Белки:</b> 0.9 г" in text
     assert "🥑 <b>Жиры:</b> 0.1 г" in text
-    assert "🍞 <b>Углеводы:</b> 37.4 г" in text
+    assert "🍚 <b>Углеводы:</b> 37.4 г" in text
     assert "<b>Выбери действие или введи вручную:</b>" in text
     assert "Итого:" not in text
     assert "Б 0.9 / Ж 0.1 / У 37.4" not in text
@@ -728,7 +728,7 @@ def test_my_product_confirm_text_uses_photo_style_kbju_and_escapes_html():
     assert "🔥 <b>Калории:</b> 0 ккал" in text
     assert "🥩 <b>Белки:</b> 0.3 г" in text
     assert "🥑 <b>Жиры:</b> 0.0 г" in text
-    assert "🍞 <b>Углеводы:</b> 0.9 г" in text
+    assert "🍚 <b>Углеводы:</b> 0.9 г" in text
     assert "<b>Выбери действие:</b>" in text
     assert "Tea <green>" not in text
 
@@ -1523,7 +1523,7 @@ def test_format_kbju_summary_block_bolds_only_names_by_default():
     assert "🔥 <b>Калории:</b> 67 ккал" in text
     assert "🥩 <b>Белки:</b> 3.1 г" in text
     assert "🥑 <b>Жиры:</b> 5.3 г" in text
-    assert "🍞 <b>Углеводы:</b> 1.7 г" in text
+    assert "🍚 <b>Углеводы:</b> 1.7 г" in text
     assert "<b>67 ккал</b>" not in text
 
 

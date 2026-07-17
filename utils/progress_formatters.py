@@ -118,7 +118,7 @@ def format_progress_block(user_id: str, entry_date: date | None = None) -> str:
     lines.append(line("🔥 <b>Калории</b>", eaten_calories, adjusted_calories_target, "ккал"))
     lines.append(line("🥩 <b>Белки</b>", totals.get("protein_g", totals.get("protein", 0)), adjusted_protein_target, "г"))
     lines.append(line("🥑 <b>Жиры</b>", totals.get("fat_total_g", totals.get("fat", 0)), adjusted_fat_target, "г"))
-    lines.append(line("🍞 <b>Углеводы</b>", totals.get("carbohydrates_total_g", totals.get("carbs", 0)), adjusted_carbs_target, "г"))
+    lines.append(line("🍚 <b>Углеводы</b>", totals.get("carbohydrates_total_g", totals.get("carbs", 0)), adjusted_carbs_target, "г"))
     
     return "\n".join(lines)
 

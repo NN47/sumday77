@@ -147,7 +147,7 @@ def format_meal_totals(meal_type: str, totals: dict[str, float]) -> list[str]:
         f"🔥 <b>Калории:</b> {totals['calories']:.0f} ккал",
         f"🥩 <b>Белки:</b> {totals['protein']:.1f} г",
         f"🥑 <b>Жиры:</b> {totals['fat']:.1f} г",
-        f"🍞 <b>Углеводы:</b> {totals['carbs']:.1f} г",
+        f"🍚 <b>Углеводы:</b> {totals['carbs']:.1f} г",
     ]
 
 
@@ -235,7 +235,7 @@ def format_daily_totals_lines(
     lines.extend(_build_goal_progress_line("🔥 Калории", calories_current, base_calories_target, "ккал"))
     lines.extend(_build_goal_progress_line("🥩 Белки", protein_current, protein_target, "г"))
     lines.extend(_build_goal_progress_line("🥑 Жиры", fat_current, fat_target, "г"))
-    lines.extend(_build_goal_progress_line("🍞 Углеводы", carbs_current, carbs_target, "г"))
+    lines.extend(_build_goal_progress_line("🍚 Углеводы", carbs_current, carbs_target, "г"))
 
     if include_action_prompt:
         lines.extend(["", "Выбери действие:"])

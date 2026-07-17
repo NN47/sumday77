@@ -28,7 +28,7 @@ def test_format_label_weight_prompt_bolds_requested_labels() -> None:
     assert "🔥 <b>Калории:</b> 454 ккал" in text
     assert "🥩 <b>Белки:</b> 9.7 г" in text
     assert "🥑 <b>Жиры:</b> 29.6 г" in text
-    assert "🍞 <b>Углеводы:</b> 28.7 г" in text
+    assert "🍚 <b>Углеводы:</b> 28.7 г" in text
     assert "📦 <b>В упаковке 35 г, сколько Вы съели?</b>" in text
 
 
