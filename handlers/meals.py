@@ -215,7 +215,7 @@ def _format_kbju_summary_block(totals: dict, *, bold_values: bool = False) -> st
         f"🔥 <b>Калории:</b> {calories}\n"
         f"🥩 <b>Белки:</b> {protein}\n"
         f"🥑 <b>Жиры:</b> {fat}\n"
-        f"🍞 <b>Углеводы:</b> {carbs}"
+        f"🍚 <b>Углеводы:</b> {carbs}"
     )
 
 
@@ -372,7 +372,7 @@ def _format_label_weight_prompt(
         f"🔥 <b>Калории:</b> {kcal_100g:.0f} ккал",
         f"🥩 <b>Белки:</b> {protein_100g:.1f} г",
         f"🥑 <b>Жиры:</b> {fat_100g:.1f} г",
-        f"🍞 <b>Углеводы:</b> {carbs_100g:.1f} г",
+        f"🍚 <b>Углеводы:</b> {carbs_100g:.1f} г",
         "",
     ]
 
@@ -641,7 +641,7 @@ def _format_photo_item_block(item: dict, index: int | None = None) -> str:
             f"🔥 {_safe_float(item.get('kcal') or item.get('calories')):.0f} ккал",
             f"🥩 Б: {_safe_float(item.get('protein') or item.get('protein_g')):.1f} г",
             f"🥑 Ж: {_safe_float(item.get('fat') or item.get('fat_total_g')):.1f} г",
-            f"🍞 У: {_safe_float(item.get('carbs') or item.get('carbohydrates_total_g')):.1f} г",
+            f"🍚 У: {_safe_float(item.get('carbs') or item.get('carbohydrates_total_g')):.1f} г",
         ]
     )
 
@@ -662,7 +662,7 @@ def _format_photo_analysis_confirmation_text(items: list[dict]) -> str:
                 f"🔥 Калории: {totals['calories']:.0f} ккал",
                 f"🥩 Белки: {totals['protein']:.1f} г",
                 f"🥑 Жиры: {totals['fat']:.1f} г",
-                f"🍞 Углеводы: {totals['carbs']:.1f} г",
+                f"🍚 Углеводы: {totals['carbs']:.1f} г",
                 "",
                 "Выберите продукт для редактирования или нажмите <b>✅ Сохранить</b>.",
             ]
@@ -697,7 +697,7 @@ def _format_photo_weight_editor_text(item: dict) -> str:
             f"🔥 {_safe_float(item.get('kcal') or item.get('calories')):.0f} ккал",
             f"🥩 Б: {_safe_float(item.get('protein') or item.get('protein_g')):.1f} г",
             f"🥑 Ж: {_safe_float(item.get('fat') or item.get('fat_total_g')):.1f} г",
-            f"🍞 У: {_safe_float(item.get('carbs') or item.get('carbohydrates_total_g')):.1f} г",
+            f"🍚 У: {_safe_float(item.get('carbs') or item.get('carbohydrates_total_g')):.1f} г",
         ]
     )
 
@@ -1257,7 +1257,7 @@ CUSTOM_PRODUCT_FIELDS = {
     "carbs": {
         "state": MealEntryStates.custom_product_carbs,
         "step": 5,
-        "title": "🍞 Введите углеводы продукта",
+        "title": "🍚 Введите углеводы продукта",
         "unit": "г",
         "note": "Укажи <b>углеводы на 100 г продукта</b>.",
         "next_field": "amount",
@@ -2479,7 +2479,7 @@ def _render_my_product_confirm_text(meal_type: str, meal, amount_g: int = 100) -
         f"🔥 <b>Калории:</b> {calories:.0f} ккал\n"
         f"🥩 <b>Белки:</b> {protein:.1f} г\n"
         f"🥑 <b>Жиры:</b> {fat:.1f} г\n"
-        f"🍞 <b>Углеводы:</b> {carbs:.1f} г\n\n"
+        f"🍚 <b>Углеводы:</b> {carbs:.1f} г\n\n"
         f"<b>Выбери действие:</b>"
     )
 
@@ -4230,7 +4230,7 @@ async def handle_food_input(message: Message, state: FSMContext):
         f"🔥 Калории: {float(totals['calories']):.0f} ккал\n"
         f"🥩 Белки: {float(totals['protein_g']):.1f} г\n"
         f"🥑 Жиры: {float(totals['fat_total_g']):.1f} г\n"
-        f"🍞 Углеводы: {float(totals['carbohydrates_total_g']):.1f} г"
+        f"🍚 Углеводы: {float(totals['carbohydrates_total_g']):.1f} г"
     )
     
     api_details = "\n".join(api_details_lines)
@@ -5328,7 +5328,7 @@ async def handle_barcode_photo(message: Message, state: FSMContext):
     text_parts.append(f"🔥 Калории: {kcal_100g:.0f} ккал\n")
     text_parts.append(f"🥩 Белки: {protein_100g:.1f} г\n")
     text_parts.append(f"🥑 Жиры: {fat_100g:.1f} г\n")
-    text_parts.append(f"🍞 Углеводы: {carbs_100g:.1f} г\n")
+    text_parts.append(f"🍚 Углеводы: {carbs_100g:.1f} г\n")
     
     # Если есть вес упаковки в базе, упоминаем его, но все равно спрашиваем
     if weight:

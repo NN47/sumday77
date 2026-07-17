@@ -78,7 +78,7 @@ class MealFormatterTests(unittest.TestCase):
         self.assertIn("🔥 <b>Калории:</b> 100 ккал", text)
         self.assertIn("🥩 <b>Белки:</b> 1.0 г", text)
         self.assertIn("🥑 <b>Жиры:</b> 2.0 г", text)
-        self.assertIn("🍞 <b>Углеводы:</b> 3.0 г", text)
+        self.assertIn("🍚 <b>Углеводы:</b> 3.0 г", text)
 
 
 if __name__ == "__main__":
