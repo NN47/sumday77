@@ -256,15 +256,25 @@ def _build_ai_meal_preview_inline_menu() -> InlineKeyboardMarkup:
     """Строит inline-кнопки предпросмотра текстового AI-анализа."""
     return InlineKeyboardMarkup(
         inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Сохранить", callback_data="save_ai_meal_draft"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_ai_meal_draft"),
             InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_ai_meal_draft"),
         ]]
     )
 
 
 def _build_ai_meal_preview_reply_menu() -> ReplyKeyboardMarkup:
-    """Строит reply-кнопку отмены предпросмотра AI-анализа."""
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отмена")]], resize_keyboard=True)
+    """Строит основную reply-кнопку сохранения предпросмотра AI-анализа."""
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="✅ Сохранить")]], resize_keyboard=True)
+
+
+def _build_ai_meal_cancel_confirmation_menu() -> InlineKeyboardMarkup:
+    """Строит безопасное подтверждение удаления текстового AI-черновика."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Да, отменить", callback_data="confirm_cancel_ai_meal_draft"),
+            InlineKeyboardButton(text="↩️ Нет, вернуться", callback_data="back_to_ai_meal_draft"),
+        ]]
+    )
 
 
 def _normalize_ai_items_for_edit(items: list | None) -> list[dict]:
@@ -324,7 +334,7 @@ async def _send_ai_meal_preview(message: Message, state: FSMContext) -> None:
         reply_markup=_build_ai_meal_preview_inline_menu(),
         parse_mode="HTML",
     )
-    await message.answer("Для отмены нажми кнопку ниже.", reply_markup=_build_ai_meal_preview_reply_menu())
+    await message.answer("Если всё верно, нажми кнопку сохранения ниже.", reply_markup=_build_ai_meal_preview_reply_menu())
 
 
 def _format_current_meal_after_save_message(meal_type: str, current_meal_items: list, entry_date: date) -> str:
@@ -4280,7 +4290,7 @@ async def handle_ai_food_input(message: Message, state: FSMContext):
 
 @router.message(MealEntryStates.confirming_ai_meal)
 async def handle_ai_confirm(message: Message, state: FSMContext):
-    """Обрабатывает reply-отмену предпросмотра текстового AI-анализа."""
+    """Обрабатывает reply-сохранение предпросмотра текстового AI-анализа."""
     text = (message.text or "").strip()
 
     if text in MAIN_MENU_BUTTON_ALIASES:
@@ -4291,24 +4301,84 @@ async def handle_ai_confirm(message: Message, state: FSMContext):
         return
 
     if text == "❌ Отмена":
-        await state.clear()
-        push_menu_stack(message.bot, kbju_menu)
-        await message.answer("Ок, черновик удалён. Ничего не сохранил.", reply_markup=kbju_menu)
+        await state.set_state(MealEntryStates.confirming_ai_meal_cancel)
+        await message.answer(
+            "Отменить добавление приёма пищи? Все распознанные данные будут удалены.",
+            reply_markup=_build_ai_meal_cancel_confirmation_menu(),
+        )
+        return
+
+    if text == "✅ Сохранить":
+        await _save_ai_meal_draft(message, state, user_id=str(message.from_user.id))
         return
 
     await message.answer("Проверь данные и выбери действие: ✅ Сохранить, ✏️ Редактировать или ❌ Отмена.")
 
 
-@router.callback_query(lambda c: c.data == "save_ai_meal_draft")
-async def save_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
-    """Сохраняет подтверждённый черновик текстового AI-анализа в выбранный приём пищи."""
+@router.message(MealEntryStates.confirming_ai_meal_cancel)
+async def handle_ai_cancel_confirmation_message(message: Message):
+    """Не позволяет reply-кнопке обойти inline-подтверждение отмены."""
+    await message.answer("Подтверди отмену кнопкой под сообщением или вернись к черновику.")
+
+
+@router.callback_query(MealEntryStates.confirming_ai_meal, F.data == "cancel_ai_meal_draft")
+async def request_cancel_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
+    """Запрашивает подтверждение перед удалением текстового AI-черновика."""
+    data = await state.get_data()
+    if not data.get("ai_pending_meal"):
+        await callback.answer("Черновик уже недоступен", show_alert=True)
+        return
+
     await callback.answer()
+    await state.set_state(MealEntryStates.confirming_ai_meal_cancel)
+    await callback.message.edit_text(
+        "Отменить добавление приёма пищи? Все распознанные данные будут удалены.",
+        reply_markup=_build_ai_meal_cancel_confirmation_menu(),
+    )
+
+
+@router.callback_query(MealEntryStates.confirming_ai_meal_cancel, F.data == "confirm_cancel_ai_meal_draft")
+async def confirm_cancel_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
+    """Удаляет текстовый AI-черновик после явного подтверждения пользователя."""
+    await callback.answer()
+    await state.clear()
+    push_menu_stack(callback.message.bot, kbju_menu)
+    await callback.message.edit_text("❌ Добавление приёма пищи отменено.")
+    await callback.message.answer(
+        "Ок, черновик удалён. Ничего не сохранил.",
+        reply_markup=kbju_menu,
+    )
+
+
+@router.callback_query(MealEntryStates.confirming_ai_meal_cancel, F.data == "back_to_ai_meal_draft")
+async def back_to_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
+    """Возвращает неизменённый текстовый AI-черновик из подтверждения отмены."""
+    data = await state.get_data()
+    draft = data.get("ai_pending_meal") or {}
+    items = draft.get("items") or []
+    if not draft:
+        await callback.answer("Черновик уже недоступен", show_alert=True)
+        return
+
+    totals = _collect_ai_draft_totals(items)
+    title = draft.get("analysis_title") or "🧾 AI-анализ приёма пищи"
+    await callback.answer()
+    await state.set_state(MealEntryStates.confirming_ai_meal)
+    await state.update_data(ai_pending_meal={**draft, "items": items, "total": totals})
+    await callback.message.edit_text(
+        _format_ai_food_analysis_message(title, items, totals, saved=False),
+        reply_markup=_build_ai_meal_preview_inline_menu(),
+        parse_mode="HTML",
+    )
+
+
+async def _save_ai_meal_draft(message: Message, state: FSMContext, *, user_id: str) -> None:
+    """Сохраняет подтверждённый текстовый AI-черновик без привязки к типу Telegram-события."""
     data = await state.get_data()
     pending = data.get("ai_pending_meal") or {}
     items = pending.get("items") or []
     total = _collect_ai_draft_totals(items)
     raw_query = pending.get("raw_query") or "[AI-анализ]"
-    user_id = str(callback.from_user.id)
     meal_type = normalize_meal_type(pending.get("meal_type") or data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = pending.get("entry_date") or data.get("entry_date")
     try:
@@ -4330,13 +4400,13 @@ async def save_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
         meal_type=meal_type,
         is_manually_corrected=bool(any(bool(p.get("is_manually_corrected")) for p in items)),
     )
-    if not hasattr(callback.message.bot, "last_meal_ids"):
-        callback.message.bot.last_meal_ids = {}
-    callback.message.bot.last_meal_ids[user_id] = saved_meal.id
+    if not hasattr(message.bot, "last_meal_ids"):
+        message.bot.last_meal_ids = {}
+    message.bot.last_meal_ids[user_id] = saved_meal.id
 
     await state.update_data(ai_pending_meal=None)
     await _keep_meal_entry_open_after_save(
-        callback.message,
+        message,
         state,
         user_id=user_id,
         entry_date=entry_date,
@@ -4346,7 +4416,14 @@ async def save_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(lambda c: c.data == "edit_ai_meal_draft")
+@router.callback_query(MealEntryStates.confirming_ai_meal, F.data == "save_ai_meal_draft")
+async def save_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет подтверждённый черновик текстового AI-анализа в выбранный приём пищи."""
+    await callback.answer()
+    await _save_ai_meal_draft(callback.message, state, user_id=str(callback.from_user.id))
+
+
+@router.callback_query(MealEntryStates.confirming_ai_meal, F.data == "edit_ai_meal_draft")
 async def edit_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
     """Открывает существующий редактор продукта для FSM-черновика AI-анализа."""
     await callback.answer()

@@ -7,7 +7,8 @@ class MealEntryStates(StatesGroup):
     choosing_meal_type = State()  # Выбор типа приёма пищи
     waiting_for_food_input = State()  # CalorieNinjas
     waiting_for_ai_food_input = State()  # AI-анализ через DeepSeek
-    confirming_ai_meal = State()  # Legacy: подтверждение сохранения AI-результата
+    confirming_ai_meal = State()  # Предпросмотр и сохранение текстового AI-черновика
+    confirming_ai_meal_cancel = State()  # Подтверждение удаления текстового AI-черновика
     waiting_for_openrouter_food_input = State()  # OpenRouter free
     waiting_for_deepseek_food_input = State()  # DeepSeek
     waiting_for_gigachat_food_input = State()  # GigaChat
