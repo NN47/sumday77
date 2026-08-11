@@ -24,18 +24,9 @@ from database.repositories.activity_analysis_repository import ActivityAnalysisR
 from database.repositories import AnalyticsRepository, EveningAnalysisNotificationRepository
 from states.user_states import ActivityAnalysisStates
 from services.gemini_service import gemini_service, GeminiServiceTemporaryUnavailableError
-from services.openrouter_service import openrouter_service
 from services.deepseek_service import (
     deepseek_service,
-    DeepSeekServiceError,
     DeepSeekServiceTemporaryError,
-    DeepSeekServiceConfigError,
-)
-from services.ai.gigachat import (
-    gigachat_service,
-    GigaChatServiceError,
-    GigaChatServiceTemporaryError,
-    GigaChatServiceConfigError,
 )
 from services.error_logging_service import log_app_error
 from services.extended_activity_analysis_service import AnalysisPeriod, extended_activity_analysis_service
@@ -101,12 +92,6 @@ DAILY_ANALYSIS_REQUIRED_HEADERS = [
     "⚖️ Вес",
     "📈 Гипотеза",
 ]
-DAILY_ANALYSIS_GIGACHAT_REQUIRED_HEADERS = [
-    "🏋️ Тренировки",
-    "🍽️ Питание",
-    "⚖️ Вес",
-    "📈 Гипотеза",
-]
 DAILY_ANALYSIS_BANNED_PHRASES = [
     "как ии",
     "возможно я ошибаюсь",
@@ -124,15 +109,6 @@ def _is_gemini_temporarily_unavailable_error(error: Exception) -> bool:
     )
 
 
-def _is_gigachat_temporarily_unavailable_error(error: Exception) -> bool:
-    """Проверяет, связана ли ошибка с временной недоступностью GigaChat."""
-    return (
-        isinstance(error, (GigaChatServiceTemporaryError, asyncio.TimeoutError))
-        or "503" in str(error)
-        or "timeout" in str(error).lower()
-    )
-
-
 def _is_deepseek_temporarily_unavailable_error(error: Exception) -> bool:
     """Проверяет, связана ли ошибка с временной недоступностью DeepSeek."""
     return (
@@ -144,8 +120,6 @@ def _is_deepseek_temporarily_unavailable_error(error: Exception) -> bool:
 
 def _is_day_analysis_temporarily_unavailable_error(error: Exception, provider: str) -> bool:
     """Проверяет временную недоступность выбранного провайдера анализа дня."""
-    if provider == "gigachat":
-        return _is_gigachat_temporarily_unavailable_error(error)
     if provider == "deepseek":
         return _is_deepseek_temporarily_unavailable_error(error)
     return _is_gemini_temporarily_unavailable_error(error)
@@ -312,7 +286,7 @@ def _build_daily_analysis_fallback(
     return report
 
 
-def _is_valid_daily_analysis_text(text: str, backend: str = "openrouter") -> bool:
+def _is_valid_daily_analysis_text(text: str, backend: str = "gemini") -> bool:
     stripped = (text or "").strip()
     if not stripped:
         return False
@@ -321,11 +295,8 @@ def _is_valid_daily_analysis_text(text: str, backend: str = "openrouter") -> boo
     lower = stripped.lower()
     if any(phrase in lower for phrase in DAILY_ANALYSIS_BANNED_PHRASES):
         return False
-    required_headers = (
-        DAILY_ANALYSIS_GIGACHAT_REQUIRED_HEADERS if backend == "gigachat" else DAILY_ANALYSIS_REQUIRED_HEADERS
-    )
     positions = []
-    for header in required_headers:
+    for header in DAILY_ANALYSIS_REQUIRED_HEADERS:
         idx = stripped.find(header)
         if idx < 0:
             return False
@@ -1162,16 +1133,6 @@ async def generate_activity_analysis(
             if gemini_service is None:
                 raise GeminiServiceTemporaryUnavailableError("Gemini service is not initialized")
             response = await asyncio.wait_for(asyncio.to_thread(gemini_service.analyze, prompt), timeout=60.0)
-        elif backend == "openrouter":
-            response = await asyncio.wait_for(
-                asyncio.to_thread(openrouter_service.analyze_activity_prompt, prompt),
-                timeout=60.0,
-            )
-        elif backend == "gigachat":
-            response = await asyncio.wait_for(
-                asyncio.to_thread(gigachat_service.analyze_activity_prompt, prompt),
-                timeout=60.0,
-            )
         elif backend == "deepseek":
             response = await asyncio.wait_for(
                 asyncio.to_thread(deepseek_service.analyze_activity_prompt, prompt, user_id=user_id),
@@ -1183,7 +1144,7 @@ async def generate_activity_analysis(
         return re.sub(r'\*+$', '', response).strip()
 
     result = await _run_backend()
-    if days_count == 1 and backend in {"openrouter", "gigachat", "deepseek"}:
+    if days_count == 1 and backend == "deepseek":
         for _ in range(2):
             if _is_valid_daily_analysis_text(result, backend=backend):
                 break

@@ -30,12 +30,10 @@ from utils.keyboards import (
     kbju_add_method_back_menu,
     kbju_meal_type_menu,
     kbju_after_meal_menu,
-    openrouter_confirm_menu,
     kbju_edit_type_menu,
     push_menu_stack,
 )
 from database.repositories import MealRepository, AnalyticsRepository, WorkoutRepository
-from services.nutrition_service import nutrition_service
 from services.gemini_service import (
     gemini_service,
     GeminiServiceTemporaryUnavailableError,
@@ -49,20 +47,12 @@ from services.openai_label_service import (
     OpenAILabelServiceInvalidJSONError,
     OpenAILabelServiceTimeoutError,
 )
-from services.openrouter_service import (
-    openrouter_service,
-    OpenRouterServiceError,
-    OpenRouterServiceTemporaryError,
-)
 from services.deepseek_service import (
     deepseek_service,
     DeepSeekServiceConfigError,
     DeepSeekServiceError,
 )
-from services.ai.gigachat import (
-    gigachat_service,
-    GigaChatServiceError,
-)
+from services.ai_food_parser import parse_kbju_json
 from services.ai_usage_logger import log_ai_usage
 from utils.validators import parse_date
 from datetime import datetime
@@ -75,7 +65,7 @@ from utils.meal_types import (
 )
 from utils.emoji_map import EMOJI_MAP
 from database.repositories.meal_completion_comment_repository import MealCompletionCommentRepository
-from config import OPENROUTER_MODEL, DEEPSEEK_MODEL
+from config import DEEPSEEK_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -169,16 +159,12 @@ Sumday77 всегда на стороне пользователя. Никогд
 MEAL_COMMENT_FALLBACK_TEXT = "✅ Приём пищи завершён."
 
 ADD_METHOD_TEXTS = {
-    "calorieninjas": "➕ Через CalorieNinjas",
     "ai": "📝 Ввести приём пищи текстом (AI-анализ)",
-    "openrouter": "🧪 Ввести текст через OpenRouter",
     "deepseek": "🤖 Ввести приём пищи через DeepSeek",
-    "gigachat": "🧠 Ввести текст через GigaChat",
     "photo": "📷 Анализ еды по фото",
     "photo_openai": "🧪 Анализ еды OpenAI",
     "label": "📋 Анализ этикетки",
     "label_openai": "🧪 Анализ этикетки OpenAI",
-    "barcode": "📷 Скан штрих-кода",
     "custom": "✍️ Внести вручную",
 }
 
@@ -356,10 +342,6 @@ def _format_current_meal_after_save_message(meal_type: str, current_meal_items: 
 def _format_label_result_header(source: str, product_name: str) -> str:
     """Форматирует первую строку результата анализа упаковки."""
     safe_product_name = html.escape(product_name or "Продукт")
-    if source == "ocr_openrouter_test":
-        return f"📷 <b>OCR-анализ этикетки (тест):</b> {safe_product_name}\n"
-    if source == "barcode":
-        return f"📷 <b>Сканирование штрих-кода:</b> {safe_product_name}\n"
     return f"📋 <b>Анализ этикетки:</b> {safe_product_name}\n"
 
 
@@ -885,7 +867,6 @@ def _normalize_my_product_source(source: str | None) -> str:
     normalized = str(source or "").strip()
     aliases = {
         "ai_text": "text_ai",
-        "openrouter": "text_ai",
         "food_photo": "photo_analysis",
         "food_photo_analysis": "photo_analysis",
         "photo": "photo_analysis",
@@ -893,7 +874,6 @@ def _normalize_my_product_source(source: str | None) -> str:
         "openai": "photo_analysis",
         "label": "label_analysis",
         "barcode": "label_analysis",
-        "ocr_openrouter_test": "label_analysis",
         "label_analysis_fallback": "label_analysis",
         "custom_product": "manual",
     }
@@ -1784,20 +1764,11 @@ async def _reroute_add_method_button_if_needed(message: Message, state: FSMConte
     if text in MEAL_FINISH_BUTTON_TEXTS:
         await _finish_current_meal_and_return_to_diary(message, state)
         return True
-    if text == ADD_METHOD_TEXTS["calorieninjas"]:
-        await kbju_add_via_calorieninjas(message, state)
-        return True
     if text == ADD_METHOD_TEXTS["ai"]:
         await kbju_add_via_ai(message, state)
         return True
-    if text == ADD_METHOD_TEXTS["openrouter"]:
-        await kbju_add_via_openrouter(message, state)
-        return True
     if text == ADD_METHOD_TEXTS["deepseek"]:
         await kbju_add_via_deepseek(message, state)
-        return True
-    if text == ADD_METHOD_TEXTS["gigachat"]:
-        await kbju_add_via_gigachat(message, state)
         return True
     if text == ADD_METHOD_TEXTS["photo"]:
         await kbju_add_via_photo(message, state)
@@ -1810,9 +1781,6 @@ async def _reroute_add_method_button_if_needed(message: Message, state: FSMConte
         return True
     if text == ADD_METHOD_TEXTS["label_openai"]:
         await kbju_add_via_label_openai(message, state)
-        return True
-    if text == ADD_METHOD_TEXTS["barcode"]:
-        await kbju_add_via_barcode(message, state)
         return True
     if text == ADD_METHOD_TEXTS["custom"]:
         await kbju_add_via_custom_product(message, state)
@@ -2226,28 +2194,6 @@ def reset_user_state(message: Message, *, keep_supplements: bool = False):
     """Сбрасывает состояние пользователя."""
     # TODO: Заменить на FSM clear
     pass
-
-
-def translate_text(text: str, source_lang: str = "ru", target_lang: str = "en") -> str:
-    """Переводит текст через публичное API MyMemory."""
-    if not text:
-        return text
-    
-    try:
-        import requests
-        url = "https://api.mymemory.translated.net/get"
-        params = {"q": text, "langpair": f"{source_lang}|{target_lang}"}
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        translated = (
-            data.get("responseData", {}).get("translatedText")
-            or data.get("matches", [{}])[0].get("translation")
-        )
-        return translated or text
-    except Exception as e:
-        logger.warning(f"Translation error: {e}")
-        return text
 
 
 async def _prompt_meal_type_selection(message: Message, state: FSMContext, pending_add_method: str | None = None):
@@ -3296,14 +3242,8 @@ async def select_meal_type(message: Message, state: FSMContext):
         if pending_method == "ai":
             await kbju_add_via_ai(message, state)
             return
-        if pending_method == "openrouter":
-            await kbju_add_via_openrouter(message, state)
-            return
         if pending_method == "deepseek":
             await kbju_add_via_deepseek(message, state)
-            return
-        if pending_method == "gigachat":
-            await kbju_add_via_gigachat(message, state)
             return
         if pending_method == "photo":
             await kbju_add_via_photo(message, state)
@@ -3317,14 +3257,8 @@ async def select_meal_type(message: Message, state: FSMContext):
         if pending_method == "label_openai":
             await kbju_add_via_label_openai(message, state)
             return
-        if pending_method == "barcode":
-            await kbju_add_via_barcode(message, state)
-            return
         if pending_method == "custom":
             await kbju_add_via_custom_product(message, state)
-            return
-        if pending_method == "calorieninjas":
-            await kbju_add_via_calorieninjas(message, state)
             return
 
     await message.answer(f"Отлично! {display_meal_type(meal_type)}.")
@@ -3398,27 +3332,6 @@ async def handle_meal_type_menu_navigation(message: Message, state: FSMContext):
     await go_back(message, state)
 
 
-@router.message(lambda m: m.text == "➕ Через CalorieNinjas")
-async def kbju_add_via_calorieninjas(message: Message, state: FSMContext):
-    """Обработчик добавления через CalorieNinjas."""
-    if not await _ensure_meal_type_selected(message, state, "calorieninjas"):
-        return
-    await state.update_data(pending_add_method=None)
-    await state.set_state(MealEntryStates.waiting_for_food_input)
-    
-    text = (
-        "Напиши, что ты съел(а) одним сообщением.\n\n"
-        "Например:\n"
-        "• 100 г овсянки, 2 яйца, 1 банан\n"
-        "• 150 г куриной грудки и 200 г риса\n\n"
-        "Важно: сначала указывай количество (например: 100 г или 2 шт), "
-        "а после — сам продукт."
-    )
-    
-    push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu)
-
-
 @router.message(lambda m: m.text == "📝 Ввести приём пищи текстом (AI-анализ)")
 async def kbju_add_via_ai(message: Message, state: FSMContext):
     """Обработчик добавления через AI-анализ на DeepSeek."""
@@ -3456,21 +3369,6 @@ async def kbju_add_via_ai(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=kbju_add_method_back_menu, parse_mode="HTML")
 
 
-@router.message(lambda m: m.text == "🧪 Ввести текст через OpenRouter")
-async def kbju_add_via_openrouter(message: Message, state: FSMContext):
-    """Обработчик отдельного сценария OpenRouter (free)."""
-    if not await _ensure_meal_type_selected(message, state, "openrouter"):
-        return
-    await state.update_data(pending_add_method=None)
-    await state.set_state(MealEntryStates.waiting_for_openrouter_food_input)
-
-    push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(
-        "🧪 OpenRouter (free)\n\nОтправь продукты и количество одним сообщением.",
-        reply_markup=kbju_add_menu,
-    )
-
-
 @router.message(lambda m: m.text == "🤖 Ввести приём пищи через DeepSeek")
 async def kbju_add_via_deepseek(message: Message, state: FSMContext):
     """Обработчик отдельного сценария DeepSeek."""
@@ -3484,21 +3382,6 @@ async def kbju_add_via_deepseek(message: Message, state: FSMContext):
         "🤖 DeepSeek\n\n"
         "Отправь продукты и количество одним сообщением — как в AI-анализе текстом. "
         "Я разберу описание через DeepSeek и сохраню приём пищи.",
-        reply_markup=kbju_add_menu,
-    )
-
-
-@router.message(lambda m: m.text == "🧠 Ввести текст через GigaChat")
-async def kbju_add_via_gigachat(message: Message, state: FSMContext):
-    """Обработчик отдельного сценария GigaChat."""
-    if not await _ensure_meal_type_selected(message, state, "gigachat"):
-        return
-    await state.update_data(pending_add_method=None)
-    await state.set_state(MealEntryStates.waiting_for_gigachat_food_input)
-
-    push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(
-        "🧠 GigaChat\n\nОтправь продукты и количество одним сообщением.",
         reply_markup=kbju_add_menu,
     )
 
@@ -3904,13 +3787,13 @@ async def _handle_provider_food_input(
     await message.answer("Обрабатываю…")
     try:
         raw = await asyncio.to_thread(analyzer, user_text)
-        kbju_data = openrouter_service.parse_kbju_json(raw)
+        kbju_data = parse_kbju_json(raw)
     except DeepSeekServiceConfigError:
         logger.exception("%s: API key is not configured", provider_name)
         await message.answer("⚠️ DeepSeek временно недоступен: не настроен DEEPSEEK_API_KEY.")
         await message.answer("Можешь выбрать другой способ добавления или попробовать позже.")
         return
-    except (OpenRouterServiceError, DeepSeekServiceError, GigaChatServiceError, ValueError, json.JSONDecodeError):
+    except (DeepSeekServiceError, ValueError, json.JSONDecodeError):
         logger.exception("%s: failed to process user text", provider_name)
         await message.answer(f"Не удалось обработать через {provider_name}: пустой ответ или ошибка API. Попробуй позже.")
         await message.answer("Можешь отправить текст ещё раз.")
@@ -4026,18 +3909,6 @@ async def _keep_meal_entry_open_after_save(
         reply_markup=kbju_add_menu,
     )
 
-@router.message(MealEntryStates.waiting_for_openrouter_food_input)
-async def handle_openrouter_food_input(message: Message, state: FSMContext):
-    """Обрабатывает текст пользователя через OpenRouter с автосохранением."""
-    await _handle_provider_food_input(
-        message,
-        state,
-        provider_name="OpenRouter",
-        provider_title="🧪 OpenRouter (free)",
-        analyzer=openrouter_service.analyze_food_text,
-    )
-
-
 @router.message(MealEntryStates.waiting_for_deepseek_food_input)
 async def handle_deepseek_food_input(message: Message, state: FSMContext):
     """Обрабатывает текст пользователя через DeepSeek с автосохранением."""
@@ -4047,87 +3918,6 @@ async def handle_deepseek_food_input(message: Message, state: FSMContext):
         provider_name="DeepSeek",
         provider_title="🤖 DeepSeek",
         analyzer=deepseek_service.analyze_food_text,
-    )
-
-
-@router.message(MealEntryStates.waiting_for_gigachat_food_input)
-async def handle_gigachat_food_input(message: Message, state: FSMContext):
-    """Обрабатывает текст пользователя через GigaChat с автосохранением."""
-    await _handle_provider_food_input(
-        message,
-        state,
-        provider_name="GigaChat",
-        provider_title="🧠 GigaChat",
-        analyzer=gigachat_service.analyze_food_text,
-    )
-
-
-@router.message(MealEntryStates.confirming_openrouter_meal)
-async def handle_openrouter_confirm(message: Message, state: FSMContext):
-    """Подтверждение сохранения результата OpenRouter."""
-    text = (message.text or "").strip()
-
-    if text in MAIN_MENU_BUTTON_ALIASES:
-        await state.clear()
-        from handlers.common import go_main_menu
-
-        await go_main_menu(message, state)
-        return
-
-    if text == "⬅️ Назад":
-        await state.set_state(MealEntryStates.waiting_for_openrouter_food_input)
-        push_menu_stack(message.bot, kbju_add_menu)
-        await message.answer("Ок, отправь продукты и количество ещё раз.", reply_markup=kbju_add_menu)
-        return
-
-    if text == "❌ Отмена":
-        await state.set_state(MealEntryStates.waiting_for_openrouter_food_input)
-        await state.update_data(openrouter_pending_meal=None)
-        push_menu_stack(message.bot, kbju_add_menu)
-        await message.answer("Отменил сохранение. Можешь отправить новый текст.", reply_markup=kbju_add_menu)
-        return
-
-    if text != "💾 Сохранить":
-        await message.answer("Выбери действие кнопкой: сохранить, отмена или назад.")
-        return
-
-    data = await state.get_data()
-    pending = data.get("openrouter_pending_meal") or {}
-    total = pending.get("total") or {}
-    items = pending.get("items") or []
-    raw_query = pending.get("raw_query") or "[OpenRouter]"
-
-    user_id = str(message.from_user.id)
-    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    entry_date_str = data.get("entry_date")
-    try:
-        entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
-    except ValueError:
-        entry_date = date.today()
-
-    saved_meal = MealRepository.save_meal(
-        user_id=user_id,
-        raw_query=raw_query,
-        calories=float(total.get("kcal", 0)),
-        protein=float(total.get("protein", 0)),
-        fat=float(total.get("fat", 0)),
-        carbs=float(total.get("carbs", 0)),
-        entry_date=entry_date,
-        products_json=json.dumps([{**item, "source": item.get("source") or "text_ai"} for item in items], ensure_ascii=False),
-        meal_type=meal_type,
-    )
-
-    if not hasattr(message.bot, "last_meal_ids"):
-        message.bot.last_meal_ids = {}
-    message.bot.last_meal_ids[user_id] = saved_meal.id
-
-    await _keep_meal_entry_open_after_save(
-        message,
-        state,
-        user_id=user_id,
-        entry_date=entry_date,
-        meal_type=meal_type,
-        intro_lines=["✅ Сохранил продукт через OpenRouter."],
     )
 
 
@@ -4167,112 +3957,6 @@ async def kbju_add_via_photo_openai(message: Message, state: FSMContext):
 
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(text, reply_markup=kbju_add_method_back_menu)
-
-
-@router.message(MealEntryStates.waiting_for_food_input)
-async def handle_food_input(message: Message, state: FSMContext):
-    """Обрабатывает ввод текста для CalorieNinjas."""
-    user_text = (message.text or "").strip()
-    if await _reroute_add_method_button_if_needed(message, state, user_text):
-        return
-    if user_text in BACK_BUTTON_TEXTS:
-        await _return_to_add_methods_from_method_input(message, state)
-        return
-    if not user_text:
-        await message.answer("Напиши, пожалуйста, что ты съел(а) 🙏")
-        return
-    
-    user_id = str(message.from_user.id)
-    data = await state.get_data()
-    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    entry_date_str = data.get("entry_date")
-    if entry_date_str:
-        if isinstance(entry_date_str, str):
-            try:
-                entry_date = date.fromisoformat(entry_date_str)
-            except ValueError:
-                parsed = parse_date(entry_date_str)
-                entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
-        else:
-            entry_date = date.today()
-    else:
-        entry_date = date.today()
-    
-    translated_query = translate_text(user_text, source_lang="ru", target_lang="en")
-    logger.info(f"🍱 Перевод запроса для API: {translated_query}")
-    
-    try:
-        items, totals = nutrition_service.get_nutrition_from_api(translated_query)
-    except Exception as e:
-        logger.error(f"Nutrition API error: {e}")
-        await message.answer(
-            "⚠️ Не получилось получить КБЖУ из сервиса.\n"
-            "Попробуй ещё раз чуть позже или измени формулировку."
-        )
-        return
-    
-    if not items:
-        await message.answer(
-            "Я не нашёл продукты в этом описании 🤔\n"
-            "Попробуй написать чуть по-другому: добавь количество или уточни продукт."
-        )
-        return
-    
-    # Формируем детали для сохранения
-    lines = ["🍱 Оценка по КБЖУ для этого приёма пищи:\n"]
-    api_details_lines = []
-    
-    for item in items:
-        name_en = (item.get("name") or "item").title()
-        name = translate_text(name_en, source_lang="en", target_lang="ru")
-        
-        cal = float(item.get("_calories", 0.0))
-        p = float(item.get("_protein_g", 0.0))
-        f = float(item.get("_fat_total_g", 0.0))
-        c = float(item.get("_carbohydrates_total_g", 0.0))
-        
-        line = f"• {name} — {cal:.0f} ккал (Б {p:.1f} / Ж {f:.1f} / У {c:.1f})"
-        lines.append(line)
-        api_details_lines.append(line)
-    
-    lines.append("\nИТОГО:")
-    lines.append(
-        f"🔥 Калории: {float(totals['calories']):.0f} ккал\n"
-        f"🥩 Белки: {float(totals['protein_g']):.1f} г\n"
-        f"🥑 Жиры: {float(totals['fat_total_g']):.1f} г\n"
-        f"🍚 Углеводы: {float(totals['carbohydrates_total_g']):.1f} г"
-    )
-    
-    api_details = "\n".join(api_details_lines)
-    
-    # Сохраняем в БД
-    saved_meal = MealRepository.save_meal(
-        user_id=user_id,
-        raw_query=user_text,
-        calories=float(totals['calories']),
-        protein=float(totals['protein_g']),
-        fat=float(totals['fat_total_g']),
-        carbs=float(totals['carbohydrates_total_g']),
-        entry_date=entry_date,
-        api_details=api_details,
-        products_json=json.dumps(items),
-        meal_type=meal_type,
-    )
-    
-    # Сохраняем ID последнего приёма для редактирования
-    if not hasattr(message.bot, "last_meal_ids"):
-        message.bot.last_meal_ids = {}
-    message.bot.last_meal_ids[user_id] = saved_meal.id
-    
-    # Показываем суммарные данные за день
-    await _keep_meal_entry_open_after_save(
-        message,
-        state,
-        user_id=user_id,
-        entry_date=entry_date,
-        meal_type=meal_type,
-        intro_lines=lines,
-    )
 
 
 @router.message(MealEntryStates.waiting_for_ai_food_input)
@@ -4495,25 +4179,6 @@ async def kbju_add_via_label_openai(message: Message, state: FSMContext):
 
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(text, reply_markup=kbju_add_method_back_menu, parse_mode="HTML")
-
-
-@router.message(lambda m: m.text == "📷 Скан штрих-кода")
-async def kbju_add_via_barcode(message: Message, state: FSMContext):
-    """Обработчик сканирования штрих-кода."""
-    if not await _ensure_meal_type_selected(message, state, "barcode"):
-        return
-    reset_user_state(message)
-    await state.update_data(pending_add_method=None)
-    await state.set_state(MealEntryStates.waiting_for_barcode_photo)
-    
-    text = (
-        "📷 Сканирование штрих-кода\n\n"
-        "Отправь мне фото штрих-кода продукта, и я найду информацию о нём в базе Open Food Facts! 📸\n\n"
-        "Я распознаю штрих-код с помощью ИИ и получу точные данные о продукте: название, КБЖУ и другие факты."
-    )
-    
-    push_menu_stack(message.bot, kbju_add_menu)
-    await message.answer(text, reply_markup=kbju_add_menu)
 
 
 async def _handle_food_photo_analysis(
@@ -5291,136 +4956,6 @@ async def handle_openai_label_non_photo(message: Message, state: FSMContext):
     await message.answer("Пожалуйста, отправь фото этикетки или упаковки продукта.")
 
 
-@router.message(MealEntryStates.waiting_for_barcode_photo, F.photo)
-async def handle_barcode_photo(message: Message, state: FSMContext):
-    """Обрабатывает фото штрих-кода."""
-    user_id = str(message.from_user.id)
-    data = await state.get_data()
-    entry_date_str = data.get("entry_date")
-    if entry_date_str:
-        if isinstance(entry_date_str, str):
-            try:
-                entry_date = date.fromisoformat(entry_date_str)
-            except ValueError:
-                parsed = parse_date(entry_date_str)
-                entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
-        else:
-            entry_date = date.today()
-    else:
-        entry_date = date.today()
-    
-    # Показываем сообщение о распознавании
-    await message.answer("📷 Распознаю штрих-код, секунду...")
-    
-    # Скачиваем фото
-    photo = message.photo[-1]
-    file = await message.bot.get_file(photo.file_id)
-    image_bytes = await message.bot.download_file(file.file_path)
-    image_data = image_bytes.read()
-    
-    # Распознаём штрих-код
-    try:
-        barcode = await _run_gemini_task(gemini_service.scan_barcode, image_data)
-    except Exception as e:
-        await _send_ai_error_message(message, e)
-        return
-    
-    if not barcode:
-        await message.answer(
-            "Не удалось распознать штрих-код на фото 😔\n\n"
-            "Попробуй сделать фото ещё раз:\n"
-            "• Убедись, что штрих-код хорошо виден\n"
-            "• Сделай фото при хорошем освещении\n"
-            "• Штрих-код должен быть в фокусе\n\n"
-            "Или используй другие способы добавления КБЖУ."
-        )
-        return
-    
-    await message.answer(f"✅ Штрих-код распознан: {barcode}\n\n🔍 Ищу информацию о продукте...")
-    
-    # Получаем данные из Open Food Facts
-    product_data = nutrition_service.get_product_from_openfoodfacts(barcode)
-    
-    if not product_data:
-        await message.answer(
-            f"❌ Продукт со штрих-кодом {barcode} не найден в базе Open Food Facts.\n\n"
-            "Попробуй другой способ добавления КБЖУ или используй фото этикетки."
-        )
-        await state.clear()
-        return
-    
-    # Формируем информацию о продукте
-    product_name = product_data.get("name", "Неизвестный продукт")
-    brand = product_data.get("brand", "")
-    nutriments = product_data.get("nutriments", {})
-    weight = product_data.get("weight")
-    
-    def safe_float(value) -> float:
-        try:
-            if value is None:
-                return 0.0
-            return float(value)
-        except (TypeError, ValueError):
-            return 0.0
-    
-    # КБЖУ на 100г
-    kcal_100g = safe_float(nutriments.get("kcal", 0))
-    protein_100g = safe_float(nutriments.get("protein", 0))
-    fat_100g = safe_float(nutriments.get("fat", 0))
-    carbs_100g = safe_float(nutriments.get("carbs", 0))
-    
-    # Проверяем, есть ли хотя бы какое-то КБЖУ
-    if not (kcal_100g or protein_100g or fat_100g or carbs_100g):
-        await message.answer(
-            f"❌ В базе Open Food Facts нет информации о КБЖУ для продукта со штрих-кодом {barcode}.\n\n"
-            "Попробуй использовать фото этикетки или другие способы добавления КБЖУ."
-        )
-        await state.clear()
-        return
-    
-    # Сохраняем данные в FSM для дальнейшего использования
-    await state.set_state(MealEntryStates.waiting_for_weight_input)
-    await state.update_data(
-        kbju_per_100g={
-            "kcal": kcal_100g,
-            "protein": protein_100g,
-            "fat": fat_100g,
-            "carbs": carbs_100g,
-        },
-        product_name=product_name,
-        barcode=barcode,
-        entry_date=entry_date.isoformat(),
-        package_weight=safe_float(weight) if weight else None,
-    )
-    
-    # Формируем сообщение с информацией о продукте
-    text_parts = [f"✅ Нашёл продукт в базе Open Food Facts!\n\n"]
-    text_parts.append(f"📦 Продукт: <b>{product_name}</b>\n")
-    
-    if brand:
-        text_parts.append(f"🏷 Бренд: {brand}\n")
-    
-    text_parts.append(f"🔢 Штрих-код: {barcode}\n")
-    text_parts.append(f"\n📊 КБЖУ на 100 г:\n")
-    text_parts.append(f"🔥 Калории: {kcal_100g:.0f} ккал\n")
-    text_parts.append(f"🥩 Белки: {protein_100g:.1f} г\n")
-    text_parts.append(f"🥑 Жиры: {fat_100g:.1f} г\n")
-    text_parts.append(f"🍚 Углеводы: {carbs_100g:.1f} г\n")
-    
-    # Если есть вес упаковки в базе, упоминаем его, но все равно спрашиваем
-    if weight:
-        text_parts.append(f"\n📦 В базе указан вес упаковки: {weight} г\n")
-        text_parts.append(f"Сколько грамм вы съели? (можно ввести {weight} или другое значение)")
-    else:
-        text_parts.append(f"\n❓ Сколько грамм вы съели?")
-    text_parts.append("\nМожно выбрать кнопку или ввести вес вручную.")
-    
-    prompt_package_weight = safe_float(weight) if weight else None
-    weight_input_menu = _build_label_weight_input_menu(prompt_package_weight if prompt_package_weight > 0 else None)
-    push_menu_stack(message.bot, weight_input_menu)
-    await message.answer("".join(text_parts), reply_markup=weight_input_menu, parse_mode="HTML")
-
-
 @router.message(MealEntryStates.waiting_for_weight_input)
 async def handle_weight_input(message: Message, state: FSMContext):
     """Обрабатывает выбор/ввод веса и открывает подтверждение без сохранения."""
@@ -5506,19 +5041,12 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
     weight_grams = current_weight
     kbju_per_100g = data.get("kbju_per_100g")
     product_name = data.get("product_name", "Продукт")
-    barcode = data.get("barcode")
     meal_source = data.get("meal_source")
     totals_for_db, per_100g = _calculate_label_totals(kbju_per_100g, weight_grams)
 
-    if meal_source == "ocr_openrouter_test":
-        lines = [_format_label_result_header("ocr_openrouter_test", product_name)]
-        raw_query = f"[ocr_openrouter_test] {product_name}"
-    elif meal_source == "openai":
+    if meal_source == "openai":
         lines = [_format_label_result_header("label", product_name)]
         raw_query = f"[Этикетка OpenAI: {product_name}]"
-    elif barcode:
-        lines = [_format_label_result_header("barcode", product_name)]
-        raw_query = f"[Штрих-код: {barcode}] {product_name}"
     else:
         lines = [_format_label_result_header("label", product_name)]
         raw_query = f"[Этикетка: {product_name}]"
@@ -5526,9 +5054,6 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
     lines.append(f"📦 <b>Вес:</b> {weight_grams:.0f} г\n")
     lines.append("<b>КБЖУ:</b>")
     lines.append(_format_kbju_summary_block(totals_for_db))
-    if meal_source == "ocr_openrouter_test":
-        lines.append("Источник: OCR + OpenRouter (тест)")
-
     products_json = json.dumps([
         {
             "name": product_name,
@@ -7695,299 +7220,8 @@ async def handle_meal_composition_edit(message: Message, state: FSMContext):
 
 @router.message(MealEntryStates.editing_meal)
 async def handle_meal_edit_input(message: Message, state: FSMContext):
-    """Обрабатывает ввод нового состава продуктов при редактировании."""
-    user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} editing meal, input: {message.text[:50]}")
-    
-    data = await state.get_data()
-    meal_id = data.get("meal_id")
-    target_date_str = data.get("target_date", date.today().isoformat())
-    saved_products = data.get("saved_products", [])
-    new_text = message.text.strip()
-    
-    # Проверяем, не является ли это кнопкой меню
-    menu_buttons = ["⬅️ Назад", "📊 Дневной отчёт", "➕ Внести ещё приём", "✏️ Редактировать"]
-    if new_text in menu_buttons or new_text in MAIN_MENU_BUTTON_ALIASES:
-        await state.clear()
-        if new_text == "⬅️ Назад":
-            from handlers.common import go_back
-            await go_back(message, state)
-        elif new_text in MAIN_MENU_BUTTON_ALIASES:
-            from handlers.common import go_main_menu
-            await go_main_menu(message, state)
-        else:
-            await message.answer("Редактирование отменено.")
-        return
-    
-    if not meal_id:
-        logger.warning(f"User {user_id}: meal_id not found in FSM state")
-        await message.answer("❌ Не получилось определить запись для обновления.")
-        await state.clear()
-        return
-    meal_before_update = MealRepository.get_meal_by_id(meal_id, user_id)
-    changed_meal_type = normalize_meal_type(getattr(meal_before_update, "meal_type", None)) if meal_before_update else None
-    
-    if not new_text:
-        await message.answer("Напиши новый состав продуктов в формате: название, вес г")
-        return
-    
-    if not saved_products:
-        logger.warning(f"User {user_id}: saved_products not found in FSM state")
-        await message.answer(
-            "❌ Не удалось найти сохраненные данные продуктов.\n"
-            "Попробуй удалить и создать запись заново."
-        )
-        await state.clear()
-        return
-    
-    # Парсим ввод пользователя: каждая строка = "название, вес г"
-    try:
-        lines = [line.strip() for line in new_text.split("\n") if line.strip()]
-        if not lines:
-            await message.answer("Напиши новый состав продуктов в формате: название, вес г")
-            return
-        
-        edited_products = []
-        
-        for i, line in enumerate(lines):
-            # Парсим формат "название, вес г" или "название, вес"
-            match = re.match(r"(.+?),\s*(\d+(?:[.,]\d+)?)\s*г?", line, re.IGNORECASE)
-            if not match:
-                await message.answer(
-                    f"❌ Неверный формат в строке {i+1}: {line}\n"
-                    "Используй формат: название, вес г\n"
-                    "Пример: курица, 200 г"
-                )
-                return
-            
-            name = match.group(1).strip()
-            grams_str = match.group(2).replace(",", ".")
-            grams = float(grams_str)
-            
-            # Определяем, является ли продукт новым или существующим
-            is_new_product = i >= len(saved_products)
-            original_product = saved_products[i] if not is_new_product else None
-            
-            # Проверяем, изменилось ли название продукта
-            name_changed = False
-            if original_product:
-                original_name = original_product.get("name", "").strip().lower()
-                name_changed = original_name != name.lower()
-            
-            # Пытаемся получить КБЖУ из сохраненных данных, если продукт существует и название не изменилось
-            calories_per_100g = None
-            protein_per_100g = None
-            fat_per_100g = None
-            carbs_per_100g = None
-            
-            if original_product and not name_changed:
-                # Получаем КБЖУ на 100г из сохраненных данных
-                calories_per_100g = original_product.get("calories_per_100g")
-                protein_per_100g = original_product.get("protein_per_100g")
-                fat_per_100g = original_product.get("fat_per_100g")
-                carbs_per_100g = original_product.get("carbs_per_100g")
-                
-                # Если нет значений на 100г, вычисляем из сохраненных данных
-                if not calories_per_100g or calories_per_100g == 0:
-                    orig_grams = original_product.get("grams", 0)
-                    if orig_grams > 0:
-                        orig_calories = original_product.get("calories", 0) or 0
-                        orig_protein = original_product.get("protein_g", 0) or 0
-                        orig_fat = original_product.get("fat_total_g", 0) or 0
-                        orig_carbs = original_product.get("carbohydrates_total_g", 0) or 0
-                        
-                        if orig_calories > 0:  # Только если есть валидные данные
-                            calories_per_100g = (orig_calories / orig_grams) * 100
-                            protein_per_100g = (orig_protein / orig_grams) * 100
-                            fat_per_100g = (orig_fat / orig_grams) * 100
-                            carbs_per_100g = (orig_carbs / orig_grams) * 100
-            
-            # Если продукт новый, название изменилось или данные некорректны, получаем КБЖУ через API
-            if is_new_product or name_changed or not calories_per_100g or calories_per_100g == 0:
-                api_success = False
-                
-                # Пробуем несколько вариантов запроса
-                query_variants = [
-                    f"{name} 100g",  # С весом 100г (для получения данных на 100г)
-                    f"{name} {int(grams)}g",  # С указанным пользователем весом
-                    name,  # Только название
-                ]
-                
-                for query_variant in query_variants:
-                    if api_success:
-                        break
-                        
-                    try:
-                        translated_query = translate_text(query_variant, source_lang="ru", target_lang="en")
-                        logger.info(f"Getting nutrition for product '{name}': trying query '{translated_query}'")
-                        
-                        items, _ = nutrition_service.get_nutrition_from_api(translated_query)
-                        
-                        if items:
-                            logger.debug(f"API returned {len(items)} items for '{name}': {[item.get('name', 'unknown') for item in items]}")
-                            # Пробуем найти продукт с валидными данными
-                            for item_idx, item in enumerate(items):
-                                # API возвращает значения для указанного количества
-                                # Используем ключи с подчеркиванием, которые добавляет nutrition_service
-                                cal = float(item.get("_calories", 0.0))
-                                p = float(item.get("_protein_g", 0.0))
-                                f = float(item.get("_fat_total_g", 0.0))
-                                c = float(item.get("_carbohydrates_total_g", 0.0))
-                                
-                                # Если значения с подчеркиванием нулевые, пробуем оригинальные ключи
-                                if cal == 0:
-                                    cal = float(item.get("calories", 0.0))
-                                    p = float(item.get("protein_g", 0.0))
-                                    f = float(item.get("fat_total_g", 0.0))
-                                    c = float(item.get("carbohydrates_total_g", 0.0))
-                                
-                                item_name = item.get("name", "unknown")
-                                logger.debug(f"Item {item_idx} '{item_name}': cal={cal}, p={p}, f={f}, c={c}")
-                                
-                                # Проверяем, что хотя бы калории не нулевые
-                                if cal > 0:
-                                    # CalorieNinjas API возвращает данные для указанного количества в запросе
-                                    # Если запрос был с "100g", значения уже на 100г
-                                    if "100g" in query_variant.lower():
-                                        calories_per_100g = cal
-                                        protein_per_100g = p
-                                        fat_per_100g = f
-                                        carbs_per_100g = c
-                                    elif f"{int(grams)}g" in query_variant.lower():
-                                        # Если запрос был с указанным пользователем весом, пересчитываем на 100г
-                                        query_grams = int(grams)
-                                        if query_grams > 0:
-                                            calories_per_100g = (cal / query_grams) * 100
-                                            protein_per_100g = (p / query_grams) * 100
-                                            fat_per_100g = (f / query_grams) * 100
-                                            carbs_per_100g = (c / query_grams) * 100
-                                        else:
-                                            calories_per_100g = cal
-                                            protein_per_100g = p
-                                            fat_per_100g = f
-                                            carbs_per_100g = c
-                                    else:
-                                        # Если запрос был без веса, API может вернуть данные на порцию
-                                        # Нужно проверить, есть ли информация о весе порции
-                                        serving_size = float(item.get("serving_size_g", 0.0))
-                                        if serving_size > 0:
-                                            # Пересчитываем на 100г
-                                            calories_per_100g = (cal / serving_size) * 100
-                                            protein_per_100g = (p / serving_size) * 100
-                                            fat_per_100g = (f / serving_size) * 100
-                                            carbs_per_100g = (c / serving_size) * 100
-                                        else:
-                                            # Если вес порции не указан, предполагаем что данные на 100г
-                                            calories_per_100g = cal
-                                            protein_per_100g = p
-                                            fat_per_100g = f
-                                            carbs_per_100g = c
-                                    
-                                    api_success = True
-                                    logger.info(f"Successfully got nutrition for '{name}': {calories_per_100g:.0f} kcal/100g (from query: {query_variant})")
-                                    break
-                            
-                            if not api_success:
-                                logger.warning(f"API вернул данные для '{name}', но все значения нулевые")
-                        else:
-                            logger.warning(f"API не вернул данные для продукта '{name}' с запросом '{translated_query}'")
-                    except Exception as e:
-                        logger.error(f"Error getting nutrition from API for '{name}' with query '{query_variant}': {e}")
-                        continue
-                
-                # Если не удалось получить данные через API
-                if not api_success:
-                    logger.warning(f"Не удалось получить КБЖУ для продукта '{name}' через API")
-                    # Используем нули только если это действительно новый продукт
-                    if is_new_product or name_changed:
-                        calories_per_100g = 0
-                        protein_per_100g = 0
-                        fat_per_100g = 0
-                        carbs_per_100g = 0
-                    # Если это существующий продукт с некорректными данными, оставляем как есть
-            
-            # Пересчитываем КБЖУ для указанного веса
-            new_calories = (calories_per_100g * grams) / 100 if calories_per_100g else 0
-            new_protein = (protein_per_100g * grams) / 100 if protein_per_100g else 0
-            new_fat = (fat_per_100g * grams) / 100 if fat_per_100g else 0
-            new_carbs = (carbs_per_100g * grams) / 100 if carbs_per_100g else 0
-            
-            edited_products.append({
-                "name": name,
-                "grams": grams,
-                "calories": new_calories,
-                "protein_g": new_protein,
-                "fat_total_g": new_fat,
-                "carbohydrates_total_g": new_carbs,
-                "calories_per_100g": calories_per_100g,
-                "protein_per_100g": protein_per_100g,
-                "fat_per_100g": fat_per_100g,
-                "carbs_per_100g": carbs_per_100g,
-            })
-        
-        # Суммируем КБЖУ всех продуктов
-        totals = {
-            "calories": sum(p["calories"] for p in edited_products),
-            "protein_g": sum(p["protein_g"] for p in edited_products),
-            "fat_total_g": sum(p["fat_total_g"] for p in edited_products),
-            "carbohydrates_total_g": sum(p["carbohydrates_total_g"] for p in edited_products),
-        }
-        
-        # Формируем api_details
-        api_details_lines = []
-        for p in edited_products:
-            api_details_lines.append(
-                f"• {p['name']} ({p['grams']:.0f} г) — {p['calories']:.0f} ккал "
-                f"(Б {p['protein_g']:.1f} / Ж {p['fat_total_g']:.1f} / У {p['carbohydrates_total_g']:.1f})"
-            )
-        api_details = "\n".join(api_details_lines) if api_details_lines else None
-        
-        # Обновляем запись
-        success = MealRepository.update_meal(
-            meal_id=meal_id,
-            user_id=user_id,
-            description=new_text,
-            calories=totals["calories"],
-            protein=totals["protein_g"],
-            fat=totals["fat_total_g"],
-            carbs=totals["carbohydrates_total_g"],
-            products_json=json.dumps(edited_products),
-            api_details=api_details,
-        )
-        
-        if not success:
-            logger.error(f"User {user_id}: Failed to update meal {meal_id}")
-            await message.answer("❌ Не нашёл запись для обновления.")
-            await state.clear()
-            return
-        
-        await state.clear()
-        
-        # Показываем обновлённый день
-        if isinstance(target_date_str, str):
-            try:
-                target_date = date.fromisoformat(target_date_str)
-            except ValueError:
-                target_date = date.today()
-        else:
-            target_date = date.today()
-        
-        await message.answer("✅ Приём пищи обновлён!")
-        await _render_day_meals_messages(
-            message,
-            user_id,
-            target_date,
-            include_back=True,
-            changed_meal_type=changed_meal_type,
-        )
-        
-    except Exception as e:
-        logger.error(f"Error in handle_meal_edit_input for user {user_id}: {e}", exc_info=True)
-        await message.answer(
-            "❌ Произошла ошибка при обработке данных.\n"
-            "Попробуй ещё раз или удали и создай запись заново."
-        )
-        await state.clear()
+    """Поддерживает старое FSM-состояние через действующий Gemini-сценарий."""
+    await handle_meal_composition_edit(message, state)
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_del:"))

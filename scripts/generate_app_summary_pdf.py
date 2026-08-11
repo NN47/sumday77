@@ -152,7 +152,8 @@ def build_pdf():
         ),
         Paragraph(
             "<b>Services:</b> <font name='Courier'>services/gemini_service.py</font> handles Gemini text/vision calls, "
-            "<font name='Courier'>services/nutrition_service.py</font> calls CalorieNinjas and Open Food Facts, and "
+            "<font name='Courier'>services/deepseek_service.py</font> handles text analysis, "
+            "<font name='Courier'>services/openai_label_service.py</font> provides the vision fallback, and "
             "<font name='Courier'>services/notification_scheduler.py</font> sends meal/supplement reminders.",
             styles["BodyTight"],
         ),
@@ -168,7 +169,7 @@ def build_pdf():
                 "Install dependencies: <font name='Courier'>pip install -r requirements.txt</font>.",
                 "Create env vars or a <font name='Courier'>.env</font> file with <font name='Courier'>API_TOKEN</font>; optional integrations are "
                 "<font name='Courier'>GEMINI_API_KEY</font>, <font name='Courier'>GEMINI_API_KEY2</font>, <font name='Courier'>GEMINI_API_KEY3</font>, "
-                "<font name='Courier'>NUTRITION_API_KEY</font>, and <font name='Courier'>DATABASE_URL</font>.",
+                "<font name='Courier'>DEEPSEEK_API_KEY</font>, <font name='Courier'>OPENAI_API_KEY</font>, and <font name='Courier'>DATABASE_URL</font>.",
                 "Without <font name='Courier'>DATABASE_URL</font>, the app defaults to <font name='Courier'>sqlite:///fitness_bot.db</font>.",
                 "Start the bot with <font name='Courier'>python main.py</font>. Docker evidence also exists via "
                 "<font name='Courier'>Dockerfile</font> using Python 3.11 and the same entrypoint.",

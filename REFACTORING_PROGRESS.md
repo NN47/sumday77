@@ -31,7 +31,8 @@
 
 ### 4. Сервисы
 - ✅ `services/gemini_service.py` - Gemini AI
-- ✅ `services/nutrition_service.py` - CalorieNinjas и Open Food Facts
+- ✅ `services/deepseek_service.py` - DeepSeek AI
+- ✅ `services/openai_label_service.py` - OpenAI Vision
 - ✅ `services/chart_service.py` - создание графиков
 - ✅ `services/kbju_calculator.py` - расчёт КБЖУ из теста
 

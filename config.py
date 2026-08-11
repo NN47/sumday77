@@ -32,23 +32,10 @@ GEMINI_TEMP_KEY_COOLDOWN_SECONDS = int(os.getenv("GEMINI_TEMP_KEY_COOLDOWN_SECON
 GEMINI_RATE_LIMIT_COOLDOWN_SECONDS = int(os.getenv("GEMINI_RATE_LIMIT_COOLDOWN_SECONDS", "300"))
 GEMINI_MAX_KEYS_PER_REQUEST = int(os.getenv("GEMINI_MAX_KEYS_PER_REQUEST", "3"))
 GEMINI_MAX_TOTAL_ATTEMPTS_PER_REQUEST = int(os.getenv("GEMINI_MAX_TOTAL_ATTEMPTS_PER_REQUEST", "8"))
-NUTRITION_API_KEY = os.getenv("NUTRITION_API_KEY")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
-OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-OPENROUTER_HTTP_REFERER = os.getenv("OPENROUTER_HTTP_REFERER", "https://your-render-url")
-OPENROUTER_APP_TITLE = os.getenv("OPENROUTER_APP_TITLE", "Sumday Bot")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")
-GIGACHAT_MODEL = os.getenv("GIGACHAT_MODEL", "GigaChat-2")
-GIGACHAT_OAUTH_URL = os.getenv("GIGACHAT_OAUTH_URL", "https://ngw.devices.sberbank.ru:9443/api/v2/oauth")
-GIGACHAT_API_URL = os.getenv("GIGACHAT_API_URL", "https://gigachat.devices.sberbank.ru/api/v1")
-
-if not NUTRITION_API_KEY:
-    print("⚠️ ВНИМАНИЕ: NUTRITION_API_KEY не найден. КБЖУ через CalorieNinjas работать не будет.")
 
 # Keep-alive сервер
 KEEPALIVE_PORT = 10000

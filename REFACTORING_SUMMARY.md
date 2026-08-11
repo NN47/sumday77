@@ -44,7 +44,8 @@ my_fitness_bot/
 │
 ├── services/                    # Внешние API и бизнес-логика
 │   ├── gemini_service.py       # Gemini AI
-│   ├── nutrition_service.py    # CalorieNinjas + Open Food Facts
+│   ├── deepseek_service.py     # DeepSeek AI
+│   ├── openai_label_service.py # OpenAI Vision
 │   ├── chart_service.py        # Создание графиков
 │   └── kbju_calculator.py      # Расчёт КБЖУ
 │
@@ -145,7 +146,8 @@ my_fitness_bot/
 
 #### ✅ Сервисы:
 - `GeminiService` - работа с Gemini AI
-- `NutritionService` - CalorieNinjas и Open Food Facts
+- `DeepSeekService` - работа с DeepSeek AI
+- `OpenAILabelService` - анализ изображений через OpenAI
 - `ChartService` - создание графиков веса
 - `KBJU Calculator` - расчёт КБЖУ из теста
 

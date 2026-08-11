@@ -1538,68 +1538,48 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
         '"protein":62,"fat":7,"carbs":0}],'
         '"total":{"kcal":330,"protein":62,"fat":7,"carbs":0}}'
     )
-    saved_meal = SimpleNamespace(id=77)
-
     def fail_gemini(*_args, **_kwargs):
         raise AssertionError("Gemini must not be called for main AI text meal analysis")
 
     with patch.object(meals.deepseek_service, "analyze_food_text", return_value=raw_deepseek_json) as deepseek_analyze, \
         patch("handlers.meals._run_gemini_task", side_effect=fail_gemini) as gemini_task, \
-        patch("handlers.meals.MealRepository.save_meal", return_value=saved_meal) as save_meal, \
-        patch(
-            "handlers.meals.MealRepository.get_meals_for_date",
-            return_value=[
-                SimpleNamespace(
-                    raw_query="Курица",
-                    description="Курица",
-                    products_json='[{"name":"Курица","grams":200,"kcal":330,"protein":62,"fat":7,"carbs":0}]',
-                    calories=330,
-                    protein=62,
-                    fat=7,
-                    carbs=0,
-                    meal_type=meals.MealType.LUNCH.value,
-                )
-            ],
-        ), \
-        patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]), \
-        patch("handlers.meals._show_my_products_page", new=AsyncMock()) as show_my_product_meals, \
-        patch("handlers.meals.push_menu_stack"):
+        patch("handlers.meals.MealRepository.save_meal") as save_meal:
         caplog.set_level("INFO", logger="handlers.meals")
         asyncio.run(meals.handle_ai_food_input(message, state))
 
     deepseek_analyze.assert_called_once_with("200 г курицы")
     gemini_task.assert_not_called()
-    show_my_product_meals.assert_not_awaited()
-    save_meal.assert_called_once()
-    assert save_meal.call_args.kwargs["calories"] == 330
-    assert save_meal.call_args.kwargs["meal_type"] == meals.MealType.LUNCH.value
-    state.set_state.assert_awaited_with(meals.MealEntryStates.choosing_meal_type)
-    assert state._data["meal_type"] == meals.MealType.LUNCH.value
+    save_meal.assert_not_called()
+    state.set_state.assert_awaited_with(meals.MealEntryStates.confirming_ai_meal)
+    assert state._data["ai_pending_meal"]["meal_type"] == meals.MealType.LUNCH.value
+    assert state._data["ai_pending_meal"]["total"] == {
+        "calories": 330.0,
+        "protein": 62.0,
+        "fat": 7.0,
+        "carbs": 0.0,
+    }
     assert "AI text meal analysis provider=deepseek" in caplog.text
-    analysis_text = message.answer.await_args_list[-3].args[0]
-    answer_text = message.answer.await_args_list[-2].args[0]
-    add_menu_text = message.answer.await_args_list[-1].args[0]
+    analysis_text = message.answer.await_args_list[-2].args[0]
+    save_prompt_text = message.answer.await_args_list[-1].args[0]
 
     assert "<b>📝 AI-анализ приёма пищи</b>" in analysis_text
     assert "🤖 <b>📝 AI-анализ приёма пищи</b>" not in analysis_text
     assert "AI-анализ (DeepSeek): оценка приёма пищи" not in analysis_text
     assert "• <b>Курица</b> (200 г) — <b>330 ккал</b>" in analysis_text
     assert "🔥 <b>Калории:</b> <b>330 ккал</b>" in analysis_text
-    assert "✅ <b>Продукт сохранён.</b>" in analysis_text
-    assert "🍱 <b>Уже в этом приёме пищи</b>" in answer_text
-    assert "🍲 <b>Обед • 330 ккал</b>" in answer_text
-    assert not answer_text.endswith("\n⸻")
-    assert "➕ Добавь следующий продукт" not in answer_text
-    assert "✅ Когда приём пищи заполнен" not in answer_text
-    assert message.answer.await_args_list[-3].kwargs["parse_mode"] == "HTML"
-    analysis_keyboard = message.answer.await_args_list[-3].kwargs["reply_markup"]
-    assert [[button.text for button in row] for row in analysis_keyboard.inline_keyboard] == [["✏️ Редактировать"]]
-    assert [[button.callback_data for button in row] for row in analysis_keyboard.inline_keyboard] == [
-        [f"edit_meal:lunch:{date.today().isoformat()}"]
-    ]
+    assert "✅ <b>Продукт сохранён.</b>" not in analysis_text
+    assert "Проверьте данные перед сохранением." in analysis_text
     assert message.answer.await_args_list[-2].kwargs["parse_mode"] == "HTML"
-    assert "добавить ещё продукт" in add_menu_text
-    assert message.answer.await_args_list[-1].kwargs["reply_markup"] == meals.kbju_add_menu
+    analysis_keyboard = message.answer.await_args_list[-2].kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in analysis_keyboard.inline_keyboard] == [
+        ["❌ Отмена", "✏️ Редактировать"]
+    ]
+    assert [[button.callback_data for button in row] for row in analysis_keyboard.inline_keyboard] == [
+        ["cancel_ai_meal_draft", "edit_ai_meal_draft"]
+    ]
+    assert "нажми кнопку сохранения" in save_prompt_text
+    save_keyboard = message.answer.await_args_list[-1].kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in save_keyboard.keyboard] == [["✅ Сохранить"]]
 
 
 def test_my_products_page_edits_existing_message_instead_of_sending_new_one():

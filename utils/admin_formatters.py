@@ -452,43 +452,6 @@ def format_gemini(metrics: dict) -> str:
     return translate_gemini_admin_stats(metrics)
 
 
-def format_openrouter(metrics: dict) -> str:
-    return (
-        "<b>OpenRouter / AI</b>\n\n"
-        f"• Модель: <b>{metrics.get('model_name', 'openrouter/free')}</b>\n"
-        f"• Тариф: <b>{metrics.get('tariff', 'free')}</b>\n"
-        f"• Запросов сегодня: <b>{metrics.get('requests_today', 0)}</b>\n"
-        f"• Запросов всего: <b>{metrics.get('requests_total', 0)}</b>\n"
-        f"• Успешных сегодня: <b>{metrics.get('success_today', 0)}</b>\n"
-        f"• Успешных всего: <b>{metrics.get('success_total', 0)}</b>\n"
-        f"• Ошибок сегодня: <b>{metrics.get('errors_today', 0)}</b>\n"
-        f"• Ошибок всего: <b>{metrics.get('errors_total', 0)}</b>\n"
-        f"• Последний запрос: <b>{format_datetime(metrics.get('last_request_at'))}</b>\n"
-        f"• Последняя ошибка: <b>{format_datetime(metrics.get('last_error_at'))}</b>\n"
-        f"• Текст последней ошибки: <b>{clean_text(metrics.get('last_error_message'), max_length=120)}</b>\n"
-        f"• Последний запрос (вход): <b>{clean_text(metrics.get('last_request'), max_length=120)}</b>"
-    )
-
-
-def format_gigachat(metrics: dict) -> str:
-    return (
-        "<b>GigaChat / AI</b>\n\n"
-        "📅 <b>Сегодня</b>\n"
-        f"• Запущено: <b>{metrics.get('started_today', 0)}</b>\n"
-        f"• Отправлено: <b>{metrics.get('sent_today', 0)}</b>\n"
-        f"• Ошибок: <b>{metrics.get('failed_today', 0)}</b>\n"
-        f"• Успешность: <b>{metrics.get('success_rate_today', 0):.1f}%</b>\n\n"
-        "🗓 <b>За 7 дней</b>\n"
-        f"• Запущено: <b>{metrics.get('started_7d', 0)}</b>\n"
-        f"• Отправлено: <b>{metrics.get('sent_7d', 0)}</b>\n"
-        f"• Ошибок: <b>{metrics.get('failed_7d', 0)}</b>\n"
-        f"• Успешность: <b>{metrics.get('success_rate_7d', 0):.1f}%</b>\n\n"
-        "🧾 <b>За всё время</b>\n"
-        f"• Запущено: <b>{metrics.get('requests_total', 0)}</b>\n"
-        f"• Отправлено: <b>{metrics.get('sent_total', 0)}</b>\n"
-        f"• Ошибок: <b>{metrics.get('failed_total', 0)}</b>"
-    )
-
 def _fmt_cost(value) -> str:
     try:
         return f"${float(value or 0):.4f}"

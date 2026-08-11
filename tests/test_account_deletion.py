@@ -20,7 +20,6 @@ from database.models import (
     MealCompletionComment,
     Measurement,
     NoteEntry,
-    OpenRouterRequestLog,
     Procedure,
     QuickWaterMessage,
     Supplement,
@@ -218,13 +217,6 @@ class AccountDeletionTests(unittest.TestCase):
                     status="request_success",
                 )
             )
-            session.add(
-                OpenRouterRequestLog(
-                    status="success",
-                    model_name="global-model",
-                    input_text="Нельзя связать с пользователем по схеме",
-                )
-            )
             session.add(ErrorLog(user_id=None, error_type="GlobalError"))
             session.add(
                 AIUsageLog(
@@ -298,7 +290,6 @@ class AccountDeletionTests(unittest.TestCase):
 
             self.assertEqual(session.query(GeminiAccount).count(), 1)
             self.assertEqual(session.query(GeminiRequestLog).count(), 1)
-            self.assertEqual(session.query(OpenRouterRequestLog).count(), 1)
             self.assertEqual(
                 session.query(ErrorLog).filter(ErrorLog.user_id.is_(None)).count(),
                 1,

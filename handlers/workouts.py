@@ -41,6 +41,7 @@ from utils.calendar_utils import build_workout_calendar_keyboard, show_calendar_
 from utils.activity_input_config import ActivityInputMethod, get_activity_config_by_exercise, get_activity_methods, infer_input_method
 from utils.workout_formatters import (
     build_day_actions_keyboard,
+    format_activity_daily_summaries,
     format_activity_summary,
     format_grouped_workout_sets_report,
     format_activity_edit_button,

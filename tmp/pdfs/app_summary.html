@@ -167,7 +167,7 @@
           <p><strong>Entry/runtime:</strong> <code>main.py</code> starts the aiogram bot, in-memory FSM storage, handler registration, DB init, and a keep-alive HTTP server.</p>
           <p><strong>Interaction layer:</strong> feature-specific routers live in <code>handlers/</code> for start, meals, workouts, weight, water, supplements, settings, wellbeing, calendar, procedures, and AI activity analysis.</p>
           <p><strong>Persistence:</strong> SQLAlchemy models in <code>database/models.py</code> cover users, workouts, meals, KBJU settings, supplements, procedures, water, wellbeing, measurements, and saved activity analyses; <code>database/session.py</code> initializes the DB and sessions.</p>
-          <p><strong>Services:</strong> <code>services/gemini_service.py</code> handles Gemini text/vision calls, <code>services/nutrition_service.py</code> calls CalorieNinjas and Open Food Facts, and <code>services/notification_scheduler.py</code> sends meal/supplement reminders.</p>
+          <p><strong>Services:</strong> <code>services/gemini_service.py</code> handles Gemini text/vision calls, <code>services/deepseek_service.py</code> handles text analysis, <code>services/openai_label_service.py</code> provides the vision fallback, and <code>services/notification_scheduler.py</code> sends meal/supplement reminders.</p>
           <p><strong>Data flow:</strong> Telegram message -&gt; aiogram handler/FSM -&gt; repository or service call -&gt; SQLAlchemy DB/API response -&gt; formatted bot reply or scheduled reminder.</p>
         </div>
 
@@ -175,7 +175,7 @@
           <div class="section-title">How To Run</div>
           <ol class="steps">
             <li>Install dependencies: <code>pip install -r requirements.txt</code>.</li>
-            <li>Create env vars or a <code>.env</code> file with <code>API_TOKEN</code>; optional integrations are <code>GEMINI_API_KEY</code>, <code>GEMINI_API_KEY2</code>, <code>GEMINI_API_KEY3</code>, <code>NUTRITION_API_KEY</code>, and <code>DATABASE_URL</code>.</li>
+            <li>Create env vars or a <code>.env</code> file with <code>API_TOKEN</code>; optional integrations are <code>GEMINI_API_KEY</code>, <code>GEMINI_API_KEY2</code>, <code>GEMINI_API_KEY3</code>, <code>DEEPSEEK_API_KEY</code>, <code>OPENAI_API_KEY</code>, and <code>DATABASE_URL</code>.</li>
             <li>Without <code>DATABASE_URL</code>, the app defaults to <code>sqlite:///fitness_bot.db</code>.</li>
             <li>Start the bot with <code>python main.py</code>. Docker evidence also exists via <code>Dockerfile</code> using Python 3.11 and the same entrypoint.</li>
           </ol>

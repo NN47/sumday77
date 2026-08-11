@@ -36,7 +36,6 @@ jobs:
           GEMINI_API_KEY: "dummy"
           GEMINI_API_KEY2: "dummy"
           GEMINI_API_KEY3: "dummy"
-          NUTRITION_API_KEY: "dummy"
         run: |
           python - << 'EOF'
           import main

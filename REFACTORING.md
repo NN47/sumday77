@@ -24,7 +24,8 @@ my_fitness_bot/
 ├── services/
 │   ├── __init__.py
 │   ├── gemini_service.py  # Сервис Gemini API
-│   └── nutrition_service.py # Сервис CalorieNinjas и Open Food Facts
+│   ├── deepseek_service.py # Сервис DeepSeek API
+│   └── openai_label_service.py # Сервис OpenAI Vision
 ├── states/
 │   ├── __init__.py
 │   └── user_states.py     # FSM состояния
@@ -86,7 +87,8 @@ python bot.py
 API_TOKEN=your_telegram_bot_token
 DATABASE_URL=sqlite:///fitness_bot.db
 GEMINI_API_KEY=your_gemini_api_key
-NUTRITION_API_KEY=your_calorieninjas_api_key
+DEEPSEEK_API_KEY=your_deepseek_api_key
+OPENAI_API_KEY=your_openai_api_key
 ```
 
 ## Что ещё нужно сделать

@@ -3,7 +3,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from database.repositories import UserRepository, AnalyticsRepository, ErrorLogRepository, GeminiRepository, OpenRouterRepository, AIUsageRepository
+from database.repositories import (
+    AIUsageRepository,
+    AnalyticsRepository,
+    ErrorLogRepository,
+    GeminiRepository,
+    UserRepository,
+)
 
 
 NAVIGATION_EVENTS = ["open_main_menu", "open_kbju", "open_weight", "open_activity", "open_notes"]
@@ -153,39 +159,6 @@ class AdminStatsService:
     def get_gemini_metrics() -> dict:
         return GeminiRepository.get_metrics()
 
-
-    @staticmethod
-    def get_openrouter_metrics() -> dict:
-        return OpenRouterRepository.get_metrics()
-
     @staticmethod
     def get_ai_usage_metrics(provider: str) -> dict:
         return AIUsageRepository.get_provider_metrics(provider)
-
-    @staticmethod
-    def get_gigachat_metrics() -> dict:
-        started_today = AnalyticsRepository.count_events_today("daily_analysis_gigachat_started")
-        sent_today = AnalyticsRepository.count_events_today("daily_analysis_gigachat_sent")
-        failed_today = AnalyticsRepository.count_events_today("daily_analysis_gigachat_failed")
-        total_today = sent_today + failed_today
-        success_rate_today = (sent_today * 100 / total_today) if total_today else 0
-
-        started_7d = AnalyticsRepository.count_events_period("daily_analysis_gigachat_started", days=7)
-        sent_7d = AnalyticsRepository.count_events_period("daily_analysis_gigachat_sent", days=7)
-        failed_7d = AnalyticsRepository.count_events_period("daily_analysis_gigachat_failed", days=7)
-        total_7d = sent_7d + failed_7d
-        success_rate_7d = (sent_7d * 100 / total_7d) if total_7d else 0
-
-        return {
-            "started_today": started_today,
-            "sent_today": sent_today,
-            "failed_today": failed_today,
-            "success_rate_today": success_rate_today,
-            "started_7d": started_7d,
-            "sent_7d": sent_7d,
-            "failed_7d": failed_7d,
-            "success_rate_7d": success_rate_7d,
-            "requests_total": AnalyticsRepository.count_events_period("daily_analysis_gigachat_started", days=3650),
-            "sent_total": AnalyticsRepository.count_events_period("daily_analysis_gigachat_sent", days=3650),
-            "failed_total": AnalyticsRepository.count_events_period("daily_analysis_gigachat_failed", days=3650),
-        }

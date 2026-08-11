@@ -711,14 +711,6 @@ kbju_after_meal_menu = ReplyKeyboardMarkup(
 )
 
 
-openrouter_confirm_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="💾 Сохранить"), KeyboardButton(text="❌ Отмена")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
-    ],
-    resize_keyboard=True,
-)
-
 kbju_weight_input_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="10"), KeyboardButton(text="15"), KeyboardButton(text="20"), KeyboardButton(text="25")],

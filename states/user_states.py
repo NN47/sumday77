@@ -5,20 +5,15 @@ from aiogram.fsm.state import State, StatesGroup
 class MealEntryStates(StatesGroup):
     """Состояния для добавления приёма пищи."""
     choosing_meal_type = State()  # Выбор типа приёма пищи
-    waiting_for_food_input = State()  # CalorieNinjas
     waiting_for_ai_food_input = State()  # AI-анализ через DeepSeek
     confirming_ai_meal = State()  # Предпросмотр и сохранение текстового AI-черновика
     confirming_ai_meal_cancel = State()  # Подтверждение удаления текстового AI-черновика
-    waiting_for_openrouter_food_input = State()  # OpenRouter free
     waiting_for_deepseek_food_input = State()  # DeepSeek
-    waiting_for_gigachat_food_input = State()  # GigaChat
-    confirming_openrouter_meal = State()  # Подтверждение сохранения OpenRouter результата
     waiting_for_photo = State()  # Фото еды
     waiting_for_food_photo_comment = State()  # Уточнение к фото еды перед AI-анализом
     waiting_for_openai_food_photo = State()  # Фото еды через OpenAI
     waiting_for_label_photo = State()  # Фото этикетки
     waiting_for_openai_label_photo = State()  # Фото этикетки через OpenAI
-    waiting_for_barcode_photo = State()  # Фото штрих-кода
     waiting_for_weight_input = State()  # Вес продукта (для этикетки)
     confirming_label_weight = State()  # Подтверждение/корректировка веса после этикетки
     confirming_photo_analysis = State()  # Подтверждение/корректировка веса после анализа еды по фото

@@ -47,7 +47,7 @@ def test_daily_analysis_sanitizer_renames_energy_and_removes_plan_kcal_range():
     assert "ближе к норме без привязки к сегодняшним цифрам" in result
 
 
-def test_daily_analysis_fallback_used_after_invalid_regeneration():
+def test_deepseek_daily_analysis_fallback_used_after_invalid_regeneration():
     target_date = date(2026, 4, 8)
     invalid = "Короткий ответ"
 
@@ -63,12 +63,14 @@ def test_daily_analysis_fallback_used_after_invalid_regeneration():
         patch("database.repositories.WellbeingRepository.get_entries_for_period", return_value=[]),
         patch("database.repositories.NoteRepository.get_note_for_date", return_value=None),
         patch(
-            "handlers.activity.openrouter_service",
-            new=SimpleNamespace(analyze_activity_prompt=lambda _prompt: invalid),
+            "handlers.activity.deepseek_service",
+            new=SimpleNamespace(
+                analyze_activity_prompt=lambda _prompt, user_id=None: invalid
+            ),
         ),
     ):
         result = asyncio.run(
-            generate_activity_analysis("123", target_date, target_date, "за день", backend="openrouter")
+            generate_activity_analysis("123", target_date, target_date, "за день", backend="deepseek")
         )
 
     assert "🏋️ Тренировки" in result

@@ -11,13 +11,10 @@ psycopg2-binary  # если PostgreSQL
 fastapi
 uvicorn
 
-# HTTP-запросы
-requests
-
 # Gemini NEW API client
 google-genai>=0.3.0
 
-# OpenAI / OpenRouter client
+# OpenAI / DeepSeek client
 openai>=1.0.0
 
 # OCR
