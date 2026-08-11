@@ -6,6 +6,7 @@ import json
 from datetime import date, datetime, timedelta
 from collections import Counter
 from aiogram import Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
@@ -31,7 +32,7 @@ from services.deepseek_service import (
 from services.error_logging_service import log_app_error
 from utils.log_sanitizer import safe_exception_summary
 from services.extended_activity_analysis_service import AnalysisPeriod, extended_activity_analysis_service
-from utils.telegram_text import split_telegram_message
+from utils.telegram_text import split_telegram_message, strip_telegram_html
 from services.notification_scheduler import (
     EVENING_ANALYSIS_REMIND_PREFIX,
     EVENING_ANALYSIS_REMINDER_DELAY,
@@ -49,6 +50,18 @@ AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT = (
     "Данные сохранены, попробуй чуть позже.\n\n"
     "Можно продолжать пользоваться ботом — всё остальное работает нормально."
 )
+
+
+def _telegram_delivery_error_code(error: Exception) -> str:
+    """Возвращает безопасный диагностический код без текста сообщения пользователя."""
+    description = str(error).lower()
+    if "can't parse entities" in description or "cant parse entities" in description:
+        return "telegram_parse_entities"
+    if "message is too long" in description:
+        return "telegram_message_too_long"
+    if "bot was blocked" in description:
+        return "telegram_bot_blocked"
+    return type(error).__name__
 
 
 async def run_daily_activity_analysis(
@@ -1363,7 +1376,11 @@ async def remind_evening_activity_analysis_later(callback: CallbackQuery):
     await callback.message.answer("⏰ Хорошо, напомню позже.")
 
 
-async def run_detailed_activity_analysis(message: Message, user_id: str, target_date: date | None = None):
+async def run_detailed_activity_analysis(
+    message: Message,
+    user_id: str,
+    target_date: date | None = None,
+) -> bool:
     """Запускает подробный AI-анализ дня через DeepSeek на расширенном контексте."""
     target_date = target_date or date.today()
     EveningAnalysisNotificationRepository.mark_analysis_started(user_id, target_date)
@@ -1376,7 +1393,6 @@ async def run_detailed_activity_analysis(message: Message, user_id: str, target_
             AnalysisPeriod(start_date=target_date, end_date=target_date, label="за день"),
         )
         ActivityAnalysisRepository.create_entry(user_id, analysis, target_date, source="detailed_deepseek")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
     except Exception as e:
         AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
         log_app_error(
@@ -1391,16 +1407,102 @@ async def run_detailed_activity_analysis(message: Message, user_id: str, target_
             "⚠️ Не удалось подготовить подробный AI-анализ. Попробуй немного позже.",
             reply_markup=activity_analysis_menu,
         )
-        return
+        return False
 
     push_menu_stack(message.bot, activity_analysis_menu)
     chunks = split_telegram_message(analysis, limit=3900)
-    for idx, chunk in enumerate(chunks, start=1):
-        await message.answer(
-            chunk,
-            parse_mode="HTML",
-            reply_markup=activity_analysis_menu if idx == len(chunks) else None,
+    logger.info(
+        "Detailed analysis delivery started feature=%s message_length=%s parts_count=%s",
+        "detailed_activity_analysis",
+        len(analysis),
+        len(chunks),
+    )
+    try:
+        for idx, chunk in enumerate(chunks, start=1):
+            reply_markup = activity_analysis_menu if idx == len(chunks) else None
+            try:
+                await message.answer(
+                    chunk,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                )
+            except TelegramBadRequest as html_error:
+                logger.warning(
+                    "Detailed analysis HTML delivery failed; retrying plain text "
+                    "feature=%s message_length=%s parts_count=%s part_index=%s "
+                    "stage=%s error_type=%s code=%s",
+                    "detailed_activity_analysis",
+                    len(analysis),
+                    len(chunks),
+                    idx,
+                    "send_html_part",
+                    safe_exception_summary(html_error),
+                    _telegram_delivery_error_code(html_error),
+                )
+                await message.answer(
+                    strip_telegram_html(chunk),
+                    parse_mode=None,
+                    reply_markup=reply_markup,
+                )
+    except Exception as delivery_error:
+        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
+        log_app_error(
+            source="telegram",
+            error=delivery_error,
+            user_id=user_id,
+            context="detailed_analysis_delivery",
+            extra={
+                "feature": "detailed_activity_analysis",
+                "handler": "run_detailed_activity_analysis",
+                "message_length": len(analysis),
+                "parts_count": len(chunks),
+                "part_index": idx,
+                "stage": "send_result",
+                "code": _telegram_delivery_error_code(delivery_error),
+            },
         )
+        logger.error(
+            "Detailed analysis delivery failed feature=%s message_length=%s "
+            "parts_count=%s part_index=%s stage=%s error_type=%s code=%s",
+            "detailed_activity_analysis",
+            len(analysis),
+            len(chunks),
+            idx,
+            "send_result",
+            safe_exception_summary(delivery_error),
+            _telegram_delivery_error_code(delivery_error),
+        )
+        try:
+            await message.answer(
+                "⚠️ Анализ был подготовлен, но не удалось отправить результат. Попробуйте ещё раз.",
+                reply_markup=activity_analysis_menu,
+            )
+        except Exception as notification_error:
+            log_app_error(
+                source="telegram",
+                error=notification_error,
+                user_id=user_id,
+                context="detailed_analysis_delivery",
+                extra={
+                    "feature": "detailed_activity_analysis",
+                    "handler": "run_detailed_activity_analysis",
+                    "message_length": len(analysis),
+                    "parts_count": len(chunks),
+                    "part_index": idx,
+                    "stage": "send_delivery_error",
+                    "code": _telegram_delivery_error_code(notification_error),
+                },
+            )
+        return False
+
+    AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
+    logger.info(
+        "Detailed analysis delivery completed feature=%s message_length=%s parts_count=%s",
+        "detailed_activity_analysis",
+        len(analysis),
+        len(chunks),
+    )
+    return True
 
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_DETAILED_DEEPSEEK_BUTTON_ALIASES)

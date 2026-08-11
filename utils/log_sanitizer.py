@@ -60,10 +60,14 @@ _SAFE_METADATA_KEYS = {
     "operation",
     "output_chars",
     "output_tokens",
+    "parse_mode",
+    "part_index",
+    "parts_count",
     "provider",
     "response_id",
     "retries",
     "status",
+    "stage",
     "total_tokens",
 }
 
