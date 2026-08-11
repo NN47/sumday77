@@ -43,7 +43,7 @@ class WorkoutRepository:
             session.add(workout)
             session.commit()
             session.refresh(workout)
-            logger.info(f"Saved workout {workout.id} for user {user_id}")
+            logger.info("Saved workout workout_id=%s", workout.id)
             return workout
     
     @staticmethod
@@ -71,7 +71,7 @@ class WorkoutRepository:
             if workout:
                 session.delete(workout)
                 session.commit()
-                logger.info(f"Deleted workout {workout_id} for user {user_id}")
+                logger.info("Deleted workout workout_id=%s", workout_id)
                 return True
             return False
     
@@ -130,6 +130,6 @@ class WorkoutRepository:
                     workout.jumps_count = jumps_count
                 workout.working_weight = working_weight
                 session.commit()
-                logger.info(f"Updated workout {workout_id} for user {user_id}: count={count}, calories={calories}")
+                logger.info("Updated workout workout_id=%s", workout_id)
                 return True
             return False

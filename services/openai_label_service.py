@@ -10,6 +10,7 @@ from openai import APITimeoutError, OpenAI, OpenAIError
 
 from config import OPENAI_API_KEY
 from services.ai_usage_logger import calculate_ai_cost, log_ai_usage
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +122,8 @@ class OpenAILabelService:
                 model=self.model,
                 status="error",
                 user_id=user_id,
-                error_message="OpenAI API key не настроен на сервере.",
+                error_message="configuration_error",
+                raw_metadata={"image_bytes": len(image_bytes), "input_chars": len(comment or "")},
             )
             raise OpenAILabelServiceConfigError("OpenAI API key не настроен на сервере.")
 
@@ -157,7 +159,7 @@ class OpenAILabelService:
             )
         except APITimeoutError as exc:
             latency_ms = int((time.perf_counter() - started) * 1000)
-            logger.error("OpenAI label analysis timed out: %s", exc, exc_info=True)
+            logger.error("OpenAI label analysis failed error_type=%s", safe_exception_summary(exc), exc_info=True)
             log_ai_usage(
                 provider="openai",
                 feature=feature,
@@ -165,12 +167,13 @@ class OpenAILabelService:
                 status="error",
                 user_id=user_id,
                 latency_ms=latency_ms,
-                error_message=str(exc),
+                error_message="timeout",
+                raw_metadata={"image_bytes": len(image_bytes), "input_chars": len(prompt)},
             )
             raise OpenAILabelServiceTimeoutError("OpenAI API request timed out") from exc
         except OpenAIError as exc:
             latency_ms = int((time.perf_counter() - started) * 1000)
-            logger.error("OpenAI label analysis API error: %s", exc, exc_info=True)
+            logger.error("OpenAI label analysis failed error_type=%s", safe_exception_summary(exc), exc_info=True)
             log_ai_usage(
                 provider="openai",
                 feature=feature,
@@ -178,15 +181,17 @@ class OpenAILabelService:
                 status="error",
                 user_id=user_id,
                 latency_ms=latency_ms,
-                error_message=str(exc),
+                error_message=safe_exception_summary(exc),
+                raw_metadata={"image_bytes": len(image_bytes), "input_chars": len(prompt)},
             )
-            raise OpenAILabelServiceAPIError(str(exc)) from exc
+            raise OpenAILabelServiceAPIError("OpenAI API request failed") from exc
 
         latency_ms = int((time.perf_counter() - started) * 1000)
         usage = getattr(response, "usage", None)
         input_tokens = getattr(usage, "input_tokens", None) if usage is not None else None
         output_tokens = getattr(usage, "output_tokens", None) if usage is not None else None
         total_tokens = getattr(usage, "total_tokens", None) if usage is not None else None
+        raw = (getattr(response, "output_text", "") or "").strip()
         log_ai_usage(
             provider="openai",
             feature=feature,
@@ -198,10 +203,14 @@ class OpenAILabelService:
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             estimated_cost_usd=calculate_ai_cost("openai", self.model, input_tokens, output_tokens),
-            raw_metadata={"response_id": getattr(response, "id", None)},
+            raw_metadata={
+                "response_id": getattr(response, "id", None),
+                "image_bytes": len(image_bytes),
+                "input_chars": len(prompt),
+                "output_chars": len(raw),
+            },
         )
 
-        raw = (getattr(response, "output_text", "") or "").strip()
         parsed = self._parse_json_response(raw)
         normalized = self._normalize_label_payload(parsed)
         return normalized if normalized else None
@@ -222,7 +231,8 @@ class OpenAILabelService:
                 model=self.model,
                 status="error",
                 user_id=user_id,
-                error_message="OpenAI API key не настроен на сервере.",
+                error_message="configuration_error",
+                raw_metadata={"image_bytes": len(image_bytes), "input_chars": len(comment or "")},
             )
             raise OpenAILabelServiceConfigError("OpenAI API key не настроен на сервере.")
 
@@ -259,7 +269,7 @@ class OpenAILabelService:
             )
         except APITimeoutError as exc:
             latency_ms = int((time.perf_counter() - started) * 1000)
-            logger.error("OpenAI food photo analysis timed out: %s", exc, exc_info=True)
+            logger.error("OpenAI food photo analysis failed error_type=%s", safe_exception_summary(exc), exc_info=True)
             log_ai_usage(
                 provider="openai",
                 feature=feature,
@@ -267,12 +277,13 @@ class OpenAILabelService:
                 status="error",
                 user_id=user_id,
                 latency_ms=latency_ms,
-                error_message=str(exc),
+                error_message="timeout",
+                raw_metadata={"image_bytes": len(image_bytes), "input_chars": len(prompt)},
             )
             raise OpenAILabelServiceTimeoutError("OpenAI API request timed out") from exc
         except OpenAIError as exc:
             latency_ms = int((time.perf_counter() - started) * 1000)
-            logger.error("OpenAI food photo analysis API error: %s", exc, exc_info=True)
+            logger.error("OpenAI food photo analysis failed error_type=%s", safe_exception_summary(exc), exc_info=True)
             log_ai_usage(
                 provider="openai",
                 feature=feature,
@@ -280,9 +291,10 @@ class OpenAILabelService:
                 status="error",
                 user_id=user_id,
                 latency_ms=latency_ms,
-                error_message=str(exc),
+                error_message=safe_exception_summary(exc),
+                raw_metadata={"image_bytes": len(image_bytes), "input_chars": len(prompt)},
             )
-            raise OpenAILabelServiceAPIError(str(exc)) from exc
+            raise OpenAILabelServiceAPIError("OpenAI API request failed") from exc
 
         latency_ms = int((time.perf_counter() - started) * 1000)
         usage = getattr(response, "usage", None)
@@ -305,8 +317,13 @@ class OpenAILabelService:
                 output_tokens=output_tokens,
                 total_tokens=total_tokens,
                 estimated_cost_usd=calculate_ai_cost("openai", self.model, input_tokens, output_tokens),
-                error_message=str(exc),
-                raw_metadata={"response_id": getattr(response, "id", None)},
+                error_message="invalid_json",
+                raw_metadata={
+                    "response_id": getattr(response, "id", None),
+                    "image_bytes": len(image_bytes),
+                    "input_chars": len(prompt),
+                    "output_chars": len(raw),
+                },
             )
             raise
 
@@ -321,7 +338,13 @@ class OpenAILabelService:
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             estimated_cost_usd=calculate_ai_cost("openai", self.model, input_tokens, output_tokens),
-            raw_metadata={"response_id": getattr(response, "id", None), "confidence": parsed.get("confidence")},
+            raw_metadata={
+                "response_id": getattr(response, "id", None),
+                "confidence": parsed.get("confidence"),
+                "image_bytes": len(image_bytes),
+                "input_chars": len(prompt),
+                "output_chars": len(raw),
+            },
         )
 
         normalized = self._normalize_food_photo_payload(parsed)

@@ -611,7 +611,7 @@ def reset_user_state(message: Message, *, keep_supplements: bool = False):
 async def show_training_menu(message: Message, state: FSMContext):
     """Показывает меню тренировок."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened training menu")
+    logger.info("Training menu opened")
     AnalyticsRepository.track_event(user_id, "open_activity", section="activity")
     await state.clear()  # Очищаем FSM состояние
     
@@ -622,7 +622,7 @@ async def show_training_menu(message: Message, state: FSMContext):
 async def quick_today_workout(message: Message, state: FSMContext):
     """Быстрый вход к списку тренировок за сегодня."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} used quick 'today workout' button")
+    logger.info("Today workout opened source=reply")
     
     # Очищаем предыдущее состояние и сразу открываем меню тренировок
     await state.clear()
@@ -658,7 +658,7 @@ async def quick_today_workout_cb(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     message = callback.message
     user_id = str(callback.from_user.id)
-    logger.info(f"User {user_id} used quick 'today workout' inline button")
+    logger.info("Today workout opened source=inline")
     
     await state.clear()
     await show_day_workouts(message, user_id, date.today())
@@ -684,7 +684,7 @@ async def start_exercise_selection(
 async def add_activity_entry(message: Message, state: FSMContext):
     """Открывает единое меню добавления шагов и упражнений."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened add activity menu")
+    logger.info("Add activity menu opened")
 
     await state.clear()
     await start_exercise_selection(message, state, date.today())
@@ -694,7 +694,7 @@ async def add_activity_entry(message: Message, state: FSMContext):
 async def add_training_entry(message: Message, state: FSMContext):
     """Поддерживает устаревшую кнопку тренировки через меню выбора активности."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened legacy workout activity menu")
+    logger.info("Legacy workout activity menu opened")
 
     await state.clear()
     await start_exercise_selection(message, state, date.today())
@@ -720,7 +720,7 @@ async def finish_exercise_without_active_state(message: Message, state: FSMConte
 async def show_training_calendar(message: Message):
     """Показывает календарь тренировок."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened training calendar")
+    logger.info("Training calendar opened")
     await show_calendar_back_button(message)
     await show_workout_calendar(message, user_id)
 
@@ -1844,7 +1844,11 @@ async def handle_count_input(message: Message, state: FSMContext):
         entry_date_str = data.get("entry_date")
         
         if not exercise:
-            logger.error(f"User {user_id}: missing exercise or variant when adding another set. Data: {data}")
+            logger.error(
+                "Workout state incomplete operation=add_another_set state_key_count=%s has_variant=%s",
+                len(data),
+                bool(variant),
+            )
             await message.answer("❌ Ошибка: данные потеряны. Начни добавление тренировки заново.")
             await state.clear()
             push_menu_stack(message.bot, training_menu)
@@ -1887,7 +1891,11 @@ async def handle_count_input(message: Message, state: FSMContext):
     
     # Проверяем, что данные есть
     if not exercise:
-        logger.error(f"User {user_id}: missing exercise or variant in state. Data: {data}")
+        logger.error(
+            "Workout state incomplete operation=save_set state_key_count=%s has_variant=%s",
+            len(data),
+            bool(variant),
+        )
         await message.answer("❌ Ошибка: данные потеряны. Начни добавление тренировки заново.")
         await state.clear()
         push_menu_stack(message.bot, training_menu)
@@ -1911,7 +1919,7 @@ async def handle_count_input(message: Message, state: FSMContext):
         working_weight=data.get("working_weight") if _is_gym_exercise(exercise) else None,
     )
     
-    logger.info(f"User {user_id} saved workout: {exercise} x {count} on {entry_date}")
+    logger.info("Workout saved workout_id=%s date=%s", workout.id, entry_date)
     AnalyticsRepository.track_event(user_id, "add_workout", section="activity")
     
     # Получаем общее количество для этого упражнения за день

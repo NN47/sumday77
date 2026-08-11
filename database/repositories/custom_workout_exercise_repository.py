@@ -47,5 +47,9 @@ class CustomWorkoutExerciseRepository:
             )
             session.add(custom_exercise)
             session.commit()
-            logger.info("Saved custom workout exercise for user %s: %s", user_id, normalized_name)
+            logger.info(
+                "Saved custom workout exercise exercise_id=%s name_chars=%s",
+                custom_exercise.id,
+                len(normalized_name),
+            )
             return True

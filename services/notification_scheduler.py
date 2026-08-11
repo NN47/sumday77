@@ -11,6 +11,7 @@ from database.session import get_db_session
 from database.models import ActivityAnalysisEntry, User, Supplement, SupplementEntry, SupplementNotificationState, KbjuSettings, EveningAnalysisNotificationState
 from database.repositories.evening_analysis_notification_repository import EveningAnalysisNotificationRepository
 from services.error_logging_service import log_app_error
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 MSK_TZ = ZoneInfo("Europe/Moscow")
@@ -132,7 +133,7 @@ class NotificationScheduler:
                 text=message,
                 reply_markup=reply_markup,
             )
-            logger.info(f"Уведомление отправлено пользователю {user_id}")
+            logger.info("Уведомление отправлено")
             return True
         except Exception as e:
             log_app_error(
@@ -140,7 +141,7 @@ class NotificationScheduler:
                 error=e,
                 user_id=str(user_id),
                 context="send_message",
-                extra={"message_preview": message[:80]},
+                extra={"message_length": len(message)},
             )
             return False
     
@@ -169,7 +170,9 @@ class NotificationScheduler:
         except Exception as e:
             meal_type_prepositional = MEAL_TYPE_PREPOSITIONAL.get(meal_type, meal_type)
             logger.error(
-                f"Ошибка при отправке уведомлений о {meal_type_prepositional}: {e}"
+                "Ошибка при отправке уведомлений meal_type=%s error_type=%s",
+                meal_type,
+                safe_exception_summary(e),
             )
 
     def build_evening_analysis_keyboard(self, target_date) -> InlineKeyboardMarkup:
@@ -246,9 +249,8 @@ class NotificationScheduler:
                     return "active_fsm"
             except Exception as e:
                 logger.warning(
-                    "Не удалось проверить FSM-состояние для напоминания анализа дня: user_id=%s error=%s",
-                    user_id,
-                    e,
+                    "Не удалось проверить FSM-состояние для напоминания анализа дня error_type=%s",
+                    safe_exception_summary(e),
                 )
 
         return None
@@ -389,8 +391,7 @@ class NotificationScheduler:
                 for (user_id, target_date, is_reminder), result in zip(pending_notifications, results):
                     if result is not True:
                         logger.warning(
-                            "Вечернее уведомление анализа дня не доставлено, повторим позже: user_id=%s",
-                            user_id,
+                            "Вечернее уведомление анализа дня не доставлено, повторим позже",
                         )
                         continue
                     if is_reminder:
@@ -398,7 +399,11 @@ class NotificationScheduler:
                     else:
                         EveningAnalysisNotificationRepository.mark_evening_notification_sent(user_id, target_date)
         except Exception as e:
-            logger.error("Ошибка при проверке вечерних уведомлений анализа дня: %s", e, exc_info=True)
+            logger.error(
+                "Ошибка при проверке вечерних уведомлений анализа дня error_type=%s",
+                safe_exception_summary(e),
+                exc_info=True,
+            )
 
     async def evening_analysis_notification_loop(self):
         """Цикл проверки вечерних уведомлений ИИ-анализа дня каждую минуту."""
@@ -410,7 +415,11 @@ class NotificationScheduler:
                 logger.info("Цикл вечерних уведомлений анализа дня остановлен")
                 break
             except Exception as e:
-                logger.error("Ошибка в цикле вечерних уведомлений анализа дня: %s", e, exc_info=True)
+                logger.error(
+                    "Ошибка в цикле вечерних уведомлений анализа дня error_type=%s",
+                    safe_exception_summary(e),
+                    exc_info=True,
+                )
                 await asyncio.sleep(60)
     
 
@@ -455,9 +464,8 @@ class NotificationScheduler:
                     return "active_fsm"
             except Exception as e:
                 logger.warning(
-                    "Не удалось проверить FSM-состояние для напоминания о добавке: user_id=%s error=%s",
-                    user_id,
-                    e,
+                    "Не удалось проверить FSM-состояние для напоминания о добавке error_type=%s",
+                    safe_exception_summary(e),
                 )
 
         return None
@@ -508,7 +516,9 @@ class NotificationScheduler:
                 break
             except Exception as e:
                 logger.error(
-                    f"Ошибка в планировщике уведомлений о {meal_type_prepositional}: {e}"
+                    "Ошибка в планировщике уведомлений meal_type=%s error_type=%s",
+                    meal_type,
+                    safe_exception_summary(e),
                 )
                 # В случае ошибки ждём минуту перед повтором
                 await asyncio.sleep(60)
@@ -658,9 +668,10 @@ class NotificationScheduler:
                         )
                     except Exception as e:
                         logger.error(
-                            f"Ошибка при проверке добавки {supplement.id} "
-                            f"для пользователя {supplement.user_id}: {e}",
-                            exc_info=True
+                            "Ошибка при проверке добавки supplement_id=%s error_type=%s",
+                            supplement.id,
+                            safe_exception_summary(e),
+                            exc_info=True,
                         )
 
             if pending_notifications:
@@ -700,7 +711,11 @@ class NotificationScheduler:
                     for key in successful_notification_keys:
                         self.sent_notifications_today.add(key)
         except Exception as e:
-            logger.error(f"Ошибка при проверке уведомлений о добавках: {e}", exc_info=True)
+            logger.error(
+                "Ошибка при проверке уведомлений о добавках error_type=%s",
+                safe_exception_summary(e),
+                exc_info=True,
+            )
     
     async def supplement_notification_loop(self):
         """Цикл проверки уведомлений о добавках каждую минуту."""
@@ -713,7 +728,11 @@ class NotificationScheduler:
                 logger.info("Цикл проверки уведомлений о добавках остановлен")
                 break
             except Exception as e:
-                logger.error(f"Ошибка в цикле проверки уведомлений о добавках: {e}", exc_info=True)
+                logger.error(
+                    "Ошибка в цикле проверки уведомлений о добавках error_type=%s",
+                    safe_exception_summary(e),
+                    exc_info=True,
+                )
                 # В случае ошибки ждём минуту перед повтором
                 await asyncio.sleep(60)
     

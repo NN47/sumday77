@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import logging
-import traceback
 from typing import Any
 
 from repositories.error_log_repository import ErrorLogRepository
+from utils.log_sanitizer import (
+    safe_exception_summary,
+    safe_traceback,
+    sanitize_log_label,
+    sanitize_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,29 +25,33 @@ def log_app_error(
 ) -> None:
     """Логирует ошибку в logger и сохраняет запись в БД."""
     error_type = type(error).__name__
-    message = str(error)
+    safe_source = sanitize_log_label(source, fallback="app") or "app"
+    safe_context = sanitize_log_label(context)
     payload = {
-        "source": source,
-        "context": context,
-        "user_id": user_id,
+        "source": safe_source,
+        "context": safe_context,
         "error_type": error_type,
         "severity": severity,
     }
-    if extra:
-        payload.update(extra)
+    payload.update(sanitize_metadata(extra) or {})
 
-    if severity.lower() == "error":
-        logger.exception("Application error", extra=payload)
-    else:
-        logger.error("Application issue", extra=payload)
+    logger.log(
+        logging.ERROR if severity.lower() == "error" else logging.WARNING,
+        "Application issue source=%s context=%s error_type=%s",
+        safe_source,
+        safe_context or "none",
+        error_type,
+        exc_info=(type(error), error, error.__traceback__) if error.__traceback__ else None,
+        extra=payload,
+    )
 
     ErrorLogRepository.log_error(
-        source=source,
+        source=safe_source,
         error_type=error_type,
-        message=message,
+        message=safe_exception_summary(error),
         user_id=user_id,
-        context=context,
+        context=safe_context,
         severity=severity,
-        traceback_text=traceback.format_exc(),
-        extra=extra,
+        traceback_text=safe_traceback(error),
+        extra=sanitize_metadata(extra),
     )

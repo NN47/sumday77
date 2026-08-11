@@ -6,6 +6,7 @@ from typing import Optional
 
 from database.models import MealCompletionComment
 from database.session import get_db_session
+from utils.log_sanitizer import safe_error_code
 
 
 class MealCompletionCommentRepository:
@@ -66,7 +67,7 @@ class MealCompletionCommentRepository:
             entry.output_tokens = output_tokens
             entry.total_tokens = total_tokens
             entry.estimated_cost_usd = estimated_cost_usd
-            entry.error_message = error_message
+            entry.error_message = safe_error_code(error_message)
             session.commit()
             session.refresh(entry)
             return entry

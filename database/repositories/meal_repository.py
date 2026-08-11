@@ -48,7 +48,7 @@ class MealRepository:
             session.add(meal)
             session.commit()
             session.refresh(meal)
-            logger.info(f"Saved meal {meal.id} for user {user_id}")
+            logger.info("Saved meal meal_id=%s", meal.id)
             AnalyticsRepository.track_event(user_id, "add_meal", section="kbju")
             return meal
     
@@ -166,7 +166,7 @@ class MealRepository:
             if meal:
                 session.delete(meal)
                 session.commit()
-                logger.info(f"Deleted meal {meal_id} for user {user_id}")
+                logger.info("Deleted meal meal_id=%s", meal_id)
                 return True
             return False
 
@@ -188,9 +188,8 @@ class MealRepository:
             if deleted_count:
                 session.commit()
                 logger.info(
-                    "Deleted %s meal(s) for user %s, date=%s, meal_type=%s",
+                    "Deleted meals count=%s date=%s meal_type=%s",
                     deleted_count,
-                    user_id,
                     entry_date.isoformat(),
                     normalized_meal_type,
                 )
@@ -256,7 +255,7 @@ class MealRepository:
                     MealCompletionComment.meal_id == meal_id,
                 ).delete(synchronize_session=False)
                 session.commit()
-                logger.info(f"Updated meal {meal_id} for user {user_id} and invalidated meal completion comment")
+                logger.info("Updated meal meal_id=%s and invalidated completion comment", meal_id)
                 return True
             return False
     
@@ -305,5 +304,5 @@ class MealRepository:
             
             session.commit()
             session.refresh(settings)
-            logger.info(f"Saved KBJU settings for user {user_id}")
+            logger.info("Saved KBJU settings")
             return settings

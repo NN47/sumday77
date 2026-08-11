@@ -32,6 +32,7 @@ from utils.calendar_utils import (
     build_measurement_calendar_keyboard,
     build_measurement_day_actions_keyboard,
 )
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -578,7 +579,7 @@ async def _start_measurements_wizard(
 async def weight_and_measurements(message: Message):
     """Сразу открывает раздел веса из кнопки «Вес и замеры»."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened weight section from weight and measurements button")
+    logger.info("Weight section opened")
     await my_weight(message)
 
 
@@ -586,7 +587,7 @@ async def weight_and_measurements(message: Message):
 async def my_weight(message: Message):
     """Показывает сводку по весу пользователя."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} viewed weight dashboard")
+    logger.info("Weight dashboard opened")
     AnalyticsRepository.track_event(user_id, "open_weight", section="weight")
 
     weights = WeightRepository.get_weights(user_id)
@@ -680,7 +681,7 @@ async def my_weight(message: Message):
 async def my_measurements(message: Message):
     """Показывает экран замеров тела."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened measurements screen")
+    logger.info("Measurements screen opened")
 
     measurements = WeightRepository.get_measurements(user_id, limit=1)
     latest = measurements[0] if measurements else None
@@ -769,7 +770,7 @@ async def start_add_weight_for_user(
     source: str = WEIGHT_SOURCE_WEIGHT_SECTION,
 ):
     """Начинает процесс добавления веса за сегодня для указанного пользователя."""
-    logger.info(f"User {user_id} started adding weight for today")
+    logger.info("Weight entry started")
 
     target_date = date.today()
 
@@ -915,7 +916,11 @@ async def _update_weight_editor_from_message(
             )
             return
         except Exception as e:
-            logger.warning("Could not edit weight editor message %s: %s", editor_message_id, e)
+            logger.warning(
+                "Could not edit weight editor message message_id=%s error_type=%s",
+                editor_message_id,
+                safe_exception_summary(e),
+            )
 
     await _send_weight_editor_message(message, state, text, base_weight, has_changes=has_changes)
 
@@ -1120,7 +1125,7 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
         if weight_id:
             success = WeightRepository.update_weight(weight_id, user_id, stored_weight_value)
             if success:
-                logger.info(f"User {user_id} updated weight {weight_id}: {weight_value} kg on {entry_date}")
+                logger.info("Weight updated record_id=%s date=%s", weight_id, entry_date)
                 updated_weight = WeightRepository.get_weight_for_date(user_id, entry_date)
                 await _show_weight_saved_result(
                     message,
@@ -1135,8 +1140,8 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
                 await message.answer("⚠️ Не удалось обновить запись.")
                 await state.clear()
         else:
-            WeightRepository.save_weight(user_id, stored_weight_value, entry_date)
-            logger.info(f"User {user_id} saved weight: {weight_value} kg on {entry_date}")
+            created_weight = WeightRepository.save_weight(user_id, stored_weight_value, entry_date)
+            logger.info("Weight saved record_id=%s date=%s", created_weight.id, entry_date)
             AnalyticsRepository.track_event(user_id, "add_weight", section="weight")
 
             saved_weight = WeightRepository.get_weight_for_date(user_id, entry_date)
@@ -1150,7 +1155,7 @@ async def _save_weight_draft(message: Message, state: FSMContext, user_id: str, 
                 updated_weight=saved_weight,
             )
     except Exception as e:
-        logger.error(f"Error saving/updating weight: {e}", exc_info=True)
+        logger.error("Error saving/updating weight error_type=%s", safe_exception_summary(e), exc_info=True)
         await message.answer("⚠️ Ошибка при сохранении. Повтори попытку позже.")
         await state.clear()
 
@@ -1336,7 +1341,11 @@ async def handle_weight_inline_cancel(callback: CallbackQuery, state: FSMContext
     try:
         await callback.message.delete()
     except Exception as e:
-        logger.warning("Could not delete weight editor message %s: %s", callback.message.message_id, e)
+        logger.warning(
+            "Could not delete weight editor message message_id=%s error_type=%s",
+            callback.message.message_id,
+            safe_exception_summary(e),
+        )
         await callback.message.edit_text("Ввод веса отменён.")
 
     await _return_after_weight_cancel(
@@ -1431,7 +1440,7 @@ async def handle_weight_delete_choice(message: Message, state: FSMContext):
 async def add_measurements_start(message: Message, state: FSMContext):
     """Начинает процесс добавления замеров."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} started adding measurements")
+    logger.info("Measurement entry started")
     await _start_measurements_wizard(message, state, date.today())
 
 
@@ -1514,17 +1523,17 @@ async def handle_measurements_review(message: Message, state: FSMContext):
                 await message.answer("⚠️ Не удалось обновить замеры.")
                 await state.clear()
                 return
-            logger.info(f"User {user_id} updated measurements {measurement_id} on {entry_date}")
+            logger.info("Measurements updated record_id=%s date=%s", measurement_id, entry_date)
         else:
             WeightRepository.save_measurements(user_id, db_payload, entry_date)
-            logger.info(f"User {user_id} saved measurements on {entry_date}")
+            logger.info("Measurements saved date=%s", entry_date)
 
         await state.clear()
         push_menu_stack(message.bot, measurements_menu)
         await message.answer("✅ Замеры сохранены", reply_markup=measurements_menu)
         await show_day_measurements(message, user_id, entry_date)
     except Exception as e:
-        logger.error(f"Error saving measurements: {e}", exc_info=True)
+        logger.error("Error saving measurements error_type=%s", safe_exception_summary(e), exc_info=True)
         await message.answer("⚠️ Ошибка при сохранении. Повтори попытку позже.")
         await state.clear()
 
@@ -1608,7 +1617,7 @@ async def handle_measurements_delete_choice(message: Message, state: FSMContext)
 async def show_weight_calendar(message: Message):
     """Показывает календарь веса."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened weight calendar")
+    logger.info("Weight calendar opened")
     await show_calendar_back_button(message)
     await show_weight_calendar_view(message, user_id)
 
@@ -1617,7 +1626,7 @@ async def show_weight_calendar(message: Message):
 async def show_measurements_calendar(message: Message):
     """Показывает календарь замеров."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened measurements calendar")
+    logger.info("Measurements calendar opened")
     await show_calendar_back_button(message)
     await show_measurements_calendar_view(message, user_id)
 

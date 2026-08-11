@@ -15,6 +15,7 @@ from utils.keyboards import (
     quick_actions_inline,
 )
 from database.repositories import AnalyticsRepository
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ async def go_main_menu(message: Message, state: FSMContext):
     )
     
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} navigated to main menu")
+    logger.info("Main menu opened")
     AnalyticsRepository.track_event(user_id, "open_main_menu", section="main")
     
     # Очищаем FSM состояние
@@ -132,8 +133,8 @@ async def go_main_menu(message: Message, state: FSMContext):
             parse_mode="HTML",
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
-    except Exception:
-        logger.exception("Failed to send main menu summary for user %s", user_id)
+    except Exception as exc:
+        logger.error("Failed to send main menu summary error_type=%s", safe_exception_summary(exc), exc_info=True)
     # Затем — отдельное сообщение с основной клавиатурой без уведомления
     await message.answer("⬇️ Кнопки управления", reply_markup=main_menu, disable_notification=True)
 
@@ -141,7 +142,7 @@ async def go_main_menu(message: Message, state: FSMContext):
 @router.message(StateFilter(None), lambda m: m.text == "⬅️ Назад")
 async def go_back(message: Message, state: FSMContext):
     """Обработчик кнопки 'Назад' - возвращает на шаг назад."""
-    logger.info(f"User {message.from_user.id} pressed back button")
+    logger.info("Back navigation requested")
     
     stack = getattr(message.bot, "menu_stack", [])
     

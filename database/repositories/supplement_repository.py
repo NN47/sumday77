@@ -5,6 +5,7 @@ from datetime import date, datetime
 from typing import Optional, List, Dict
 from database.session import get_db_session
 from database.models import Supplement, SupplementEntry, SupplementNotificationState
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ class SupplementRepository:
                 session.commit()
                 return True
             except Exception as e:
-                logger.error(f"Error deleting supplement: {e}", exc_info=True)
+                logger.error("Error deleting supplement error_type=%s", safe_exception_summary(e), exc_info=True)
                 session.rollback()
                 return False
     
@@ -125,7 +126,11 @@ class SupplementRepository:
                 session.commit()
                 return True
             except Exception as e:
-                logger.error(f"Error deleting supplement entry: {e}", exc_info=True)
+                logger.error(
+                    "Error deleting supplement entry error_type=%s",
+                    safe_exception_summary(e),
+                    exc_info=True,
+                )
                 session.rollback()
                 return False
     

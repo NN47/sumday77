@@ -55,6 +55,7 @@ from services.deepseek_service import (
 from services.ai_food_parser import parse_kbju_json
 from services.ai_usage_logger import log_ai_usage
 from utils.validators import parse_date
+from utils.log_sanitizer import safe_exception_summary
 from datetime import datetime
 from utils.meal_types import (
     MealType,
@@ -550,7 +551,10 @@ async def _edit_or_send_photo_analysis_message(
     try:
         await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
     except TelegramBadRequest as exc:
-        logger.info("Could not edit photo analysis message, sending a new one: %s", exc)
+        logger.info(
+            "Could not edit photo analysis message; sending a new one error_type=%s",
+            safe_exception_summary(exc),
+        )
         await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 
@@ -1660,7 +1664,6 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
     status = "error"
     error_message = None
     prompt = ""
-    product_names = [str(item.get("name") or item.get("product") or "продукт") for item in products]
     try:
         if len(meal_rows) > 1 and len(products) <= 1:
             raise ValueError(
@@ -1668,34 +1671,28 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
             )
         prompt = _build_meal_completion_prompt(user_id, meal, target_date, products, meal_totals)
         logger.info(
-            "meal_completion_comment meal_id=%s meal_type=%s product_count=%s product_names=%s calories=%.0f protein=%.1f fat=%.1f carbs=%.1f context_size=%s status=requesting",
+            "meal_completion_comment meal_id=%s meal_type=%s product_count=%s input_chars=%s status=requesting",
             meal.id,
             meal.meal_type,
             len(products),
-            product_names,
-            meal_totals["calories"],
-            meal_totals["protein"],
-            meal_totals["fat"],
-            meal_totals["carbs"],
             len(prompt),
         )
         raw_text, metadata = await asyncio.wait_for(asyncio.to_thread(deepseek_service.generate_meal_completion_comment, prompt, user_id=user_id, system_prompt=MEAL_COMPLETION_COMMENT_SYSTEM_PROMPT), timeout=75.0)
         text = _sanitize_meal_comment_html(raw_text)
         status = "success"
     except Exception as exc:  # не блокируем завершение приёма пищи
-        logger.warning("Meal completion comment failed for meal %s: %s", meal.id, exc)
-        error_message = str(exc)
+        logger.warning(
+            "Meal completion comment failed meal_id=%s error_type=%s",
+            meal.id,
+            safe_exception_summary(exc),
+        )
+        error_message = safe_exception_summary(exc)
     finally:
         logger.info(
-            "meal_completion_comment meal_id=%s meal_type=%s product_count=%s product_names=%s calories=%.0f protein=%.1f fat=%.1f carbs=%.1f context_size=%s status=%s",
+            "meal_completion_comment meal_id=%s meal_type=%s product_count=%s input_chars=%s status=%s",
             meal.id,
             meal.meal_type,
             len(products),
-            product_names,
-            meal_totals["calories"],
-            meal_totals["protein"],
-            meal_totals["fat"],
-            meal_totals["carbs"],
             len(prompt),
             status,
         )
@@ -1823,7 +1820,11 @@ async def _safe_edit_or_send_message(
         except TelegramBadRequest as exc:
             if "message is not modified" in str(exc).lower():
                 return stored_message_id
-            logger.info("Не удалось отредактировать сообщение %s: %s", stored_message_id, exc)
+            logger.info(
+                "Не удалось отредактировать сообщение message_id=%s error_type=%s",
+                stored_message_id,
+                safe_exception_summary(exc),
+            )
 
     try:
         sent = await message.answer(text, parse_mode="HTML", reply_markup=inline_keyboard)
@@ -1839,7 +1840,11 @@ async def _delete_stored_message(message: Message, stored_message_id: int | None
     try:
         await message.bot.delete_message(chat_id=message.chat.id, message_id=stored_message_id)
     except TelegramBadRequest as exc:
-        logger.info("Не удалось удалить сообщение %s: %s", stored_message_id, exc)
+        logger.info(
+            "Не удалось удалить сообщение message_id=%s error_type=%s",
+            stored_message_id,
+            safe_exception_summary(exc),
+        )
 
 
 async def _render_day_meals_messages(
@@ -2069,7 +2074,12 @@ async def _analyze_image_with_openai(
             **kwargs,
         )
     except Exception as exc:
-        logger.error("[OpenAI] %s failed: %s", operation_log_name, exc, exc_info=True)
+        logger.error(
+            "[OpenAI] %s failed error_type=%s",
+            operation_log_name,
+            safe_exception_summary(exc),
+            exc_info=True,
+        )
         raise
 
     logger.info("[OpenAI] %s completed successfully", operation_log_name)
@@ -2112,7 +2122,12 @@ async def _run_image_analysis_with_openai_fallback(
             return ProviderAnalysisResult(payload=gemini_result, provider="gemini")
         logger.warning("Gemini returned no usable result for %s", operation_type)
     except Exception as gemini_error:
-        logger.error("Gemini error for %s: %s", operation_type, gemini_error, exc_info=True)
+        logger.error(
+            "Gemini error for %s error_type=%s",
+            operation_type,
+            safe_exception_summary(gemini_error),
+            exc_info=True,
+        )
 
     logger.info("Fallback: переход на OpenAI для %s", operation_type)
     try:
@@ -2134,7 +2149,12 @@ async def _run_image_analysis_with_openai_fallback(
             return ProviderAnalysisResult(payload=openai_result, provider="openai")
         logger.error("OpenAI returned no usable result for %s", operation_type)
     except Exception as openai_error:
-        logger.error("OpenAI error for %s: %s", operation_type, openai_error, exc_info=True)
+        logger.error(
+            "OpenAI error for %s error_type=%s",
+            operation_type,
+            safe_exception_summary(openai_error),
+            exc_info=True,
+        )
         raise AllProvidersUnavailableError("All providers unavailable") from openai_error
 
     logger.error("%s failed: all providers unavailable", operation_type)
@@ -2146,7 +2166,11 @@ async def _run_label_analysis_with_openai_fallback(analyzer, image_data: bytes, 
     try:
         return await _run_gemini_task(analyzer, image_data)
     except Exception as gemini_error:
-        logger.error("Gemini error for анализа этикетки: %s", gemini_error, exc_info=True)
+        logger.error(
+            "Gemini error for label analysis error_type=%s",
+            safe_exception_summary(gemini_error),
+            exc_info=True,
+        )
         logger.info("[Fallback] All Gemini keys failed. Switching to OpenAI.")
         try:
             return await _analyze_label_with_openai(image_data, user_id=user_id)
@@ -2183,7 +2207,7 @@ async def _run_food_photo_analysis_with_openai_fallback(
             logger.info("Анализ еды по фото завершён успешно через Gemini")
         elif result.provider == "openai":
             logger.info("Анализ еды по фото завершён успешно через OpenAI")
-        logger.info("final_food_photo_analysis_provider=%s user_id=%s", result.provider, user_id)
+        logger.info("final_food_photo_analysis_provider=%s", result.provider)
         return result
     except AllProvidersUnavailableError as error:
         logger.error("Анализ еды по фото завершён ошибкой: все провайдеры недоступны")
@@ -3110,7 +3134,7 @@ async def my_product_confirm(callback: CallbackQuery, state: FSMContext):
 async def calories(message: Message, state: FSMContext):
     """Открывает дневник питания с актуальной сводкой за сегодня."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened food diary section")
+    logger.info("Food diary opened")
     AnalyticsRepository.track_event(user_id, "open_kbju", section="kbju")
     await state.clear()
     await send_today_results(message, user_id)
@@ -3120,7 +3144,7 @@ async def calories(message: Message, state: FSMContext):
 async def quick_snack(message: Message, state: FSMContext):
     """Упрощённый вход в добавление перекуса через ИИ одним нажатием."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} used quick snack button")
+    logger.info("Quick snack flow started source=reply")
     
     await state.update_data(meal_type=MealType.SNACK.value, pending_add_method=None, entry_date=date.today().isoformat())
     # Начинаем поток как для ИИ-ввода, но с более короткими подсказками под перекус
@@ -3146,7 +3170,7 @@ async def quick_snack_cb(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     message = callback.message
     user_id = str(callback.from_user.id)
-    logger.info(f"User {user_id} used quick snack inline button")
+    logger.info("Quick snack flow started source=inline")
     
     await state.update_data(meal_type=MealType.SNACK.value, pending_add_method=None, entry_date=date.today().isoformat())
     await state.set_state(MealEntryStates.waiting_for_ai_food_input)
@@ -3180,7 +3204,7 @@ async def show_kbju_goal(message: Message, state: FSMContext):
     from utils.keyboards import kbju_intro_menu
 
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened KBJU goal settings")
+    logger.info("KBJU goal settings opened")
 
     await state.clear()
     settings = MealRepository.get_kbju_settings(user_id)
@@ -4210,8 +4234,7 @@ async def _handle_food_photo_analysis(
     else:
         entry_date = date.today()
 
-    logger.info("Старт пользовательского запроса Анализ еды по фото user_id=%s provider=%s", user_id, provider)
-    logger.info("food_photo_analysis_provider=%s user_id=%s", provider, user_id)
+    logger.info("food_photo_analysis_started provider=%s", provider)
     await message.answer("📷 Анализирую фото с помощью ИИ, секунду...")
 
     if image_file_id:
@@ -4259,7 +4282,7 @@ async def _handle_food_photo_analysis(
         await error_sender(message, e)
         return
 
-    logger.info("food_photo_analysis_final_provider=%s user_id=%s", final_provider, user_id)
+    logger.info("food_photo_analysis_completed provider=%s", final_provider)
 
     if not kbju_data or "total" not in kbju_data:
         await message.answer(
@@ -4823,7 +4846,7 @@ async def _handle_label_photo_analysis(
     else:
         entry_date = date.today()
 
-    logger.info("label_analysis_provider=%s user_id=%s", provider, user_id)
+    logger.info("label_analysis_started provider=%s", provider)
     await message.answer("📋 Анализирую этикетку с помощью ИИ, секунду...")
 
     photo = message.photo[-1]
@@ -5139,7 +5162,7 @@ async def continue_after_meal_comment(callback: CallbackQuery):
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest as exc:
-            logger.info("Не удалось убрать кнопку продолжения: %s", exc)
+            logger.info("Не удалось убрать кнопку продолжения error_type=%s", safe_exception_summary(exc))
         await _return_to_food_diary(callback.message, user_id, target_date)
     await callback.answer()
 

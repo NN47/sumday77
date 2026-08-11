@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from config import OCR_MAX_SIDE_PX, OCR_MIN_TEXT_LENGTH, OCR_TIMEOUT_SECONDS
+from utils.log_sanitizer import safe_exception_summary
 
 try:
     import pytesseract
@@ -117,8 +118,7 @@ def preprocess_image_for_ocr(path: str | Path) -> str:
                 processed_path = tmp.name
 
             logger.info(
-                "OCR preprocess done: source=%s size_before=%sx%s size_after=%sx%s elapsed_ms=%s",
-                source,
+                "OCR preprocess done size_before=%sx%s size_after=%sx%s elapsed_ms=%s",
                 original_size[0],
                 original_size[1],
                 prepared.size[0],
@@ -129,7 +129,7 @@ def preprocess_image_for_ocr(path: str | Path) -> str:
     except OCRServiceError:
         raise
     except Exception as exc:  # pragma: no cover - зависит от файлов и PIL
-        raise OCRImageOpenError(str(exc)) from exc
+        raise OCRImageOpenError("Image preprocessing failed") from exc
 
 
 def extract_text_with_tesseract(path: str | Path) -> str:
@@ -149,8 +149,7 @@ def extract_text_with_tesseract(path: str | Path) -> str:
                 timeout=OCR_TIMEOUT_SECONDS,
             )
             logger.info(
-                "OCR tesseract done: path=%s elapsed_ms=%s text_len=%s",
-                path,
+                "OCR tesseract done elapsed_ms=%s text_len=%s",
                 int((time.perf_counter() - ocr_started) * 1000),
                 len(text or ""),
             )
@@ -158,10 +157,10 @@ def extract_text_with_tesseract(path: str | Path) -> str:
     except RuntimeError as exc:  # pragma: no cover - зависит от внешнего tesseract
         msg = str(exc).lower()
         if "timeout" in msg or "time out" in msg:
-            raise OCRTimeoutError(str(exc)) from exc
-        raise OCRServiceError(str(exc)) from exc
+            raise OCRTimeoutError("OCR request timed out") from exc
+        raise OCRServiceError("OCR request failed") from exc
     except Exception as exc:  # pragma: no cover - зависит от внешней утилиты
-        raise OCRServiceError(str(exc)) from exc
+        raise OCRServiceError("OCR request failed") from exc
 
 
 def is_ocr_text_good_enough(text: str) -> bool:
@@ -190,8 +189,7 @@ def parse_label_via_ocr_pipeline(path: str | Path) -> OCRResult:
     used_preprocessing = False
 
     logger.info(
-        "OCR pipeline start: path=%s file_size_bytes=%s timeout=%ss max_side=%s",
-        source,
+        "OCR pipeline start file_size_bytes=%s timeout=%ss max_side=%s",
         source.stat().st_size if source.exists() else "n/a",
         OCR_TIMEOUT_SECONDS,
         OCR_MAX_SIDE_PX,
@@ -247,42 +245,42 @@ def parse_label_via_ocr_pipeline(path: str | Path) -> OCRResult:
             used_preprocessing=used_preprocessing,
         )
     except OCRTimeoutError as exc:
-        logger.warning("OCR timeout: path=%s error=%s", source, exc)
+        logger.warning("OCR timeout error_type=%s", safe_exception_summary(exc))
         return OCRResult(
             success=False,
             text="",
             error_type="timeout",
-            error_message=str(exc),
+            error_message="timeout",
             processing_time_ms=int((time.perf_counter() - started) * 1000),
             used_preprocessing=used_preprocessing,
         )
     except OCRImageOpenError as exc:
-        logger.error("OCR image_open_error: path=%s error=%s", source, exc)
+        logger.error("OCR image_open_error error_type=%s", safe_exception_summary(exc))
         return OCRResult(
             success=False,
             text="",
             error_type="image_open_error",
-            error_message=str(exc),
+            error_message="image_open_error",
             processing_time_ms=int((time.perf_counter() - started) * 1000),
             used_preprocessing=used_preprocessing,
         )
     except OCRDependencyError as exc:
-        logger.error("OCR tesseract_error (dependency): path=%s error=%s", source, exc)
+        logger.error("OCR dependency error_type=%s", safe_exception_summary(exc))
         return OCRResult(
             success=False,
             text="",
             error_type="tesseract_error",
-            error_message=str(exc),
+            error_message="dependency_error",
             processing_time_ms=int((time.perf_counter() - started) * 1000),
             used_preprocessing=used_preprocessing,
         )
     except OCRServiceError as exc:
-        logger.error("OCR tesseract_error: path=%s error=%s", source, exc)
+        logger.error("OCR tesseract_error error_type=%s", safe_exception_summary(exc))
         return OCRResult(
             success=False,
             text="",
             error_type="tesseract_error",
-            error_message=str(exc),
+            error_message="ocr_error",
             processing_time_ms=int((time.perf_counter() - started) * 1000),
             used_preprocessing=used_preprocessing,
         )
@@ -291,7 +289,7 @@ def parse_label_via_ocr_pipeline(path: str | Path) -> OCRResult:
             try:
                 os.remove(processed_path)
             except OSError as exc:
-                logger.warning("OCR cleanup_error: path=%s error=%s", processed_path, exc)
+                logger.warning("OCR cleanup_error error_type=%s", safe_exception_summary(exc))
 
 
 class OCRService:

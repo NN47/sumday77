@@ -7,6 +7,13 @@ from sqlalchemy import func
 
 from database.models import ErrorLog
 from database.session import get_db_session
+from utils.log_sanitizer import (
+    safe_error_code,
+    sanitize_identifier,
+    sanitize_log_label,
+    sanitize_traceback_text,
+    sanitize_user_id,
+)
 
 
 class ErrorLogRepository:
@@ -27,24 +34,28 @@ class ErrorLogRepository:
         module: str | None = None,
         function_name: str | None = None,
     ) -> None:
-        resolved_source = source or module or "app"
-        resolved_context = context or function_name
-        resolved_message = message or error_message or ""
+        resolved_source = sanitize_log_label(source or module, fallback="app") or "app"
+        resolved_context = sanitize_log_label(context or function_name)
+        resolved_message = safe_error_code(message or error_message)
+        resolved_error_type = sanitize_identifier(error_type, fallback="Exception") or "Exception"
+        resolved_severity = sanitize_log_label(severity, fallback="error") or "error"
+        resolved_module = sanitize_log_label(module or resolved_source, fallback="app") or "app"
+        resolved_function = sanitize_log_label(function_name or resolved_context)
 
         with get_db_session() as session:
             session.add(
                 ErrorLog(
                     source=resolved_source,
-                    error_type=error_type,
+                    error_type=resolved_error_type,
                     message=resolved_message,
-                    user_id=user_id,
+                    user_id=sanitize_user_id(user_id),
                     context=resolved_context,
-                    severity=severity,
-                    traceback_text=traceback_text,
+                    severity=resolved_severity,
+                    traceback_text=sanitize_traceback_text(traceback_text),
                     # old fields for compatibility
                     error_message=resolved_message,
-                    module=module or resolved_source,
-                    function_name=function_name or resolved_context,
+                    module=resolved_module,
+                    function_name=resolved_function,
                 )
             )
 

@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import hashlib
 
 from sqlalchemy import func, case
 
 from database.models import GeminiAccount, GeminiRequestLog
 from database.session import get_db_session
 from time_utils import UTC_TZ, now_moscow, to_moscow
+from utils.log_sanitizer import safe_error_code
 
 
 class GeminiRepository:
@@ -22,10 +24,12 @@ class GeminiRepository:
 
     @staticmethod
     def mask_api_key(api_key: str) -> str:
+        """Returns a non-reversible fingerprint without retaining key characters."""
         key = (api_key or "").strip()
-        if len(key) <= 10:
-            return key[:3] + "..."
-        return f"{key[:6]}...{key[-4:]}"
+        if not key:
+            return "missing"
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+        return f"sha256:{digest}"
 
     @staticmethod
     def sync_accounts(account_configs: list[dict]) -> None:
@@ -201,7 +205,7 @@ class GeminiRepository:
                         event_type=reason,
                         reason=reason,
                         model_name=model_name,
-                        error_message=(error_message or "")[:1000] if error_message else None,
+                        error_message=safe_error_code(error_message),
                     )
                 )
                 return candidate
@@ -262,7 +266,7 @@ class GeminiRepository:
                 event_type=event_type,
                 reason=reason,
                 model_name=model_name,
-                error_message=(error_message or "")[:1000] if error_message else None,
+                error_message=safe_error_code(error_message),
             )
         )
 
@@ -313,7 +317,7 @@ class GeminiRepository:
                     event_type="retry_temporary_error",
                     reason=f"retry#{retry_number} delay={delay_seconds:.2f}s",
                     model_name=model_name,
-                    error_message=(error_message or "")[:1000] if error_message else None,
+                    error_message=safe_error_code(error_message),
                 )
             )
 
@@ -333,7 +337,7 @@ class GeminiRepository:
                     event_type="request_failed",
                     reason=error_type,
                     model_name=model_name,
-                    error_message=(error_message or "")[:1000],
+                    error_message=safe_error_code(error_message),
                 )
             )
 
@@ -354,7 +358,7 @@ class GeminiRepository:
                 status=status,
                 model_name=model_name,
                 reason=f"attempts={attempts};retries={retries};error={error_type or 'none'}",
-                error_message=error_message,
+                error_message=safe_error_code(error_message),
             )
 
     @staticmethod
@@ -375,7 +379,7 @@ class GeminiRepository:
             account.error_requests = int(account.error_requests or 0) + 1
             account.last_request_at = now
             account.last_error_at = now
-            account.last_error_message = (error_message or "")[:1000]
+            account.last_error_message = safe_error_code(error_message)
             account.last_error_type = error_type
             account.updated_at = now
 
@@ -399,7 +403,7 @@ class GeminiRepository:
                     event_type=status,
                     reason=error_type,
                     model_name=model_name,
-                    error_message=(error_message or "")[:1000],
+                    error_message=safe_error_code(error_message),
                 )
             )
 
@@ -421,7 +425,7 @@ class GeminiRepository:
                     status="key_put_on_cooldown",
                     event_type="key_put_on_cooldown",
                     reason="temporary",
-                    error_message=reason[:1000],
+                    error_message=safe_error_code(reason),
                 )
             )
 
@@ -444,7 +448,7 @@ class GeminiRepository:
                     status="key_rate_limited",
                     event_type="key_rate_limited",
                     reason="quota",
-                    error_message=reason[:1000],
+                    error_message=safe_error_code(reason),
                 )
             )
 
@@ -456,7 +460,7 @@ class GeminiRepository:
                 return
 
             account.status = GeminiRepository.STATUS_AUTH_FAILED
-            account.disabled_reason = reason[:500]
+            account.disabled_reason = safe_error_code(reason)
             account.is_active = False
             account.updated_at = datetime.utcnow()
 
@@ -466,7 +470,7 @@ class GeminiRepository:
                     status="key_disabled_auth_error",
                     event_type="key_disabled_auth_error",
                     reason="auth",
-                    error_message=reason[:1000],
+                    error_message=safe_error_code(reason),
                 )
             )
 

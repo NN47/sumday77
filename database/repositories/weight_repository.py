@@ -24,7 +24,7 @@ class WeightRepository:
             session.add(weight)
             session.commit()
             session.refresh(weight)
-            logger.info(f"Saved weight {weight.id} for user {user_id}")
+            logger.info("Saved weight record_id=%s", weight.id)
             return weight
     
     @staticmethod
@@ -115,7 +115,7 @@ class WeightRepository:
                 session.flush()
             user.target_weight = target_weight
             session.commit()
-            logger.info(f"Updated target weight for user {user_id}: {target_weight}")
+            logger.info("Updated target weight")
 
     @staticmethod
     def get_target_weight(user_id: str) -> Optional[float]:
@@ -142,7 +142,7 @@ class WeightRepository:
             if weight:
                 weight.value = value
                 session.commit()
-                logger.info(f"Updated weight {weight_id} for user {user_id}")
+                logger.info("Updated weight record_id=%s", weight_id)
                 return True
             return False
     
@@ -159,7 +159,7 @@ class WeightRepository:
             if weight:
                 session.delete(weight)
                 session.commit()
-                logger.info(f"Deleted weight {weight_id} for user {user_id}")
+                logger.info("Deleted weight record_id=%s", weight_id)
                 return True
             return False
     
@@ -183,7 +183,7 @@ class WeightRepository:
             session.add(measurement)
             session.commit()
             session.refresh(measurement)
-            logger.info(f"Saved measurement {measurement.id} for user {user_id}")
+            logger.info("Saved measurement record_id=%s", measurement.id)
             return measurement
     
     @staticmethod
@@ -212,7 +212,7 @@ class WeightRepository:
             if measurement:
                 session.delete(measurement)
                 session.commit()
-                logger.info(f"Deleted measurement {measurement_id} for user {user_id}")
+                logger.info("Deleted measurement record_id=%s", measurement_id)
                 return True
             return False
 
@@ -233,7 +233,7 @@ class WeightRepository:
                 measurement.biceps = measurements.get("biceps")
                 measurement.thigh = measurements.get("thigh")
                 session.commit()
-                logger.info(f"Updated measurement {measurement_id} for user {user_id}")
+                logger.info("Updated measurement record_id=%s", measurement_id)
                 return True
             return False
     

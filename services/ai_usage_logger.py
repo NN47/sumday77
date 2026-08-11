@@ -6,6 +6,14 @@ from typing import Any
 
 from database.models import AIUsageLog
 from database.session import get_db_session
+from utils.log_sanitizer import (
+    safe_error_code,
+    safe_exception_summary,
+    sanitize_identifier,
+    sanitize_log_label,
+    sanitize_metadata,
+    sanitize_user_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,19 +82,25 @@ def log_ai_usage(
         with get_db_session() as session:
             session.add(
                 AIUsageLog(
-                    user_id=str(user_id) if user_id is not None else None,
-                    provider=(provider or "").lower(),
-                    feature=feature,
-                    model=model,
-                    status=status,
+                    user_id=sanitize_user_id(user_id),
+                    provider=sanitize_log_label(provider, fallback="unknown") or "unknown",
+                    feature=sanitize_log_label(feature, fallback="unknown") or "unknown",
+                    model=sanitize_identifier(model, fallback="unknown") or "unknown",
+                    status=sanitize_log_label(status, fallback="unknown") or "unknown",
                     latency_ms=_to_int_or_none(latency_ms),
                     input_tokens=_to_int_or_none(input_tokens),
                     output_tokens=_to_int_or_none(output_tokens),
                     total_tokens=_to_int_or_none(total_tokens),
                     estimated_cost_usd=_to_float_or_none(estimated_cost_usd),
-                    error_message=error_message,
-                    raw_metadata=raw_metadata,
+                    error_message=safe_error_code(error_message),
+                    raw_metadata=sanitize_metadata(raw_metadata),
                 )
             )
     except Exception as exc:  # pragma: no cover - защитное логирование
-        logger.warning("Failed to log AI usage provider=%s feature=%s status=%s: %s", provider, feature, status, exc)
+        logger.warning(
+            "Failed to log AI usage provider=%s feature=%s status=%s error_type=%s",
+            sanitize_log_label(provider, fallback="unknown"),
+            sanitize_log_label(feature, fallback="unknown"),
+            sanitize_log_label(status, fallback="unknown"),
+            safe_exception_summary(exc),
+        )

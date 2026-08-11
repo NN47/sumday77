@@ -15,6 +15,7 @@ from database.account_deletion import delete_user_account
 from database.repositories import SupportRepository, AnalyticsRepository, ErrorLogRepository
 from states.user_states import SupportStates
 from config import ADMIN_ID
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ async def settings(message: Message, state: FSMContext):
     reset_user_state(message)
     await state.clear()  # Очищаем FSM состояние
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened settings")
+    logger.info("Settings opened")
     
     push_menu_stack(message.bot, settings_menu)
     await message.answer(
@@ -47,8 +48,7 @@ async def delete_account_start(message: Message):
     """Начинает процесс удаления аккаунта."""
     reset_user_state(message)
     message.bot.expecting_account_deletion_confirm = True
-    user_id = str(message.from_user.id)
-    logger.warning(f"User {user_id} initiated account deletion")
+    logger.warning("Account deletion initiated")
     
     push_menu_stack(message.bot, delete_account_confirm_menu)
     await message.answer(
@@ -100,7 +100,7 @@ async def delete_account_text_confirm(message: Message):
     user_id = str(message.from_user.id)
     message.bot.expecting_account_deletion_confirm = False
     message.bot.expecting_account_deletion_text_confirm = False
-    logger.warning(f"User {user_id} confirmed account deletion with text phrase")
+    logger.warning("Account deletion confirmed")
 
     success = delete_user_account(user_id)
 
@@ -143,7 +143,7 @@ async def support(message: Message, state: FSMContext):
     """Начинает процесс отправки сообщения в поддержку."""
     reset_user_state(message)
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened support")
+    logger.info("Support flow opened")
     
     await state.set_state(SupportStates.waiting_for_message)
     await message.answer(
@@ -221,13 +221,13 @@ async def handle_support_message(message: Message, state: FSMContext):
             reply_markup=settings_menu,
             parse_mode="HTML",
         )
-        logger.info(f"Support message from user {user_id} sent to admin {ADMIN_ID}")
+        logger.info("Support message delivered message_chars=%s", len(user_text.strip()))
     except Exception as e:
-        logger.error(f"Error sending support message: {e}")
+        logger.error("Error sending support message error_type=%s", safe_exception_summary(e), exc_info=True)
         ErrorLogRepository.log_error(
             user_id=user_id,
             error_type=type(e).__name__,
-            error_message=str(e),
+            error_message=safe_exception_summary(e),
             module=__name__,
             function_name="handle_support_message",
         )
@@ -242,7 +242,7 @@ async def privacy_policy(message: Message):
     """Показывает политику конфиденциальности."""
     reset_user_state(message)
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} viewed privacy policy")
+    logger.info("Privacy policy opened")
     
     privacy_text = (
         "🔒 <b>Политика конфиденциальности</b>\n\n"

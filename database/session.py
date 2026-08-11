@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from config import DATABASE_URL, DB_POOL_PRE_PING, DB_POOL_RECYCLE
 from database.models import Base
 import logging
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ def init_db():
                 conn.commit()
                 logger.info("Добавлен столбец supplement_entries.amount")
         except Exception as e:
-            logger.warning(f"Ошибка при проверке supplement_entries.amount: {e}")
+            logger.warning("Ошибка при проверке supplement_entries.amount error_type=%s", safe_exception_summary(e))
         
         # workouts activity input fields
         try:
@@ -64,15 +65,18 @@ def init_db():
                     conn.commit()
                     logger.info("Изменён тип столбца workouts.count на FLOAT")
                 except Exception as type_error:
-                    logger.warning(f"Не удалось изменить тип workouts.count на FLOAT: {type_error}")
+                    logger.warning(
+                        "Не удалось изменить тип workouts.count на FLOAT error_type=%s",
+                        safe_exception_summary(type_error),
+                    )
         except Exception as e:
-            logger.warning(f"Ошибка при проверке workouts activity input fields: {e}")
+            logger.warning("Ошибка при проверке workouts fields error_type=%s", safe_exception_summary(e))
 
         # users.target_weight / users.created_at / users.last_seen_at
         try:
             user_columns = {col["name"] for col in inspector.get_columns("users")}
         except Exception as e:
-            logger.warning(f"Ошибка при чтении схемы users: {e}")
+            logger.warning("Ошибка при чтении схемы users error_type=%s", safe_exception_summary(e))
             user_columns = set()
 
         def _add_users_column_if_missing(column_name: str, sql_type: str, fill_now: bool = False) -> None:
@@ -90,7 +94,11 @@ def init_db():
                 conn.commit()
                 logger.info(f"Добавлен столбец users.{column_name}")
             except Exception as e:
-                logger.warning(f"Ошибка при добавлении users.{column_name}: {e}")
+                logger.warning(
+                    "Ошибка при добавлении users.%s error_type=%s",
+                    column_name,
+                    safe_exception_summary(e),
+                )
 
         _add_users_column_if_missing("target_weight", "FLOAT")
         _add_users_column_if_missing("timezone", "VARCHAR DEFAULT 'Europe/Moscow' NOT NULL")
@@ -105,13 +113,16 @@ def init_db():
         try:
             Base.metadata.tables["meal_completion_comments"].create(bind=engine, checkfirst=True)
         except Exception as e:
-            logger.warning(f"Ошибка при создании meal_completion_comments: {e}")
+            logger.warning(
+                "Ошибка при создании meal_completion_comments error_type=%s",
+                safe_exception_summary(e),
+            )
 
         # error_logs new schema fields
         try:
             error_columns = {col["name"] for col in inspector.get_columns("error_logs")}
         except Exception as e:
-            logger.warning(f"Ошибка при чтении схемы error_logs: {e}")
+            logger.warning("Ошибка при чтении схемы error_logs error_type=%s", safe_exception_summary(e))
             error_columns = set()
 
         def _add_error_log_column_if_missing(column_name: str, sql_type: str) -> None:
@@ -122,7 +133,11 @@ def init_db():
                 conn.commit()
                 logger.info(f"Добавлен столбец error_logs.{column_name}")
             except Exception as e:
-                logger.warning(f"Ошибка при добавлении error_logs.{column_name}: {e}")
+                logger.warning(
+                    "Ошибка при добавлении error_logs.%s error_type=%s",
+                    column_name,
+                    safe_exception_summary(e),
+                )
 
         _add_error_log_column_if_missing("source", "VARCHAR")
         _add_error_log_column_if_missing("message", "TEXT")
@@ -137,7 +152,7 @@ def init_db():
                 conn.commit()
                 logger.info("Добавлен столбец kbju_settings.gender")
         except Exception as e:
-            logger.warning(f"Ошибка при проверке kbju_settings.gender: {e}")
+            logger.warning("Ошибка при проверке kbju_settings.gender error_type=%s", safe_exception_summary(e))
 
         # meals.meal_type
         try:
@@ -160,7 +175,7 @@ def init_db():
                 conn.execute(text("UPDATE meals SET is_manually_corrected = FALSE WHERE is_manually_corrected IS NULL"))
                 conn.commit()
         except Exception as e:
-            logger.warning(f"Ошибка при проверке meals.meal_type: {e}")
+            logger.warning("Ошибка при проверке meals fields error_type=%s", safe_exception_summary(e))
 
         # ai_usage_logs универсальная таблица usage/tokens/cost
         try:
@@ -168,13 +183,13 @@ def init_db():
                 Base.metadata.tables["ai_usage_logs"].create(bind=conn, checkfirst=True)
                 logger.info("Создана таблица ai_usage_logs")
         except Exception as e:
-            logger.warning(f"Ошибка при проверке ai_usage_logs: {e}")
+            logger.warning("Ошибка при проверке ai_usage_logs error_type=%s", safe_exception_summary(e))
 
         # gemini_accounts расширенные статусы и метрики
         try:
             gemini_columns = {col["name"] for col in inspector.get_columns("gemini_accounts")}
         except Exception as e:
-            logger.warning(f"Ошибка при чтении схемы gemini_accounts: {e}")
+            logger.warning("Ошибка при чтении схемы gemini_accounts error_type=%s", safe_exception_summary(e))
             gemini_columns = set()
 
         def _add_gemini_account_column_if_missing(column_name: str, sql_type: str) -> None:
@@ -185,7 +200,11 @@ def init_db():
                 conn.commit()
                 logger.info(f"Добавлен столбец gemini_accounts.{column_name}")
             except Exception as e:
-                logger.warning(f"Ошибка при добавлении gemini_accounts.{column_name}: {e}")
+                logger.warning(
+                    "Ошибка при добавлении gemini_accounts.%s error_type=%s",
+                    column_name,
+                    safe_exception_summary(e),
+                )
 
         _add_gemini_account_column_if_missing("temporary_failover_count", "INTEGER DEFAULT 0 NOT NULL")
         _add_gemini_account_column_if_missing("temporary_errors_count", "INTEGER DEFAULT 0 NOT NULL")
@@ -210,7 +229,10 @@ def init_db():
                 conn.commit()
                 logger.info("Добавлен столбец gemini_request_logs.reason")
         except Exception as e:
-            logger.warning(f"Ошибка при проверке gemini_request_logs event columns: {e}")
+            logger.warning(
+                "Ошибка при проверке gemini_request_logs event columns error_type=%s",
+                safe_exception_summary(e),
+            )
 
 
 @contextmanager

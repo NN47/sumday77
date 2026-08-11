@@ -16,6 +16,7 @@ from database.session import get_db_session
 from database.models import User
 from database.repositories import AnalyticsRepository
 from handlers.kbju_test import has_completed_kbju_test, restart_required_kbju_test
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ async def start(message: Message, state: FSMContext):
         from handlers.common import _build_recommendations_text
         await message.answer(_build_recommendations_text(), parse_mode="Markdown")
         return
-    logger.info(f"User {user_id} started the bot")
+    logger.info("Bot start command received")
     AnalyticsRepository.track_event(user_id, "start", section="entry")
     is_new_user = False
     
@@ -51,7 +52,7 @@ async def start(message: Message, state: FSMContext):
             user = User(user_id=user_id)
             session.add(user)
             session.commit()
-            logger.info(f"New user {user_id} registered")
+            logger.info("New user registered")
             is_new_user = True
 
     if not has_completed_kbju_test(user_id):
@@ -113,8 +114,8 @@ async def start(message: Message, state: FSMContext):
             parse_mode="HTML",
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
-    except Exception:
-        logger.exception("Failed to send start summary for user %s", user_id)
+    except Exception as exc:
+        logger.error("Failed to send start summary error_type=%s", safe_exception_summary(exc), exc_info=True)
     # Отдельным сообщением показываем главное меню (reply-клавиатура) без уведомления
     await message.answer("⬇️ Кнопки управления", reply_markup=main_menu, disable_notification=True)
 

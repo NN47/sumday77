@@ -3,6 +3,8 @@ import logging
 import sys
 from pathlib import Path
 
+from utils.log_sanitizer import PrivacySafeFormatter
+
 # Создаём директорию для логов
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
@@ -22,23 +24,31 @@ def setup_logging(log_level: str = "INFO") -> None:
     # Настройка уровня логирования
     level = getattr(logging, log_level.upper(), logging.INFO)
     
+    formatter = PrivacySafeFormatter(log_format, datefmt=date_format)
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    file_handler = logging.FileHandler(LOG_DIR / "bot.log", encoding="utf-8")
+    stdout_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+
     # Базовый конфиг
     logging.basicConfig(
         level=level,
-        format=log_format,
-        datefmt=date_format,
-        handlers=[
-            # Вывод в консоль
-            logging.StreamHandler(sys.stdout),
-            # Вывод в файл
-            logging.FileHandler(LOG_DIR / "bot.log", encoding="utf-8"),
-        ],
+        handlers=[stdout_handler, file_handler],
+        force=True,
     )
     
     # Настройка уровней для внешних библиотек
-    logging.getLogger("aiogram").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    for external_logger in (
+        "aiogram",
+        "httpx",
+        "httpcore",
+        "openai",
+        "google",
+        "google.genai",
+        "google.generativeai",
+        "google_genai",
+    ):
+        logging.getLogger(external_logger).setLevel(logging.WARNING)
     
     logger = logging.getLogger(__name__)
     logger.info(f"Логирование настроено. Уровень: {log_level}")

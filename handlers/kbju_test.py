@@ -243,11 +243,11 @@ def save_weight_from_test(user_id: str, data: dict) -> None:
     try:
         weight = float(raw_weight)
     except (TypeError, ValueError):
-        logger.warning(f"Cannot save weight from KBJU test for user {user_id}: {raw_weight}")
+        logger.warning("Cannot save weight from KBJU test value_type=%s", type(raw_weight).__name__)
         return
 
     if weight <= 0 or weight > 500:
-        logger.warning(f"KBJU weight is out of range for user {user_id}: {weight}")
+        logger.warning("KBJU weight is out of range")
         return
 
     WeightRepository.save_weight(user_id=user_id, value=f"{weight:.1f}", entry_date=date.today())
@@ -281,7 +281,7 @@ async def restart_required_kbju_test(message: Message, state: FSMContext):
 async def show_kbju_goal(message: Message, state: FSMContext):
     """Показывает текущую цель КБЖУ и варианты её настройки."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened KBJU goal settings")
+    logger.info("KBJU goal settings opened")
 
     await state.clear()
     settings = MealRepository.get_kbju_settings(user_id)
@@ -304,7 +304,7 @@ async def show_kbju_goal(message: Message, state: FSMContext):
 async def start_kbju_test(message: Message, state: FSMContext):
     """Начинает тест КБЖУ."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} started KBJU test")
+    logger.info("KBJU test started")
     
     await state.clear()
     await state.update_data(required_onboarding=False)
@@ -320,7 +320,7 @@ async def start_kbju_test(message: Message, state: FSMContext):
 async def start_manual_kbju_goal(message: Message, state: FSMContext):
     """Запускает ручной ввод нормы КБЖУ."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} started manual KBJU setup")
+    logger.info("Manual KBJU setup started")
 
     await state.clear()
     await state.set_state(KbjuTestStates.entering_manual_calories)

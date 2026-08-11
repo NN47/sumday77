@@ -29,6 +29,7 @@ from services.deepseek_service import (
     DeepSeekServiceTemporaryError,
 )
 from services.error_logging_service import log_app_error
+from utils.log_sanitizer import safe_exception_summary
 from services.extended_activity_analysis_service import AnalysisPeriod, extended_activity_analysis_service
 from utils.telegram_text import split_telegram_message
 from services.notification_scheduler import (
@@ -58,7 +59,7 @@ async def run_daily_activity_analysis(
 ) -> bool:
     """Запускает стандартный ИИ-анализ дня через выбранного провайдера и отправляет результат."""
     analysis_date = target_date or date.today()
-    logger.info("day_analysis_requested provider=%s user_id=%s", provider, user_id)
+    logger.info("day_analysis_requested provider=%s", provider)
     EveningAnalysisNotificationRepository.mark_analysis_started(user_id, analysis_date)
     AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
     AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
@@ -127,7 +128,7 @@ def _is_day_analysis_temporarily_unavailable_error(error: Exception, provider: s
 
 async def generate_day_analysis(user_id: str, target_date: date, provider: str) -> str:
     """Генерирует анализ дня с едиными данными и промптом через выбранного провайдера."""
-    logger.info("day_analysis_call_provider=%s user_id=%s", provider, user_id)
+    logger.info("day_analysis_call_provider=%s", provider)
     try:
         result = await generate_activity_analysis(
             user_id,
@@ -137,9 +138,13 @@ async def generate_day_analysis(user_id: str, target_date: date, provider: str) 
             backend=provider,
         )
     except Exception as exc:
-        logger.error("day_analysis_failed provider=%s user_id=%s error=%s", provider, user_id, exc)
+        logger.error(
+            "day_analysis_failed provider=%s error_type=%s",
+            provider,
+            safe_exception_summary(exc),
+        )
         raise
-    logger.info("day_analysis_completed provider=%s user_id=%s", provider, user_id)
+    logger.info("day_analysis_completed provider=%s", provider)
     return result
 
 
@@ -1128,7 +1133,7 @@ async def generate_activity_analysis(
 
 
     async def _run_backend() -> str:
-        logger.info("day_analysis_call_provider=%s user_id=%s", backend, user_id)
+        logger.info("day_analysis_call_provider=%s", backend)
         if backend == "gemini":
             if gemini_service is None:
                 raise GeminiServiceTemporaryUnavailableError("Gemini service is not initialized")
@@ -1174,7 +1179,7 @@ async def generate_activity_analysis(
 async def analyze_activity(message: Message):
     """Показывает меню анализа деятельности."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened activity analysis")
+    logger.info("Activity analysis opened")
     AnalyticsRepository.track_event(user_id, "open_activity", section="activity")
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(

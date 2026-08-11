@@ -21,6 +21,7 @@ from utils.calendar_utils import (
 )
 from utils.progress_formatters import build_water_progress_bar
 from database.repositories import QuickWaterMessageRepository, WaterRepository, WeightRepository
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +65,9 @@ async def send_or_edit_quick_water_message(
             return message
         except TelegramAPIError as exc:
             logger.warning(
-                "Failed to edit quick water message %s for user %s: %s",
+                "Failed to edit quick water message message_id=%s error_type=%s",
                 saved_message.message_id,
-                user_id,
-                exc,
+                safe_exception_summary(exc),
             )
 
     sent_message = await message.answer(text, parse_mode="HTML", reply_markup=water_quick_add_inline)
@@ -96,7 +96,7 @@ async def water(message: Message):
     """Показывает меню контроля воды."""
     reset_user_state(message)
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened water menu")
+    logger.info("Water menu opened")
     
     today = date.today()
     daily_total = WaterRepository.get_daily_total(user_id, today)
@@ -132,7 +132,7 @@ async def water(message: Message):
 async def quick_add_water_250(message: Message, state: FSMContext):
     """Быстро добавляет 250 мл воды одной кнопкой из главного меню."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} used quick water +250 button")
+    logger.info("Quick water action source=reply")
     
     # Сбрасываем состояние, если пользователь был в каком-то другом шаге
     await state.clear()
@@ -160,7 +160,7 @@ async def add_quick_water_amount(
     await callback.answer()
     message = callback.message
     user_id = str(callback.from_user.id)
-    logger.info(f"User {user_id} used quick water {amount:+.0f} inline button")
+    logger.info("Quick water action source=inline")
 
     await state.clear()
 
@@ -244,7 +244,7 @@ async def water_calendar(message: Message):
     """Показывает календарь воды."""
     reset_user_state(message)
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened water calendar")
+    logger.info("Water calendar opened")
     today = date.today()
     await show_calendar_back_button(message)
     await show_water_calendar(message, user_id, today.year, today.month)

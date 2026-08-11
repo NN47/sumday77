@@ -18,6 +18,7 @@ from config import API_TOKEN, KEEPALIVE_PORT
 from keepalive_server import HealthCheckHandler, ReusableTCPServer
 from middlewares import OnboardingMiddleware, UserActivityMiddleware
 from utils.logging_config import setup_logging
+from utils.log_sanitizer import safe_exception_summary
 
 # Настраиваем логирование
 setup_logging()
@@ -76,7 +77,7 @@ def is_connection_open(connection) -> bool:
     except POLLING_LOCK_DB_ERRORS as error:
         logger.warning(
             "Не удалось проверить состояние соединения для polling lock: %s",
-            error,
+            safe_exception_summary(error),
         )
         return False
 
@@ -104,7 +105,7 @@ def release_polling_lock_safely(connection) -> None:
             "Не удалось вручную освободить advisory lock для polling: %s. "
             "Вероятно, соединение с БД уже потеряно; PostgreSQL освободит lock "
             "автоматически при закрытии сессии.",
-            error,
+            safe_exception_summary(error),
         )
 
 
@@ -115,7 +116,10 @@ def close_connection_safely(connection) -> None:
     try:
         connection.close()
     except Exception as error:
-        logger.warning("Ошибка при закрытии соединения polling lock: %s", error)
+        logger.warning(
+            "Ошибка при закрытии соединения polling lock error_type=%s",
+            safe_exception_summary(error),
+        )
 
 
 def acquire_polling_lock():

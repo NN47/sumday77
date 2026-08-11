@@ -31,7 +31,7 @@ class WaterRepository:
             session.add(entry)
             session.commit()
             session.refresh(entry)
-            logger.info(f"Saved water entry {entry.id} for user {user_id}")
+            logger.info("Saved water entry entry_id=%s", entry.id)
             return entry
     
     @staticmethod
@@ -102,7 +102,7 @@ class WaterRepository:
             if entry:
                 session.delete(entry)
                 session.commit()
-                logger.info(f"Deleted water entry {entry_id} for user {user_id}")
+                logger.info("Deleted water entry entry_id=%s", entry_id)
                 return True
             return False
 
@@ -118,9 +118,8 @@ class WaterRepository:
             )
             session.commit()
             logger.info(
-                "Cleared %s water entries for user %s on %s",
+                "Cleared water entries count=%s date=%s",
                 deleted_count,
-                user_id,
                 target_date.isoformat(),
             )
             return int(deleted_count)
@@ -159,9 +158,7 @@ class QuickWaterMessageRepository:
             session.commit()
             session.refresh(message)
             logger.info(
-                "Saved quick water message %s for user %s in chat %s",
+                "Saved quick water message message_id=%s",
                 message_id,
-                user_id,
-                chat_id,
             )
             return message

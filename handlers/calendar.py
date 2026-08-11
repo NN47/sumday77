@@ -17,7 +17,7 @@ router = Router()
 async def calendar_view(message: Message):
     """Показывает общий календарь тренировок."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened general calendar")
+    logger.info("General calendar opened")
     await show_calendar_back_button(message)
     await show_calendar(message, user_id)
 

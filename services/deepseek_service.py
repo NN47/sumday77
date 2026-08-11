@@ -8,6 +8,7 @@ from openai import OpenAI
 
 from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from services.ai_usage_logger import calculate_ai_cost, log_ai_usage
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +42,25 @@ class DeepSeekService:
             )
         return self._client
 
+    @staticmethod
+    def _is_temporary_error(error: Exception) -> bool:
+        message = str(error).lower()
+        return any(
+            token in message
+            for token in ("timeout", "timed out", "429", "rate", "network", "connection", "500", "502", "503", "504")
+        )
+
     def analyze_food_text(self, text: str, *, user_id: str | int | None = None, feature: str = "text_meal") -> str:
         """Отправляет текст еды в DeepSeek и возвращает сырой JSON-ответ модели."""
         if not text:
             raise ValueError("Text is empty")
 
         started = time.perf_counter()
-        logger.info("DeepSeek: input text=%s", text)
-        logger.info("DeepSeek: sending request model=%s", DEEPSEEK_MODEL)
+        logger.info(
+            "DeepSeek request started operation=text_meal model=%s input_chars=%s",
+            DEEPSEEK_MODEL,
+            len(text),
+        )
 
         try:
             client = self._get_client()
@@ -90,7 +102,11 @@ class DeepSeekService:
                     total_tokens=total_tokens,
                     estimated_cost_usd=calculate_ai_cost("deepseek", DEEPSEEK_MODEL, input_tokens, output_tokens),
                     error_message="DeepSeek returned empty response",
-                    raw_metadata={"response_id": getattr(response, "id", None)},
+                    raw_metadata={
+                        "response_id": getattr(response, "id", None),
+                        "input_chars": len(text),
+                        "output_chars": 0,
+                    },
                 )
                 raise DeepSeekServiceTemporaryError("DeepSeek returned empty response")
 
@@ -105,11 +121,19 @@ class DeepSeekService:
                 output_tokens=output_tokens,
                 total_tokens=total_tokens,
                 estimated_cost_usd=calculate_ai_cost("deepseek", DEEPSEEK_MODEL, input_tokens, output_tokens),
-                raw_metadata={"response_id": getattr(response, "id", None)},
+                raw_metadata={
+                    "response_id": getattr(response, "id", None),
+                    "input_chars": len(text),
+                    "output_chars": len(content),
+                },
             )
 
-            logger.info("DeepSeek: response=%s", content)
-            logger.info("DeepSeek: done in %sms", elapsed_ms)
+            logger.info(
+                "DeepSeek request completed operation=text_meal model=%s status=success latency_ms=%s output_chars=%s",
+                DEEPSEEK_MODEL,
+                elapsed_ms,
+                len(content),
+            )
             return content
         except DeepSeekServiceError as exc:
             if isinstance(exc, DeepSeekServiceTemporaryError) and str(exc) == "DeepSeek returned empty response":
@@ -122,7 +146,8 @@ class DeepSeekService:
                 status="error",
                 user_id=user_id,
                 latency_ms=elapsed_ms,
-                error_message=str(exc),
+                error_message=safe_exception_summary(exc),
+                raw_metadata={"input_chars": len(text)},
             )
             raise
         except Exception as exc:  # pragma: no cover - внешние исключения SDK/API
@@ -134,12 +159,12 @@ class DeepSeekService:
                 status="error",
                 user_id=user_id,
                 latency_ms=elapsed_ms,
-                error_message=str(exc),
+                error_message=safe_exception_summary(exc),
+                raw_metadata={"input_chars": len(text)},
             )
-            message = str(exc).lower()
-            if any(token in message for token in ("timeout", "timed out", "429", "rate", "network", "connection", "500", "502", "503", "504")):
-                raise DeepSeekServiceTemporaryError(str(exc)) from exc
-            raise DeepSeekServiceError(str(exc)) from exc
+            if self._is_temporary_error(exc):
+                raise DeepSeekServiceTemporaryError("DeepSeek request temporarily unavailable") from exc
+            raise DeepSeekServiceError("DeepSeek request failed") from exc
 
     def analyze_activity_prompt(
         self,
@@ -154,7 +179,11 @@ class DeepSeekService:
             raise ValueError("Prompt is empty")
 
         started = time.perf_counter()
-        logger.info("DeepSeek: sending activity analysis request model=%s", DEEPSEEK_MODEL)
+        logger.info(
+            "DeepSeek request started operation=activity_analysis model=%s input_chars=%s",
+            DEEPSEEK_MODEL,
+            len(prompt),
+        )
 
         try:
             client = self._get_client()
@@ -196,7 +225,11 @@ class DeepSeekService:
                     total_tokens=total_tokens,
                     estimated_cost_usd=calculate_ai_cost("deepseek", DEEPSEEK_MODEL, input_tokens, output_tokens),
                     error_message="DeepSeek returned empty activity analysis response",
-                    raw_metadata={"response_id": getattr(response, "id", None)},
+                    raw_metadata={
+                        "response_id": getattr(response, "id", None),
+                        "input_chars": len(prompt),
+                        "output_chars": 0,
+                    },
                 )
                 raise DeepSeekServiceTemporaryError("DeepSeek returned empty response")
 
@@ -211,10 +244,19 @@ class DeepSeekService:
                 output_tokens=output_tokens,
                 total_tokens=total_tokens,
                 estimated_cost_usd=calculate_ai_cost("deepseek", DEEPSEEK_MODEL, input_tokens, output_tokens),
-                raw_metadata={"response_id": getattr(response, "id", None)},
+                raw_metadata={
+                    "response_id": getattr(response, "id", None),
+                    "input_chars": len(prompt),
+                    "output_chars": len(content),
+                },
             )
 
-            logger.info("DeepSeek: successful activity analysis request in %sms", elapsed_ms)
+            logger.info(
+                "DeepSeek request completed operation=activity_analysis model=%s status=success latency_ms=%s output_chars=%s",
+                DEEPSEEK_MODEL,
+                elapsed_ms,
+                len(content),
+            )
             return content
         except DeepSeekServiceError:
             raise
@@ -227,12 +269,12 @@ class DeepSeekService:
                 status="error",
                 user_id=user_id,
                 latency_ms=elapsed_ms,
-                error_message=str(exc),
+                error_message=safe_exception_summary(exc),
+                raw_metadata={"input_chars": len(prompt)},
             )
-            message = str(exc).lower()
-            if any(token in message for token in ("timeout", "timed out", "429", "rate", "network", "connection", "500", "502", "503", "504")):
-                raise DeepSeekServiceTemporaryError(str(exc)) from exc
-            raise DeepSeekServiceError(str(exc)) from exc
+            if self._is_temporary_error(exc):
+                raise DeepSeekServiceTemporaryError("DeepSeek request temporarily unavailable") from exc
+            raise DeepSeekServiceError("DeepSeek request failed") from exc
 
     def generate_meal_completion_comment(
         self,
@@ -247,7 +289,11 @@ class DeepSeekService:
             raise ValueError("Prompt is empty")
 
         started = time.perf_counter()
-        logger.info("DeepSeek: sending meal completion comment request model=%s", DEEPSEEK_MODEL)
+        logger.info(
+            "DeepSeek request started operation=meal_completion_comment model=%s input_chars=%s",
+            DEEPSEEK_MODEL,
+            len(prompt),
+        )
         try:
             client = self._get_client()
             response = client.chat.completions.create(
@@ -273,19 +319,18 @@ class DeepSeekService:
                 "response_id": getattr(response, "id", None),
             }
             if not content:
-                log_ai_usage(provider="deepseek", feature=feature, model=DEEPSEEK_MODEL, status="error", user_id=user_id, latency_ms=elapsed_ms, input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens, estimated_cost_usd=cost, error_message="DeepSeek returned empty meal comment response", raw_metadata={"response_id": metadata["response_id"]})
+                log_ai_usage(provider="deepseek", feature=feature, model=DEEPSEEK_MODEL, status="error", user_id=user_id, latency_ms=elapsed_ms, input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens, estimated_cost_usd=cost, error_message="empty_response", raw_metadata={"response_id": metadata["response_id"], "input_chars": len(prompt), "output_chars": 0})
                 raise DeepSeekServiceTemporaryError("DeepSeek returned empty response")
-            log_ai_usage(provider="deepseek", feature=feature, model=DEEPSEEK_MODEL, status="success", user_id=user_id, latency_ms=elapsed_ms, input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens, estimated_cost_usd=cost, raw_metadata={"response_id": metadata["response_id"]})
+            log_ai_usage(provider="deepseek", feature=feature, model=DEEPSEEK_MODEL, status="success", user_id=user_id, latency_ms=elapsed_ms, input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens, estimated_cost_usd=cost, raw_metadata={"response_id": metadata["response_id"], "input_chars": len(prompt), "output_chars": len(content)})
             return content, metadata
         except DeepSeekServiceError:
             raise
         except Exception as exc:  # pragma: no cover
             elapsed_ms = int((time.perf_counter() - started) * 1000)
-            log_ai_usage(provider="deepseek", feature=feature, model=DEEPSEEK_MODEL, status="error", user_id=user_id, latency_ms=elapsed_ms, error_message=str(exc))
-            message = str(exc).lower()
-            if any(token in message for token in ("timeout", "timed out", "429", "rate", "network", "connection", "500", "502", "503", "504")):
-                raise DeepSeekServiceTemporaryError(str(exc)) from exc
-            raise DeepSeekServiceError(str(exc)) from exc
+            log_ai_usage(provider="deepseek", feature=feature, model=DEEPSEEK_MODEL, status="error", user_id=user_id, latency_ms=elapsed_ms, error_message=safe_exception_summary(exc), raw_metadata={"input_chars": len(prompt)})
+            if self._is_temporary_error(exc):
+                raise DeepSeekServiceTemporaryError("DeepSeek request temporarily unavailable") from exc
+            raise DeepSeekServiceError("DeepSeek request failed") from exc
 
 
 deepseek_service = DeepSeekService()

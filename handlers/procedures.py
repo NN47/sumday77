@@ -36,7 +36,7 @@ procedures_menu = ReplyKeyboardMarkup(
 async def procedures(message: Message):
     """Показывает меню процедур."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened procedures menu")
+    logger.info("Procedures menu opened")
     
     intro_text = (
         "💆 Раздел «Процедуры»\n\n"
@@ -58,7 +58,7 @@ async def procedures(message: Message):
 async def add_procedure(message: Message, state: FSMContext):
     """Начинает процесс добавления процедуры."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} started adding procedure")
+    logger.info("Procedure creation started")
     await start_add_procedure(message, state)
 
 
@@ -153,7 +153,7 @@ async def procedures_today(message: Message):
 async def procedures_calendar(message: Message):
     """Показывает календарь процедур."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened procedures calendar")
+    logger.info("Procedures calendar opened")
     today = date.today()
     await show_calendar_back_button(message)
     await show_procedures_calendar(message, user_id, today.year, today.month)

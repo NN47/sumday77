@@ -10,6 +10,7 @@ from utils.emoji_map import EMOJI_MAP
 from utils.formatters import get_kbju_goal_label
 from utils.meal_types import MEAL_TYPE_ORDER, normalize_meal_type
 from utils.progress_formatters import build_progress_bar
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def _extract_product_lines(meal: Meal) -> list[str]:
             if isinstance(parsed, list):
                 products = [item for item in parsed if isinstance(item, dict)]
         except Exception as e:
-            logger.warning(f"Не смог распарсить products_json: {e}")
+            logger.warning("Не смог распарсить products_json error_type=%s", safe_exception_summary(e))
 
     if not products:
         fallback_name = _safe_product_name(

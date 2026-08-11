@@ -51,6 +51,7 @@ from services.notification_scheduler import (
     build_supplement_confirm_keyboard,
     build_supplement_notification_keyboard,
 )
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 MSK_TZ = ZoneInfo("Europe/Moscow")
@@ -200,12 +201,12 @@ async def go_to_supplement_days_step(message: Message, state: FSMContext, prefix
 async def supplements(message: Message):
     """Показывает меню добавок."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened supplements menu")
+    logger.info("Supplements menu opened")
     
     try:
         supplements_list = SupplementRepository.get_supplements(user_id)
     except Exception as e:
-        logger.error(f"Error loading supplements: {e}", exc_info=True)
+        logger.error("Error loading supplements error_type=%s", safe_exception_summary(e), exc_info=True)
         await message.answer("Произошла ошибка при загрузке добавок. Попробуйте позже.")
         return
     
@@ -276,7 +277,7 @@ async def supplements_list_view(message: Message, state: FSMContext):
 async def start_create_supplement(message: Message, state: FSMContext):
     """Начинает процесс создания добавки."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} started creating supplement")
+    logger.info("Supplement creation started")
     
     await state.update_data({
         "supplement_id": None,
@@ -996,9 +997,11 @@ async def choose_supplement_to_edit(message: Message, state: FSMContext):
     # Ищем добавку по имени (с учетом пробелов и регистра)
     message_text = message.text.strip()
     
-    # Логируем для отладки
-    logger.info(f"User {user_id} searching for supplement: '{message_text}'")
-    logger.info(f"Available supplements: {[item.get('name', '') for item in supplements_list]}")
+    logger.info(
+        "Supplement search started query_chars=%s candidate_count=%s",
+        len(message_text),
+        len(supplements_list),
+    )
     
     # Более надежное сравнение - нормализуем пробелы и регистр
     def normalize_name(name: str) -> str:
@@ -1011,7 +1014,6 @@ async def choose_supplement_to_edit(message: Message, state: FSMContext):
     for idx, item in enumerate(supplements_list):
         item_name = item.get("name", "")
         normalized_item = normalize_name(item_name)
-        logger.info(f"Comparing: '{normalized_search}' with '{normalized_item}' (original: '{item_name}')")
         if normalized_item == normalized_search:
             target_index = idx
             break
@@ -1592,7 +1594,7 @@ async def edit_days(message: Message, state: FSMContext):
 async def toggle_day(message: Message, state: FSMContext):
     """Переключает выбор дня."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} selecting days, input: {message.text}")
+    logger.info("Supplement day selection input_chars=%s", len(message.text or ""))
     
     try:
         data = await state.get_data()
@@ -1741,7 +1743,7 @@ async def toggle_day(message: Message, state: FSMContext):
         push_menu_stack(message.bot, days_menu(days))
         await message.answer("Дни обновлены", reply_markup=days_menu(days))
     except Exception as e:
-        logger.error(f"Error in toggle_day for user {user_id}: {e}", exc_info=True)
+        logger.error("Error in supplement day selection error_type=%s", safe_exception_summary(e), exc_info=True)
         await message.answer("❌ Произошла ошибка. Попробуй ещё раз.")
 
 
@@ -1770,11 +1772,12 @@ async def ask_notifications_in_test(message: Message, state: FSMContext):
     if not isinstance(days, list):
         days = [days] if days else []
     
-    # Логируем для отладки
-    logger.info(f"User {message.from_user.id} asking notifications:")
-    logger.info(f"  Raw times={times}, type={type(times)}, is_list={isinstance(times, list)}")
-    logger.info(f"  Raw days={days}, type={type(days)}, is_list={isinstance(days, list)}")
-    logger.info(f"  Full state data keys: {list(data.keys())}")
+    logger.info(
+        "Supplement notification setup times_count=%s days_count=%s state_key_count=%s",
+        len(times),
+        len(days),
+        len(data),
+    )
     
     # Сохраняем флаг, что это тест создания добавки, и убеждаемся, что times и days сохранены как списки
     await state.update_data(
@@ -1860,11 +1863,12 @@ async def handle_duration_or_notifications(message: Message, state: FSMContext):
                 elif isinstance(days, str):
                     days_list = [days]
             
-            # Логируем для отладки
-            logger.info(f"User {message.from_user.id} checking notifications:")
-            logger.info(f"  Raw times={times}, type={type(times)}, times_list={times_list}")
-            logger.info(f"  Raw days={days}, type={type(days)}, days_list={days_list}")
-            logger.info(f"  Full state data: {current_data}")
+            logger.info(
+                "Supplement notification validation times_count=%s days_count=%s state_key_count=%s",
+                len(times_list),
+                len(days_list),
+                len(current_data),
+            )
             
             if not times_list or not days_list:
                 from utils.supplement_keyboards import supplement_test_notifications_menu
@@ -1880,7 +1884,11 @@ async def handle_duration_or_notifications(message: Message, state: FSMContext):
                 return
             
             await state.update_data(notifications_enabled=True)
-            logger.info(f"User {message.from_user.id} enabling notifications: times={times_list}, days={days_list}")
+            logger.info(
+                "Supplement notifications enabled times_count=%s days_count=%s",
+                len(times_list),
+                len(days_list),
+            )
             await save_supplement_from_test(message, state)
             return
         
@@ -1949,7 +1957,7 @@ async def handle_duration_or_notifications(message: Message, state: FSMContext):
             days=days,    # Явно сохраняем как список
         )
         
-        logger.info(f"User {message.from_user.id} skipped duration, saving: times={times}, days={days}")
+        logger.info("Supplement duration skipped times_count=%s days_count=%s", len(times), len(days))
         await ask_notifications_in_test(message, state)
         return
     
@@ -1978,7 +1986,7 @@ async def handle_duration_or_notifications(message: Message, state: FSMContext):
                 days=days,    # Явно сохраняем как список
             )
             
-            logger.info(f"User {message.from_user.id} selected duration, saving: times={times}, days={days}")
+            logger.info("Supplement duration selected times_count=%s days_count=%s", len(times), len(days))
             await ask_notifications_in_test(message, state)
             return
         
@@ -2051,7 +2059,7 @@ async def save_supplement_from_test(message: Message, state: FSMContext):
             await message.answer("❌ Не удалось сохранить добавку. Попробуйте позже.")
             await state.clear()
     except Exception as e:
-        logger.error(f"Error saving supplement from test for user {user_id}: {e}", exc_info=True)
+        logger.error("Error saving supplement error_type=%s", safe_exception_summary(e), exc_info=True)
         await message.answer("❌ Произошла ошибка при сохранении добавки. Попробуйте позже.")
         await state.clear()
 
@@ -2094,7 +2102,7 @@ async def cancel_supplement(message: Message, state: FSMContext):
 async def show_supplement_calendar_menu(message: Message, state: FSMContext):
     """Показывает календарь добавок."""
     user_id = str(message.from_user.id)
-    logger.info(f"User {user_id} opened supplement calendar")
+    logger.info("Supplement calendar opened")
     await state.clear()  # Очищаем состояние при открытии календаря
     await show_calendar_back_button(message)
     await show_supplement_calendar(message, user_id)
@@ -2396,10 +2404,9 @@ async def send_supplement_reminder_later(
         )
     except Exception as e:
         logger.error(
-            "Ошибка при отправке отложенного напоминания о добавке %s пользователю %s: %s",
+            "Ошибка при отправке отложенного напоминания supplement_id=%s error_type=%s",
             supplement_id,
-            user_id,
-            e,
+            safe_exception_summary(e),
             exc_info=True,
         )
 

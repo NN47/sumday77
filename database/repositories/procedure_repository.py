@@ -5,6 +5,7 @@ from datetime import date
 from typing import Optional, List, Set
 from database.session import get_db_session
 from database.models import Procedure
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,6 @@ class ProcedureRepository:
                 session.commit()
                 return True
             except Exception as e:
-                logger.error(f"Error deleting procedure: {e}", exc_info=True)
+                logger.error("Error deleting procedure error_type=%s", safe_exception_summary(e), exc_info=True)
                 session.rollback()
                 return False

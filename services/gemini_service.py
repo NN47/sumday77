@@ -21,6 +21,7 @@ from config import (
     GEMINI_TEMP_KEY_COOLDOWN_SECONDS,
 )
 from database.repositories import GeminiRepository
+from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -240,24 +241,25 @@ class GeminiService:
                     last_error = err
                     error_type = self.classify_gemini_error(err)
                     last_error_type = error_type
+                    error_summary = safe_exception_summary(err)
                     GeminiRepository.record_key_error(
                         current_account.id,
                         error_type=error_type,
                         model_name=self.model,
-                        error_message=str(err),
+                        error_message=error_summary,
                     )
 
                     if error_type == "auth":
-                        logger.warning("[Gemini] Key #%s failed: %s", key_number, err)
-                        GeminiRepository.mark_key_auth_failed(current_account.id, reason=str(err))
+                        logger.warning("[Gemini] Key #%s failed error_type=%s", key_number, error_type)
+                        GeminiRepository.mark_key_auth_failed(current_account.id, reason=error_summary)
                         break
 
                     if error_type == "quota":
-                        logger.warning("[Gemini] Key #%s failed: %s", key_number, err)
+                        logger.warning("[Gemini] Key #%s failed error_type=%s", key_number, error_type)
                         GeminiRepository.mark_key_rate_limited(
                             current_account.id,
                             cooldown_seconds=self.rate_limit_cooldown_seconds,
-                            reason=str(err),
+                            reason=error_summary,
                         )
                         break
 
@@ -266,19 +268,19 @@ class GeminiService:
                         total_retries += 1
                         backoff = self.get_backoff_delay(temp_attempt)
                         logger.warning(
-                            "⚠️ retry_temporary_error: key=%s attempt=%s/%s delay=%.2fs error=%s",
-                            current_account.account_name,
+                            "⚠️ retry_temporary_error: key_number=%s attempt=%s/%s delay=%.2fs error_type=%s",
+                            key_number,
                             temp_attempt,
                             self.max_retries_per_key_for_temporary_errors,
                             backoff,
-                            err,
+                            error_type,
                         )
                         GeminiRepository.log_retry_scheduled(
                             account_id=current_account.id,
                             model_name=self.model,
                             retry_number=temp_attempt,
                             delay_seconds=backoff,
-                            error_message=str(err),
+                            error_message=error_summary,
                         )
                         time.sleep(backoff)
                         continue
@@ -289,15 +291,15 @@ class GeminiService:
                             cooldown_seconds=self.temporary_cooldown_seconds,
                             reason=(
                                 f"cooldown {self.temporary_cooldown_seconds}s "
-                                f"after {temp_attempt} retries: {err}"
+                                f"after {temp_attempt} retries: {error_summary}"
                             ),
                         )
-                    logger.warning("[Gemini] Key #%s failed: %s", key_number, err)
+                    logger.warning("[Gemini] Key #%s failed error_type=%s", key_number, error_type)
                     GeminiRepository.log_request_failed(
                         account_id=current_account.id,
                         model_name=self.model,
                         error_type=error_type,
-                        error_message=str(err),
+                        error_message=error_summary,
                     )
                     break
 
@@ -315,7 +317,7 @@ class GeminiService:
                 current_account.id,
                 reason=next_reason,
                 model_name=self.model,
-                error_message=str(last_error) if last_error else None,
+                error_message=safe_exception_summary(last_error) if last_error else None,
                 excluded_account_ids=used_account_ids,
             )
 
@@ -325,7 +327,7 @@ class GeminiService:
             attempts=total_attempts,
             retries=total_retries,
             error_type=last_error_type,
-            error_message=str(last_error) if last_error else None,
+            error_message=safe_exception_summary(last_error) if last_error else None,
         )
         if last_error_type == "temporary":
             raise GeminiServiceTemporaryUnavailableError(
@@ -335,7 +337,7 @@ class GeminiService:
             raise GeminiServiceQuotaError("AI временно недоступен из-за лимита запросов.")
         if last_error_type == "auth":
             raise GeminiServiceAuthError("AI временно недоступен из-за ошибки настройки.")
-        raise GeminiServiceUnknownError(str(last_error) if last_error else "Неизвестная ошибка Gemini")
+        raise GeminiServiceUnknownError("Неизвестная ошибка Gemini")
 
     def analyze(self, text: str) -> str:
         """Анализирует текст через Gemini."""
@@ -409,7 +411,7 @@ class GeminiService:
         except GeminiServiceError:
             raise
         except Exception as e:
-            logger.error("Ошибка Gemini (КБЖУ): %s", e, exc_info=True)
+            logger.error("Ошибка Gemini (КБЖУ) error_type=%s", safe_exception_summary(e), exc_info=True)
             return None
 
     def _normalize_kbju_payload(self, payload: dict) -> Optional[dict]:
@@ -571,7 +573,7 @@ class GeminiService:
         except GeminiServiceError:
             raise
         except Exception as e:
-            logger.error("Ошибка Gemini (КБЖУ по фото): %s", e, exc_info=True)
+            logger.error("Ошибка Gemini (КБЖУ по фото) error_type=%s", safe_exception_summary(e), exc_info=True)
             return None
 
     def extract_kbju_from_label(self, image_bytes: bytes) -> Optional[dict]:
@@ -626,7 +628,7 @@ class GeminiService:
         except GeminiServiceError:
             raise
         except Exception as e:
-            logger.error("Ошибка Gemini (КБЖУ с этикетки): %s", e, exc_info=True)
+            logger.error("Ошибка Gemini (КБЖУ с этикетки) error_type=%s", safe_exception_summary(e), exc_info=True)
             return None
 
     @staticmethod
@@ -736,7 +738,7 @@ class GeminiService:
         except GeminiServiceError:
             raise
         except Exception as e:
-            logger.error("Ошибка Gemini (распознавание штрих-кода): %s", e, exc_info=True)
+            logger.error("Ошибка Gemini (распознавание штрих-кода) error_type=%s", safe_exception_summary(e), exc_info=True)
             return None
 
 
@@ -744,5 +746,5 @@ class GeminiService:
 try:
     gemini_service = GeminiService()
 except RuntimeError as init_error:  # pragma: no cover - для тестовых окружений без ключей
-    logger.warning("GeminiService не инициализирован: %s", init_error)
+    logger.warning("GeminiService не инициализирован error_type=%s", safe_exception_summary(init_error))
     gemini_service = None
