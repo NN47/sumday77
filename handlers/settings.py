@@ -1,6 +1,8 @@
 """Обработчики для настроек."""
+import asyncio
 import logging
 from aiogram import Router
+from aiogram.filters import StateFilter
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
@@ -13,7 +15,9 @@ from utils.keyboards import (
 )
 from database.account_deletion import delete_user_account
 from database.repositories import SupportRepository, AnalyticsRepository, ErrorLogRepository
-from states.user_states import SupportStates
+from states.user_states import AccountDeletionStates, SupportStates
+from user_operation_guard import user_operation_guard
+from services.user_process_cleanup import clear_user_fsm_states, clear_user_process_caches
 from config import ADMIN_ID
 from utils.log_sanitizer import safe_exception_summary
 
@@ -44,10 +48,11 @@ async def settings(message: Message, state: FSMContext):
 
 
 @router.message(lambda m: m.text == "🗑 Удалить аккаунт")
-async def delete_account_start(message: Message):
+async def delete_account_start(message: Message, state: FSMContext):
     """Начинает процесс удаления аккаунта."""
     reset_user_state(message)
-    message.bot.expecting_account_deletion_confirm = True
+    await state.clear()
+    await state.set_state(AccountDeletionStates.waiting_for_button_confirmation)
     logger.warning("Account deletion initiated")
     
     push_menu_stack(message.bot, delete_account_confirm_menu)
@@ -66,14 +71,13 @@ async def delete_account_start(message: Message):
     )
 
 
-@router.message(lambda m: m.text == "Да, удалить аккаунт")
-async def delete_account_confirm(message: Message):
+@router.message(
+    StateFilter(AccountDeletionStates.waiting_for_button_confirmation),
+    lambda m: m.text == "Да, удалить аккаунт",
+)
+async def delete_account_confirm(message: Message, state: FSMContext):
     """Запрашивает текстовое подтверждение удаления аккаунта."""
-    if not getattr(message.bot, "expecting_account_deletion_confirm", False):
-        await message.answer("Что-то пошло не так. Попробуй заново через меню Настройки.")
-        return
-
-    message.bot.expecting_account_deletion_text_confirm = True
+    await state.set_state(AccountDeletionStates.waiting_for_text_confirmation)
     await message.answer(
         "Подтвердите удаление: введите текстом\n\n"
         "<b>Я удаляю аккаунт Sumday77</b>",
@@ -82,10 +86,10 @@ async def delete_account_confirm(message: Message):
 
 
 @router.message(
-    lambda m: getattr(m.bot, "expecting_account_deletion_text_confirm", False)
-    and m.text not in ["❌ Отмена", "Да, удалить аккаунт"]
+    StateFilter(AccountDeletionStates.waiting_for_text_confirmation),
+    lambda m: m.text not in ["❌ Отмена", "Да, удалить аккаунт"],
 )
-async def delete_account_text_confirm(message: Message):
+async def delete_account_text_confirm(message: Message, state: FSMContext):
     """Удаляет аккаунт после текстового подтверждения."""
     expected_text = "Я удаляю аккаунт Sumday77"
     if (message.text or "").strip() != expected_text:
@@ -98,13 +102,21 @@ async def delete_account_text_confirm(message: Message):
         return
 
     user_id = str(message.from_user.id)
-    message.bot.expecting_account_deletion_confirm = False
-    message.bot.expecting_account_deletion_text_confirm = False
     logger.warning("Account deletion confirmed")
 
-    success = delete_user_account(user_id)
+    await user_operation_guard.begin_deletion(user_id)
+    try:
+        success = await asyncio.to_thread(delete_user_account, user_id)
+    except BaseException:
+        user_operation_guard.rollback_deletion(user_id)
+        raise
 
     if success:
+        user_operation_guard.complete_deletion(user_id)
+        try:
+            await clear_user_fsm_states(state, user_id)
+        finally:
+            clear_user_process_caches(message.bot, user_id)
         await message.answer(
             "✅ Аккаунт успешно удалён.\n\n"
             "Все ваши данные были удалены из базы данных.\n\n"
@@ -115,6 +127,7 @@ async def delete_account_text_confirm(message: Message):
             )
         )
     else:
+        user_operation_guard.rollback_deletion(user_id)
         push_menu_stack(message.bot, settings_menu)
         await message.answer(
             "❌ Произошла ошибка при удалении аккаунта.\n"
@@ -123,19 +136,21 @@ async def delete_account_text_confirm(message: Message):
         )
 
 
-@router.message(lambda m: m.text == "❌ Отмена")
-async def delete_account_cancel(message: Message):
+@router.message(
+    StateFilter(
+        AccountDeletionStates.waiting_for_button_confirmation,
+        AccountDeletionStates.waiting_for_text_confirmation,
+    ),
+    lambda m: m.text == "❌ Отмена",
+)
+async def delete_account_cancel(message: Message, state: FSMContext):
     """Отменяет удаление аккаунта."""
-    if getattr(message.bot, "expecting_account_deletion_confirm", False) or getattr(
-        message.bot, "expecting_account_deletion_text_confirm", False
-    ):
-        message.bot.expecting_account_deletion_confirm = False
-        message.bot.expecting_account_deletion_text_confirm = False
-        push_menu_stack(message.bot, settings_menu)
-        await message.answer(
-            "❌ Удаление аккаунта отменено.",
-            reply_markup=settings_menu,
-        )
+    await state.clear()
+    push_menu_stack(message.bot, settings_menu)
+    await message.answer(
+        "❌ Удаление аккаунта отменено.",
+        reply_markup=settings_menu,
+    )
 
 
 @router.message(lambda m: m.text == "💬 Поддержка")

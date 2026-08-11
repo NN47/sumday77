@@ -7,6 +7,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from database.repositories import UserRepository
+from user_operation_guard import UserOperationBlocked, user_operation_guard
 
 
 class UserActivityMiddleware(BaseMiddleware):
@@ -24,7 +25,21 @@ class UserActivityMiddleware(BaseMiddleware):
         elif isinstance(event, CallbackQuery) and event.from_user:
             user_id = str(event.from_user.id)
 
-        if user_id:
-            UserRepository.touch_user(user_id)
+        if not user_id:
+            return await handler(event, data)
 
-        return await handler(event, data)
+        allow_reactivate = False
+        if isinstance(event, Message):
+            message_text = (event.text or "").strip()
+            command = message_text.split(maxsplit=1)[0].casefold() if message_text else ""
+            allow_reactivate = command == "/start" or command.startswith("/start@")
+
+        try:
+            async with user_operation_guard.operation(
+                user_id,
+                allow_reactivate=allow_reactivate,
+            ):
+                UserRepository.touch_user(user_id)
+                return await handler(event, data)
+        except UserOperationBlocked:
+            return None

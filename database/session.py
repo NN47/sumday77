@@ -1,11 +1,12 @@
 """Управление сессиями базы данных."""
 from contextlib import contextmanager
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.orm import Session, sessionmaker
 from config import DATABASE_URL, DB_POOL_PRE_PING, DB_POOL_RECYCLE
 from database.models import Base
 import logging
 from utils.log_sanitizer import safe_exception_summary
+from user_operation_guard import user_operation_guard
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,43 @@ engine = create_engine(
 # Создаём фабрику сессий с expire_on_commit=False
 # чтобы объекты оставались доступными после коммита
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+
+_USER_WRITE_PERMITS_KEY = "sumday77_user_write_permits"
+_USER_WRITE_IDS_KEY = "sumday77_user_write_ids"
+
+
+@event.listens_for(Session, "before_flush")
+def _guard_user_writes(session, _flush_context, _instances) -> None:
+    """Keep user writes serialized with deletion until commit or rollback."""
+    user_ids = {
+        str(user_id)
+        for instance in (*session.new, *session.dirty)
+        if (user_id := getattr(instance, "user_id", None)) is not None
+    }
+    already_guarded = session.info.setdefault(_USER_WRITE_IDS_KEY, set())
+    missing_user_ids = user_ids - already_guarded
+    if not missing_user_ids:
+        return
+
+    permits = user_operation_guard.acquire_write_permits(missing_user_ids)
+    session.info.setdefault(_USER_WRITE_PERMITS_KEY, []).extend(permits)
+    already_guarded.update(missing_user_ids)
+
+
+def _release_user_write_permits(session) -> None:
+    permits = session.info.pop(_USER_WRITE_PERMITS_KEY, [])
+    session.info.pop(_USER_WRITE_IDS_KEY, None)
+    user_operation_guard.release_write_permits(permits)
+
+
+@event.listens_for(Session, "after_commit")
+def _release_user_writes_after_commit(session) -> None:
+    _release_user_write_permits(session)
+
+
+@event.listens_for(Session, "after_rollback")
+def _release_user_writes_after_rollback(session) -> None:
+    _release_user_write_permits(session)
 
 
 def init_db():

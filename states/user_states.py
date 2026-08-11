@@ -130,6 +130,12 @@ class SupportStates(StatesGroup):
     waiting_for_message = State()
 
 
+class AccountDeletionStates(StatesGroup):
+    """Изолированные по пользователю этапы подтверждения удаления аккаунта."""
+    waiting_for_button_confirmation = State()
+    waiting_for_text_confirmation = State()
+
+
 class WellbeingStates(StatesGroup):
     """Состояния для дневных заметок."""
     note_rating = State()

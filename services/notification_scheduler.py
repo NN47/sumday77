@@ -11,6 +11,7 @@ from database.session import get_db_session
 from database.models import ActivityAnalysisEntry, User, Supplement, SupplementEntry, SupplementNotificationState, KbjuSettings, EveningAnalysisNotificationState
 from database.repositories.evening_analysis_notification_repository import EveningAnalysisNotificationRepository
 from services.error_logging_service import log_app_error
+from user_operation_guard import UserOperationBlocked, user_operation_guard
 from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,21 @@ class NotificationScheduler:
         self.running = False
         self.sent_notifications_today = set()  # Для предотвращения дублирования уведомлений
         self._last_check_date = None  # Дата последней проверки для сброса кэша
+
+    def clear_user_cache(self, user_id: str | int) -> None:
+        """Удаляет только ключи уведомлений конкретного пользователя."""
+        user_prefix = f"{user_id}_"
+        self.sent_notifications_today = {
+            key for key in self.sent_notifications_today if not str(key).startswith(user_prefix)
+        }
+
+    async def _mark_notification_sent(self, user_id: str | int, key: str) -> None:
+        """Не позволяет завершившейся позже задаче восстановить очищенный кэш."""
+        try:
+            async with user_operation_guard.operation(user_id):
+                self.sent_notifications_today.add(key)
+        except UserOperationBlocked:
+            return
         
     async def send_notification(
         self,
@@ -128,13 +144,16 @@ class NotificationScheduler:
     ) -> bool:
         """Отправляет уведомление пользователю и возвращает успешность отправки."""
         try:
-            await self.bot.send_message(
-                chat_id=user_id,
-                text=message,
-                reply_markup=reply_markup,
-            )
+            async with user_operation_guard.operation(user_id):
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=message,
+                    reply_markup=reply_markup,
+                )
             logger.info("Уведомление отправлено")
             return True
+        except UserOperationBlocked:
+            return False
         except Exception as e:
             log_app_error(
                 source="telegram",
@@ -629,7 +648,7 @@ class NotificationScheduler:
                         if notification_key in self.sent_notifications_today:
                             continue
                         if self._has_supplement_entry(session, supplement.user_id, supplement.id, today_date):
-                            self.sent_notifications_today.add(notification_key)
+                            await self._mark_notification_sent(supplement.user_id, notification_key)
                             existing_state = session.query(SupplementNotificationState).filter_by(
                                 user_id=supplement.user_id,
                                 supplement_id=supplement.id,
@@ -700,7 +719,7 @@ class NotificationScheduler:
                         if state_id is not None:
                             successful_state_ids.append(state_id)
                         if notification_key is not None:
-                            successful_notification_keys.append(notification_key)
+                            successful_notification_keys.append((_user_id, notification_key))
                     else:
                         logger.warning("Уведомление о добавке не доставлено, повторим позже")
                 with get_db_session() as session:
@@ -708,8 +727,8 @@ class NotificationScheduler:
                         session.query(SupplementNotificationState).filter(
                             SupplementNotificationState.id.in_(successful_state_ids)
                         ).delete(synchronize_session=False)
-                    for key in successful_notification_keys:
-                        self.sent_notifications_today.add(key)
+                    for notification_user_id, key in successful_notification_keys:
+                        await self._mark_notification_sent(notification_user_id, key)
         except Exception as e:
             logger.error(
                 "Ошибка при проверке уведомлений о добавках error_type=%s",

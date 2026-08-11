@@ -51,6 +51,7 @@ from services.notification_scheduler import (
     build_supplement_confirm_keyboard,
     build_supplement_notification_keyboard,
 )
+from user_operation_guard import UserOperationBlocked, user_operation_guard
 from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
@@ -2386,22 +2387,25 @@ async def send_supplement_reminder_later(
     try:
         await asyncio.sleep(SUPPLEMENT_REMINDER_DELAY.total_seconds())
 
-        supplements_list = SupplementRepository.get_supplements(user_id)
-        target = next((item for item in supplements_list if item.get("id") == supplement_id), None)
-        if not target or not target.get("notifications_enabled", True):
-            return
+        async with user_operation_guard.operation(user_id):
+            supplements_list = SupplementRepository.get_supplements(user_id)
+            target = next((item for item in supplements_list if item.get("id") == supplement_id), None)
+            if not target or not target.get("notifications_enabled", True):
+                return
 
-        await bot.send_message(
-            chat_id=user_id,
-            text=(
-                "🔔 Напоминаю принять добавку!\n\n"
-                f"💊 {target['name']}\n"
-                f"⏰ {time_text}\n\n"
-                "Нажми «✅ Подтвердить прием», когда примешь добавку, "
-                "или «⏰ Напомнить позже»."
-            ),
-            reply_markup=build_supplement_notification_keyboard(supplement_id, time_text),
-        )
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "🔔 Напоминаю принять добавку!\n\n"
+                    f"💊 {target['name']}\n"
+                    f"⏰ {time_text}\n\n"
+                    "Нажми «✅ Подтвердить прием», когда примешь добавку, "
+                    "или «⏰ Напомнить позже»."
+                ),
+                reply_markup=build_supplement_notification_keyboard(supplement_id, time_text),
+            )
+    except UserOperationBlocked:
+        return
     except Exception as e:
         logger.error(
             "Ошибка при отправке отложенного напоминания supplement_id=%s error_type=%s",
