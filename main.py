@@ -5,8 +5,6 @@ import asyncio
 import nest_asyncio
 import logging
 import threading
-import http.server
-import socketserver
 
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
@@ -17,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from config import API_TOKEN, KEEPALIVE_PORT
+from keepalive_server import HealthCheckHandler, ReusableTCPServer
 from middlewares import OnboardingMiddleware, UserActivityMiddleware
 from utils.logging_config import setup_logging
 
@@ -26,22 +25,11 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-class ReusableTCPServer(socketserver.TCPServer):
-    """TCP сервер с возможностью переиспользования адреса."""
-    allow_reuse_address = True
-
-
 def start_keepalive_server():
     """Запускает keep-alive HTTP сервер в отдельном потоке."""
     PORT = KEEPALIVE_PORT
-    handler = http.server.SimpleHTTPRequestHandler
-    
-    class QuietHandler(handler):
-        """Handler без вывода логов."""
-        def log_message(self, format, *args):
-            pass
-    
-    with ReusableTCPServer(("", PORT), QuietHandler) as httpd:
+
+    with ReusableTCPServer(("", PORT), HealthCheckHandler) as httpd:
         logger.info(f"✅ Keep-alive сервер запущен на порту {PORT}")
         httpd.serve_forever()
 
