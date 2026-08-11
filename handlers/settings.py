@@ -11,7 +11,7 @@ from utils.keyboards import (
     push_menu_stack,
     settings_menu,
 )
-from database.session import get_db_session
+from database.account_deletion import delete_user_account
 from database.repositories import SupportRepository, AnalyticsRepository, ErrorLogRepository
 from states.user_states import SupportStates
 from config import ADMIN_ID
@@ -25,38 +25,6 @@ def reset_user_state(message: Message, *, keep_supplements: bool = False):
     """Сбрасывает состояние пользователя (упрощённая версия)."""
     # TODO: Заменить на FSM состояния
     pass
-
-
-def delete_user_account(user_id: str) -> bool:
-    """Удаляет аккаунт пользователя и все связанные данные."""
-    from database.models import (
-        Workout, Weight, Measurement, Meal, KbjuSettings,
-        SupplementEntry, Supplement, Procedure, WaterEntry, User,
-        EveningAnalysisNotificationState,
-    )
-    
-    with get_db_session() as session:
-        try:
-            # Удаляем все данные пользователя из всех таблиц
-            session.query(Workout).filter_by(user_id=user_id).delete()
-            session.query(Weight).filter_by(user_id=user_id).delete()
-            session.query(Measurement).filter_by(user_id=user_id).delete()
-            session.query(Meal).filter_by(user_id=user_id).delete()
-            session.query(KbjuSettings).filter_by(user_id=user_id).delete()
-            session.query(SupplementEntry).filter_by(user_id=user_id).delete()
-            session.query(Supplement).filter_by(user_id=user_id).delete()
-            session.query(Procedure).filter_by(user_id=user_id).delete()
-            session.query(WaterEntry).filter_by(user_id=user_id).delete()
-            session.query(EveningAnalysisNotificationState).filter_by(user_id=user_id).delete()
-            session.query(User).filter_by(user_id=user_id).delete()
-            
-            session.commit()
-            logger.info(f"Successfully deleted account for user {user_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Error deleting account for user {user_id}: {e}")
-            session.rollback()
-            return False
 
 
 @router.message(lambda m: m.text == "⚙️ Настройки")
