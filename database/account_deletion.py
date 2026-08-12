@@ -148,8 +148,8 @@ def delete_user_account(
         with session_provider() as session:
             delete_user_account_data(session, normalized_user_id)
     except Exception:
-        logger.exception("Error deleting account for user %s", normalized_user_id)
+        logger.exception("Account deletion failed")
         return False
 
-    logger.info("Successfully deleted account for user %s", normalized_user_id)
+    logger.info("Account deletion completed successfully")
     return True

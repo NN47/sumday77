@@ -5,11 +5,13 @@ from io import StringIO
 import json
 import logging
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from database.models import AIUsageLog, Base, ErrorLog
+from database.account_deletion import delete_user_account
 from database.repositories.error_log_repository import ErrorLogRepository
 from database.repositories.gemini_repository import GeminiRepository
 from services import ai_usage_logger as ai_usage_module
@@ -67,6 +69,47 @@ def test_file_and_stdout_formatters_redact_content_secrets_and_exception_details
         assert PRIVATE_SECRET not in output
         assert "RuntimeError" in output
         assert "[REDACTED_CONTENT]" in output
+
+
+def test_successful_account_deletion_logs_fact_without_telegram_user_id(tmp_path) -> None:
+    telegram_user_id = "987654321012345678"
+    log_path = tmp_path / "bot.log"
+    stdout = StringIO()
+    formatter = PrivacySafeFormatter("%(levelname)s - %(message)s")
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    stdout_handler = logging.StreamHandler(stdout)
+    file_handler.setFormatter(formatter)
+    stdout_handler.setFormatter(formatter)
+
+    deletion_logger = logging.getLogger("database.account_deletion")
+    original_handlers = deletion_logger.handlers[:]
+    original_level = deletion_logger.level
+    original_propagate = deletion_logger.propagate
+    deletion_logger.handlers = [file_handler, stdout_handler]
+    deletion_logger.setLevel(logging.INFO)
+    deletion_logger.propagate = False
+
+    @contextmanager
+    def successful_session_provider():
+        yield object()
+
+    try:
+        with patch("database.account_deletion.delete_user_account_data") as delete_data:
+            assert delete_user_account(
+                telegram_user_id,
+                session_provider=successful_session_provider,
+            ) is True
+        delete_data.assert_called_once()
+    finally:
+        file_handler.close()
+        stdout_handler.close()
+        deletion_logger.handlers = original_handlers
+        deletion_logger.setLevel(original_level)
+        deletion_logger.propagate = original_propagate
+
+    for output in (log_path.read_text(encoding="utf-8"), stdout.getvalue()):
+        assert telegram_user_id not in output
+        assert "Account deletion completed successfully" in output
 
 
 def test_error_log_repository_does_not_persist_raw_content(monkeypatch) -> None:
