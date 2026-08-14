@@ -449,7 +449,11 @@ def translate_gemini_admin_stats(stats: dict, compact: bool = False, debug: bool
 
 
 def format_gemini(metrics: dict) -> str:
-    return translate_gemini_admin_stats(metrics)
+    # Подробные блоки по всем ключам вместе с событиями могут превышать
+    # ограничение Telegram в 4096 символов. Для интерактивного экрана админки
+    # используем уже существующий компактный формат; подробный формат остаётся
+    # доступен для диагностики и тестов через translate_gemini_admin_stats().
+    return translate_gemini_admin_stats(metrics, compact=True)
 
 
 def _fmt_cost(value) -> str:

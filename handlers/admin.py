@@ -1,6 +1,8 @@
 """Закрытый admin-раздел внутри Telegram-бота."""
 from __future__ import annotations
 
+import logging
+
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -21,6 +23,7 @@ from utils.admin_formatters import (
 )
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 def _is_admin_telegram_id(user_id: int) -> bool:
@@ -56,8 +59,18 @@ def _back_kb(extra: list[InlineKeyboardButton] | None = None) -> InlineKeyboardM
 async def _edit_or_answer(message: Message, text: str, reply_markup: InlineKeyboardMarkup) -> None:
     try:
         await message.edit_text(text, reply_markup=reply_markup)
-    except Exception:
+        return
+    except Exception as edit_error:
+        logger.warning("Admin message edit failed: %s", type(edit_error).__name__)
+
+    try:
         await message.answer(text, reply_markup=reply_markup)
+    except Exception as answer_error:
+        logger.error("Admin message send failed: %s", type(answer_error).__name__)
+        await message.answer(
+            "⚠️ Не удалось показать раздел админки. Попробуйте открыть его ещё раз.",
+            reply_markup=reply_markup,
+        )
 
 
 @router.message(Command("admin"))

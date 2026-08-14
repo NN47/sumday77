@@ -16,6 +16,7 @@ assert spec and spec.loader
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 translate_gemini_admin_stats = module.translate_gemini_admin_stats
+format_gemini = module.format_gemini
 format_recent_events = module.format_recent_events
 format_openai_ai = module.format_openai_ai
 format_deepseek_ai = module.format_deepseek_ai
@@ -124,6 +125,44 @@ def test_translate_gemini_admin_stats_compact_mode() -> None:
     assert "Всего: " not in result
     assert "Запросы: <b>8</b>, Ошибки: <b>0</b>" in result
     assert "🕘 <b>Последние события</b>" in result
+
+
+def test_format_gemini_fits_telegram_message_limit_with_all_accounts_and_events() -> None:
+    accounts = [
+        _account(account_name=f"GEMINI_API_KEY{index or ''}", is_active=index == 0)
+        for index in range(3)
+    ]
+    events = [
+        {
+            "created_at": datetime(2026, 4, 9, 10, 18),
+            "account_name": accounts[index % len(accounts)].account_name,
+            "event_type": "request_failed",
+            "error_message": "This model is currently experiencing high demand" * 5,
+        }
+        for index in range(10)
+    ]
+    stats = {
+        "active_account": accounts[0],
+        "user_requests_today": 999999,
+        "api_attempts_today": 999999,
+        "retries_today": 999999,
+        "successful_requests_today": 999999,
+        "failed_requests_today": 999999,
+        "total_requests_all_time": 999999,
+        "total_limit_switches": 999999,
+        "total_temporary_failovers": 999999,
+        "failovers_due_to_quota_today": 999999,
+        "failovers_due_to_temporary_today": 999999,
+        "last_switch_reason": "switch_due_to_temporary_failure",
+        "accounts": accounts,
+        "recent_events": events,
+    }
+
+    result = format_gemini(stats)
+
+    assert len(result) <= 4096
+    assert "Запросы: <b>12</b>, Ошибки: <b>2</b>" in result
+    assert "Последнее сообщение об ошибке" not in result
 
 
 def test_format_recent_events_displays_naive_utc_as_moscow_time() -> None:
