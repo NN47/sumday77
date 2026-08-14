@@ -10,6 +10,10 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from database.session import get_db_session
 from database.models import ActivityAnalysisEntry, User, Supplement, SupplementEntry, SupplementNotificationState, KbjuSettings, EveningAnalysisNotificationState
 from database.repositories.evening_analysis_notification_repository import EveningAnalysisNotificationRepository
+from database.technical_log_retention import (
+    TECHNICAL_LOG_CLEANUP_INTERVAL_SECONDS,
+    cleanup_expired_technical_logs,
+)
 from services.error_logging_service import log_app_error
 from user_operation_guard import UserOperationBlocked, user_operation_guard
 from utils.log_sanitizer import safe_exception_summary
@@ -568,10 +572,34 @@ class NotificationScheduler:
             self.supplement_notification_loop(),
             # Запускаем независимый цикл вечерних уведомлений анализа дня
             self.evening_analysis_notification_loop(),
+            # Ежедневно очищаем только технические журналы с настроенным TTL
+            self.technical_log_cleanup_loop(),
         ]
         
         # Запускаем все задачи параллельно
         await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def run_technical_log_cleanup(self) -> bool:
+        """Runs one cleanup outside the event loop and contains unexpected errors."""
+        try:
+            await asyncio.to_thread(cleanup_expired_technical_logs)
+            return True
+        except Exception as exc:
+            logger.error(
+                "Technical log cleanup task failed error_type=%s",
+                safe_exception_summary(exc),
+            )
+            return False
+
+    async def technical_log_cleanup_loop(self) -> None:
+        """Runs technical journal retention once at startup and then daily."""
+        while self.running:
+            await self.run_technical_log_cleanup()
+            try:
+                await asyncio.sleep(TECHNICAL_LOG_CLEANUP_INTERVAL_SECONDS)
+            except asyncio.CancelledError:
+                logger.info("Цикл очистки технических журналов остановлен")
+                break
     
     async def check_and_send_supplement_notifications(self):
         """Проверяет добавки и отправляет уведомления, если наступило время приёма."""

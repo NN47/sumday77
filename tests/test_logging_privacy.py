@@ -17,6 +17,7 @@ from database.repositories.gemini_repository import GeminiRepository
 from services import ai_usage_logger as ai_usage_module
 from services import deepseek_service as deepseek_module
 from utils.log_sanitizer import PrivacySafeFormatter
+from utils.logging_config import create_bot_log_handler
 
 
 PRIVATE_TEXT = "PRIVATE_USER_TEXT_12345"
@@ -110,6 +111,30 @@ def test_successful_account_deletion_logs_fact_without_telegram_user_id(tmp_path
     for output in (log_path.read_text(encoding="utf-8"), stdout.getvalue()):
         assert telegram_user_id not in output
         assert "Account deletion completed successfully" in output
+
+
+def test_rotating_bot_log_is_bounded_and_privacy_sanitized(tmp_path) -> None:
+    log_path = tmp_path / "bot.log"
+    handler = create_bot_log_handler(log_path, max_bytes=220, backup_count=2)
+    logger = logging.getLogger("tests.logging_privacy.rotation")
+    logger.handlers = [handler]
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    try:
+        for index in range(30):
+            logger.info("operation=rotation index=%s message_text=%s", index, PRIVATE_TEXT)
+    finally:
+        handler.close()
+        logger.handlers = []
+
+    log_files = sorted(tmp_path.glob("bot.log*"))
+    assert log_path.exists()
+    assert (tmp_path / "bot.log.1").exists()
+    assert 2 <= len(log_files) <= 3
+
+    combined_output = "\n".join(path.read_text(encoding="utf-8") for path in log_files)
+    assert PRIVATE_TEXT not in combined_output
+    assert "[REDACTED_CONTENT]" in combined_output
 
 
 def test_error_log_repository_does_not_persist_raw_content(monkeypatch) -> None:
