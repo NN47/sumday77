@@ -2,13 +2,20 @@
 import logging
 from datetime import date
 from aiogram import Router
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    ReplyKeyboardRemove,
+)
 from aiogram.fsm.context import FSMContext
-from states.user_states import KbjuTestStates
+from states.user_states import AgeGateStates, KbjuTestStates
 from utils.keyboards import (
     kbju_gender_menu,
     kbju_gender_inline,
     kbju_age_range_inline,
+    age_gate_inline,
     kbju_height_range_inline,
     kbju_weight_range_inline,
     build_kbju_weight_values_inline,
@@ -26,7 +33,7 @@ from utils.keyboards import (
     push_menu_stack,
 )
 from services.nutrition_calculator import calculate_nutrition_profile
-from database.repositories import MealRepository, WeightRepository
+from database.repositories import MealRepository, UserRepository, WeightRepository
 from utils.formatters import (
     format_kbju_goal_text,
     format_current_kbju_goal,
@@ -35,6 +42,11 @@ from utils.formatters import (
 )
 
 logger = logging.getLogger(__name__)
+
+UNDERAGE_MESSAGE = (
+    "Sumday77 предназначен для пользователей старше 18 лет. "
+    "Сейчас бот не выполняет расчёты питания и рекомендации для несовершеннолетних."
+)
 
 router = Router()
 BASE_TOTAL_STEPS = 6
@@ -63,7 +75,6 @@ GOAL_SPEED_TO_LABEL = {
 GOAL_SPEED_PERCENT_TO_KEY = {config["percent"]: key for key, config in GOAL_SPEED.items()}
 
 AGE_MAP = {
-    "under_18": 16,
     "18_24": 21,
     "25_29": 27,
     "30_34": 32,
@@ -277,6 +288,23 @@ async def restart_required_kbju_test(message: Message, state: FSMContext):
         reply_markup=kbju_gender_inline,
     )
 
+
+async def start_age_confirmation(message: Message, state: FSMContext) -> None:
+    """Request the one-time minimum 18+ confirmation without collecting exact age."""
+    await state.clear()
+    await state.set_state(AgeGateStates.confirming_age)
+    await message.answer(
+        "Перед дальнейшим использованием Sumday77 подтверди возрастную группу:",
+        reply_markup=age_gate_inline,
+    )
+
+
+async def stop_underage_onboarding(message: Message, state: FSMContext, user_id: str) -> None:
+    """Persist the blocked status and remove all unfinished onboarding data."""
+    UserRepository.set_age_verification(user_id, False)
+    await state.clear()
+    await message.answer(UNDERAGE_MESSAGE, reply_markup=ReplyKeyboardRemove())
+
 @router.message(lambda m: m.text == "🎯 Цель / Норма КБЖУ")
 async def show_kbju_goal(message: Message, state: FSMContext):
     """Показывает текущую цель КБЖУ и варианты её настройки."""
@@ -375,12 +403,19 @@ def get_age_data(age_key: str) -> tuple[str, int] | None:
 async def handle_kbju_test_age_callback(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор возрастного диапазона в тесте КБЖУ."""
     age_key = callback.data.split(":", maxsplit=1)[1]
+    user_id = str(callback.from_user.id)
+    if age_key == "under_18":
+        await callback.answer()
+        await stop_underage_onboarding(callback.message, state, user_id)
+        return
+
     age_data = get_age_data(age_key)
     if age_data is None:
         await callback.answer("Не удалось определить возрастную группу", show_alert=True)
         return
 
     age_range, age = age_data
+    UserRepository.set_age_verification(user_id, True)
     await state.update_data(age_range=age_range, age=age)
     await state.set_state(KbjuTestStates.entering_height)
     await callback.answer()
@@ -388,6 +423,39 @@ async def handle_kbju_test_age_callback(callback: CallbackQuery, state: FSMConte
         format_step_text(BASE_STEP_BY_STATE[KbjuTestStates.entering_height.state], "Выбери диапазон роста:"),
         reply_markup=kbju_height_range_inline,
     )
+
+
+@router.message(AgeGateStates.confirming_age)
+async def handle_age_confirmation_text(message: Message):
+    """Keep age confirmation on explicit categories instead of free-form age data."""
+    await message.answer("Выбери возрастную группу кнопкой ниже 👇", reply_markup=age_gate_inline)
+
+
+@router.callback_query(
+    AgeGateStates.confirming_age,
+    lambda c: c.data is not None and c.data.startswith("age_gate:"),
+)
+async def handle_existing_user_age_confirmation(callback: CallbackQuery, state: FSMContext):
+    """Apply the one-time gate to legacy users without deleting their existing data."""
+    age_key = callback.data.split(":", maxsplit=1)[1]
+    user_id = str(callback.from_user.id)
+    if age_key == "under_18":
+        await callback.answer()
+        await stop_underage_onboarding(callback.message, state, user_id)
+        return
+    if age_key not in AGE_MAP:
+        await callback.answer("Не удалось определить возрастную группу", show_alert=True)
+        return
+
+    await callback.answer()
+    UserRepository.set_age_verification(user_id, True)
+    await state.clear()
+    await callback.message.answer("Возраст 18+ подтверждён ✅")
+
+    # Local import avoids a module cycle: /start owns rendering of the main screen.
+    from handlers.start import show_verified_start
+
+    await show_verified_start(callback.message, state, user_id=user_id)
 
 @router.message(KbjuTestStates.entering_height)
 async def handle_kbju_test_height_text(message: Message):

@@ -15,7 +15,11 @@ from utils.progress_formatters import (
 from database.session import get_db_session
 from database.models import User
 from database.repositories import AnalyticsRepository
-from handlers.kbju_test import has_completed_kbju_test, restart_required_kbju_test
+from handlers.kbju_test import (
+    has_completed_kbju_test,
+    restart_required_kbju_test,
+    start_age_confirmation,
+)
 from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
@@ -33,14 +37,6 @@ async def _build_recommendations_link(message: Message) -> str:
 async def start(message: Message, state: FSMContext):
     """Обработчик команды /start."""
     user_id = str(message.from_user.id)
-
-    payload = ""
-    if message.text and " " in message.text:
-        payload = message.text.split(" ", 1)[1].strip().lower()
-    if payload == "recommendations":
-        from handlers.common import _build_recommendations_text
-        await message.answer(_build_recommendations_text(), parse_mode="Markdown")
-        return
     logger.info("Bot start command received")
     AnalyticsRepository.track_event(user_id, "start", section="entry")
     is_new_user = False
@@ -54,6 +50,40 @@ async def start(message: Message, state: FSMContext):
             session.commit()
             logger.info("New user registered")
             is_new_user = True
+
+        age_verified = user.age_verified
+
+    if age_verified is False:
+        await start_age_confirmation(message, state)
+        return
+
+    if age_verified is not True:
+        if has_completed_kbju_test(user_id):
+            await start_age_confirmation(message, state)
+        else:
+            await restart_required_kbju_test(message, state)
+        return
+
+    await show_verified_start(message, state, is_new_user=is_new_user)
+
+
+async def show_verified_start(
+    message: Message,
+    state: FSMContext,
+    *,
+    is_new_user: bool = False,
+    user_id: str | None = None,
+) -> None:
+    """Render /start content only after the persisted 18+ check succeeds."""
+    user_id = str(user_id if user_id is not None else message.from_user.id)
+
+    payload = ""
+    if message.text and " " in message.text:
+        payload = message.text.split(" ", 1)[1].strip().lower()
+    if payload == "recommendations":
+        from handlers.common import _build_recommendations_text
+        await message.answer(_build_recommendations_text(), parse_mode="Markdown")
+        return
 
     if not has_completed_kbju_test(user_id):
         await restart_required_kbju_test(message, state)

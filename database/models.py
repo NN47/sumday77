@@ -28,6 +28,9 @@ class User(Base):
     target_weight = Column(Float, nullable=True)
     timezone = Column(String, default="Europe/Moscow", nullable=False)
     notifications_enabled = Column(Boolean, default=True, nullable=False)
+    # NULL means that the one-time 18+ gate has not been completed yet.
+    # We intentionally do not store a birth date or an exact age.
+    age_verified = Column(Boolean, nullable=True)
 
 
 class EveningAnalysisNotificationState(Base):

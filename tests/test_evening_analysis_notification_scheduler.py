@@ -33,6 +33,8 @@ class FakeQuery:
         return []
 
     def first(self):
+        if self.kind == "users":
+            return self.session.users[0] if self.session.users else None
         if self.kind == "state":
             user = self.session.users[0]
             return self.session.states.get(user.user_id)
@@ -44,6 +46,9 @@ class FakeQuery:
 class FakeSession:
     def __init__(self, users, states=None, generated_exists=False):
         self.users = users
+        for user in self.users:
+            if not hasattr(user, "age_verified"):
+                user.age_verified = True
         self.states = states or {}
         self.generated_exists = generated_exists
 
@@ -85,7 +90,7 @@ def test_evening_analysis_notification_is_sent_after_2222_if_exact_minute_was_mi
 
     with (
         patch("services.notification_scheduler.datetime", FixedDateTime),
-        patch("services.notification_scheduler.get_db_session", return_value=fake_db_session(session)),
+        patch("services.notification_scheduler.get_db_session", side_effect=lambda: fake_db_session(session)),
         patch(
             "services.notification_scheduler.EveningAnalysisNotificationRepository.mark_evening_notification_sent"
         ) as mark_sent,
@@ -115,7 +120,7 @@ def test_evening_analysis_notification_is_not_sent_before_2222():
 
     with (
         patch("services.notification_scheduler.datetime", FixedDateTime),
-        patch("services.notification_scheduler.get_db_session", return_value=fake_db_session(session)),
+        patch("services.notification_scheduler.get_db_session", side_effect=lambda: fake_db_session(session)),
         patch(
             "services.notification_scheduler.EveningAnalysisNotificationRepository.mark_evening_notification_sent"
         ) as mark_sent,
@@ -144,7 +149,7 @@ def test_evening_analysis_notification_uses_app_timezone_not_stale_user_timezone
 
     with (
         patch("services.notification_scheduler.datetime", FixedDateTime),
-        patch("services.notification_scheduler.get_db_session", return_value=fake_db_session(session)),
+        patch("services.notification_scheduler.get_db_session", side_effect=lambda: fake_db_session(session)),
         patch(
             "services.notification_scheduler.EveningAnalysisNotificationRepository.mark_evening_notification_sent"
         ) as mark_sent,
@@ -175,7 +180,7 @@ def test_evening_analysis_notification_is_retried_when_telegram_send_fails():
 
     with (
         patch("services.notification_scheduler.datetime", FixedDateTime),
-        patch("services.notification_scheduler.get_db_session", return_value=fake_db_session(session)),
+        patch("services.notification_scheduler.get_db_session", side_effect=lambda: fake_db_session(session)),
         patch("services.notification_scheduler.log_app_error"),
         patch(
             "services.notification_scheduler.EveningAnalysisNotificationRepository.mark_evening_notification_sent"
@@ -209,7 +214,7 @@ def test_evening_analysis_notification_is_deferred_after_recent_activity():
 
     with (
         patch("services.notification_scheduler.datetime", FixedDateTime),
-        patch("services.notification_scheduler.get_db_session", return_value=fake_db_session(session)),
+        patch("services.notification_scheduler.get_db_session", side_effect=lambda: fake_db_session(session)),
         patch("services.notification_scheduler.random.randint", return_value=600),
         patch(
             "services.notification_scheduler.EveningAnalysisNotificationRepository.mark_evening_notification_sent"

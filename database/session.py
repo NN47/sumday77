@@ -110,7 +110,7 @@ def init_db():
         except Exception as e:
             logger.warning("Ошибка при проверке workouts fields error_type=%s", safe_exception_summary(e))
 
-        # users.target_weight / users.created_at / users.last_seen_at
+        # users.target_weight / users.created_at / users.last_seen_at / users.age_verified
         try:
             user_columns = {col["name"] for col in inspector.get_columns("users")}
         except Exception as e:
@@ -141,6 +141,8 @@ def init_db():
         _add_users_column_if_missing("target_weight", "FLOAT")
         _add_users_column_if_missing("timezone", "VARCHAR DEFAULT 'Europe/Moscow' NOT NULL")
         _add_users_column_if_missing("notifications_enabled", "BOOLEAN DEFAULT TRUE NOT NULL")
+        # Existing rows deliberately remain NULL until the user confirms 18+ once.
+        _add_users_column_if_missing("age_verified", "BOOLEAN")
         # DATETIME не поддерживается в PostgreSQL, поэтому используем TIMESTAMP.
         _add_users_column_if_missing("created_at", "TIMESTAMP", fill_now=True)
         _add_users_column_if_missing("last_seen_at", "TIMESTAMP", fill_now=True)

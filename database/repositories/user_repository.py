@@ -22,6 +22,32 @@ class UserRepository:
                 user.last_seen_at = now
 
     @staticmethod
+    def get_age_verification(user_id: str) -> bool | None:
+        """Return the minimal persisted 18+ status, or None if not confirmed."""
+        with get_db_session() as session:
+            user = session.query(User).filter(User.user_id == str(user_id)).first()
+            return user.age_verified if user is not None else None
+
+    @staticmethod
+    def set_age_verification(user_id: str, is_adult: bool) -> None:
+        """Persist only whether the user confirmed an adult age category."""
+        with get_db_session() as session:
+            user = session.query(User).filter(User.user_id == str(user_id)).first()
+            if user is None:
+                now = datetime.utcnow()
+                user = User(
+                    user_id=str(user_id),
+                    created_at=now,
+                    last_seen_at=now,
+                )
+                session.add(user)
+            user.age_verified = bool(is_adult)
+
+    @staticmethod
+    def is_age_verified(user_id: str) -> bool:
+        return UserRepository.get_age_verification(user_id) is True
+
+    @staticmethod
     def count_all() -> int:
         with get_db_session() as session:
             return session.query(User).count()

@@ -147,6 +147,18 @@ class NotificationScheduler:
         reply_markup: InlineKeyboardMarkup | None = None,
     ) -> bool:
         """Отправляет уведомление пользователю и возвращает успешность отправки."""
+        with get_db_session() as session:
+            is_adult = (
+                session.query(User)
+                .filter(
+                    User.user_id == str(user_id),
+                    User.age_verified.is_(True),
+                )
+                .first()
+                is not None
+            )
+        if not is_adult:
+            return False
         try:
             async with user_operation_guard.operation(user_id):
                 await self.bot.send_message(
@@ -175,6 +187,7 @@ class NotificationScheduler:
                 users = (
                     session.query(User)
                     .join(KbjuSettings, KbjuSettings.user_id == User.user_id)
+                    .filter(User.age_verified.is_(True))
                     .all()
                 )
                 user_ids = [user.user_id for user in users]
@@ -307,7 +320,10 @@ class NotificationScheduler:
                 users = (
                     session.query(User)
                     .join(KbjuSettings, KbjuSettings.user_id == User.user_id)
-                    .filter(User.notifications_enabled.is_(True))
+                    .filter(
+                        User.notifications_enabled.is_(True),
+                        User.age_verified.is_(True),
+                    )
                     .all()
                 )
 
@@ -640,6 +656,9 @@ class NotificationScheduler:
                         continue
 
                     user = session.query(User).filter(User.user_id == state.user_id).first()
+                    if user is None or user.age_verified is not True:
+                        session.delete(state)
+                        continue
                     block_reason = await self.get_supplement_reminder_block_reason(
                         state.user_id,
                         last_seen_at=getattr(user, "last_seen_at", None),
@@ -662,6 +681,12 @@ class NotificationScheduler:
                     Supplement.notifications_enabled.is_(True),
                     session.query(KbjuSettings.id)
                     .filter(KbjuSettings.user_id == Supplement.user_id)
+                    .exists(),
+                    session.query(User.id)
+                    .filter(
+                        User.user_id == Supplement.user_id,
+                        User.age_verified.is_(True),
+                    )
                     .exists(),
                 ).all()
                 

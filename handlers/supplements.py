@@ -40,7 +40,7 @@ from utils.calendar_utils import (
     build_supplement_day_actions_keyboard,
     build_supplement_intake_date_calendar_keyboard,
 )
-from database.repositories import SupplementRepository
+from database.repositories import SupplementRepository, UserRepository
 from database.models import SupplementEntry, SupplementNotificationState
 from database.session import get_db_session
 from states.user_states import SupplementStates
@@ -2388,6 +2388,8 @@ async def send_supplement_reminder_later(
         await asyncio.sleep(SUPPLEMENT_REMINDER_DELAY.total_seconds())
 
         async with user_operation_guard.operation(user_id):
+            if not UserRepository.is_age_verified(user_id):
+                return
             supplements_list = SupplementRepository.get_supplements(user_id)
             target = next((item for item in supplements_list if item.get("id") == supplement_id), None)
             if not target or not target.get("notifications_enabled", True):

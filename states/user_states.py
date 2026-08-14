@@ -111,6 +111,11 @@ class KbjuTestStates(StatesGroup):
     entering_manual_carbs = State()
 
 
+class AgeGateStates(StatesGroup):
+    """One-time 18+ confirmation for users whose age was not persisted before."""
+    confirming_age = State()
+
+
 class ActivityAnalysisStates(StatesGroup):
     """Состояния для календаря ИИ-анализа деятельности."""
     entering_manual_analysis = State()
