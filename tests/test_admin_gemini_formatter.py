@@ -124,6 +124,7 @@ def test_translate_gemini_admin_stats_compact_mode() -> None:
 
     assert "Всего: " not in result
     assert "Запросы: <b>8</b>, Ошибки: <b>0</b>" in result
+    assert "Последняя ошибка: <b>Временная ошибка</b>" in result
     assert "🕘 <b>Последние события</b>" in result
 
 

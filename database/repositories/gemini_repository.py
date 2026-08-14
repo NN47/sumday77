@@ -20,6 +20,7 @@ class GeminiRepository:
     STATUS_RATE_LIMITED = "rate_limited"
     STATUS_AUTH_FAILED = "auth_failed"
     STATUS_DISABLED = "disabled"
+    CONFIGURATION_MISSING_REASON = "configuration_missing"
     FINAL_USER_EVENTS = {"user_request_started", "request_finished_success", "request_finished_failed"}
 
     @staticmethod
@@ -39,6 +40,17 @@ class GeminiRepository:
 
         with get_db_session() as session:
             existing = {acc.account_name: acc for acc in session.query(GeminiAccount).all()}
+            configured_names = {config["account_name"] for config in account_configs}
+
+            # Записи старых ключей сохраняем ради статистики, но исключаем из
+            # ротации, если соответствующей переменной больше нет в окружении.
+            for name, account in existing.items():
+                if name in configured_names:
+                    continue
+                account.is_active = False
+                account.status = GeminiRepository.STATUS_DISABLED
+                account.disabled_reason = GeminiRepository.CONFIGURATION_MISSING_REASON
+                account.updated_at = datetime.utcnow()
 
             for config in account_configs:
                 name = config["account_name"]
@@ -47,9 +59,24 @@ class GeminiRepository:
 
                 if name in existing:
                     account = existing[name]
+                    key_changed = account.api_key_masked != masked
+                    restored_configuration = (
+                        account.status == GeminiRepository.STATUS_DISABLED
+                        and account.disabled_reason == GeminiRepository.CONFIGURATION_MISSING_REASON
+                    )
                     account.api_key_masked = masked
                     account.priority_order = priority_order
-                    if not account.status:
+                    # auth_failed не должен переживать перезапуск процесса
+                    # бесконечно: настроенный ключ получает одну повторную
+                    # проверку после деплоя. Смена/возврат ключа также полностью
+                    # сбрасывает его временное операционное состояние.
+                    if key_changed or restored_configuration or account.status == GeminiRepository.STATUS_AUTH_FAILED:
+                        account.status = GeminiRepository.STATUS_ACTIVE
+                        account.is_active = False
+                        account.disabled_reason = None
+                        account.rate_limited_until = None
+                        account.temporary_unavailable_until = None
+                    elif not account.status:
                         account.status = GeminiRepository.STATUS_ACTIVE
                     account.updated_at = datetime.utcnow()
                 else:
@@ -69,9 +96,19 @@ class GeminiRepository:
                 .order_by(GeminiAccount.priority_order.asc(), GeminiAccount.id.asc())
                 .all()
             )
-            if ordered and not any(acc.is_active for acc in ordered):
-                ordered[0].is_active = True
-                ordered[0].updated_at = datetime.utcnow()
+            has_available_active = any(
+                acc.is_active and GeminiRepository._is_available(acc)
+                for acc in ordered
+            )
+            if not has_available_active:
+                next_available = next(
+                    (acc for acc in ordered if GeminiRepository._is_available(acc)),
+                    None,
+                )
+                if next_available:
+                    for account in ordered:
+                        account.is_active = account.id == next_available.id
+                        account.updated_at = datetime.utcnow()
 
     @staticmethod
     def _is_available(account: GeminiAccount, now: datetime | None = None) -> bool:

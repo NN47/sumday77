@@ -25,7 +25,7 @@ from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
 
-GeminiErrorType = Literal["temporary", "quota", "auth", "unknown"]
+GeminiErrorType = Literal["temporary", "quota", "auth", "location", "unavailable", "unknown"]
 
 
 class GeminiServiceError(Exception):
@@ -54,6 +54,20 @@ class GeminiServiceAuthError(GeminiServiceError):
 class GeminiServiceUnknownError(GeminiServiceError):
     def __init__(self, message: str):
         super().__init__(message, error_type="unknown")
+
+
+class GeminiServiceNoAvailableAccountError(GeminiServiceError):
+    code = "no_available_account"
+
+    def __init__(self, message: str = "Нет доступных аккаунтов Gemini"):
+        super().__init__(message, error_type="unavailable")
+
+
+class GeminiServiceLocationError(GeminiServiceError):
+    code = "unsupported_server_location"
+
+    def __init__(self, message: str = "Регион сервера не поддерживается Gemini API"):
+        super().__init__(message, error_type="location")
 
 
 class GeminiService:
@@ -106,7 +120,7 @@ class GeminiService:
         return genai.Client(api_key=api_key)
 
     def classify_gemini_error(self, error: Exception) -> GeminiErrorType:
-        """Классифицирует ошибку Gemini на temporary/quota/auth/unknown."""
+        """Классифицирует ошибку Gemini на temporary/quota/auth/location/unknown."""
         error_str = str(error).lower()
         error_type_name = type(error).__name__.lower()
 
@@ -145,7 +159,14 @@ class GeminiService:
             "service unavailable",
             "client has been closed",
         ]
+        location_indicators = [
+            "failed_precondition",
+            "user location is not supported",
+            "location is not supported for the api use",
+        ]
 
+        if any(token in error_str for token in location_indicators):
+            return "location"
         if any(token in error_str for token in auth_indicators) or error_type_name in {
             "authenticationerror",
             "permissiondenied",
@@ -209,6 +230,19 @@ class GeminiService:
             active if active else self._select_next_available_key(current_account_id=None, excluded_account_ids=set())
         )
 
+        if current_account is None:
+            error = GeminiServiceNoAvailableAccountError()
+            GeminiRepository.log_user_request_finished(
+                status="request_finished_failed",
+                model_name=self.model,
+                attempts=0,
+                retries=0,
+                error_type=error.error_type,
+                error_message=error.code,
+            )
+            logger.error("[Gemini] No available configured accounts code=%s", error.code)
+            raise error
+
         while current_account:
             if keys_tried >= self.max_keys_per_request:
                 break
@@ -263,6 +297,16 @@ class GeminiService:
                         )
                         break
 
+                    if error_type == "location":
+                        logger.warning("[Gemini] Request blocked by server location key_number=%s", key_number)
+                        GeminiRepository.log_request_failed(
+                            account_id=current_account.id,
+                            model_name=self.model,
+                            error_type=error_type,
+                            error_message=error_summary,
+                        )
+                        break
+
                     if self.should_retry(error_type) and temp_attempt < self.max_retries_per_key_for_temporary_errors:
                         temp_attempt += 1
                         total_retries += 1
@@ -303,6 +347,9 @@ class GeminiService:
                     )
                     break
 
+            if last_error_type == "location":
+                break
+
             if total_attempts >= self.max_total_attempts_per_request:
                 break
 
@@ -337,6 +384,8 @@ class GeminiService:
             raise GeminiServiceQuotaError("AI временно недоступен из-за лимита запросов.")
         if last_error_type == "auth":
             raise GeminiServiceAuthError("AI временно недоступен из-за ошибки настройки.")
+        if last_error_type == "location":
+            raise GeminiServiceLocationError()
         raise GeminiServiceUnknownError("Неизвестная ошибка Gemini")
 
     def analyze(self, text: str) -> str:

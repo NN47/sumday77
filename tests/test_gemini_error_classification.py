@@ -3,7 +3,7 @@ import os
 os.environ.setdefault("API_TOKEN", "test-token")
 os.environ.setdefault("GEMINI_API_KEY", "test-gemini-key")
 
-from services.gemini_service import GeminiService
+from services.gemini_service import GeminiService, GeminiServiceNoAvailableAccountError
 
 
 def _service_stub() -> GeminiService:
@@ -44,11 +44,50 @@ def test_backoff_schedule() -> None:
     assert svc.get_backoff_delay(5) == 8.0
 
 
-def test_classify_failed_precondition_location_as_non_retryable_provider_error() -> None:
+def test_classify_failed_precondition_location_as_explicit_non_retryable_error() -> None:
     svc = _service_stub()
     error = Exception("400 FAILED_PRECONDITION User location is not supported for the API use.")
 
     error_type = svc.classify_gemini_error(error)
 
-    assert error_type == "unknown"
+    assert error_type == "location"
     assert svc.should_retry(error_type) is False
+
+
+def test_execute_reports_when_no_configured_account_is_available(monkeypatch) -> None:
+    svc = GeminiService.__new__(GeminiService)
+    svc.model = "gemini-2.5-flash"
+    svc._ensure_accounts_synced = lambda: None
+    svc._select_next_available_key = lambda **_kwargs: None
+    finished = []
+
+    monkeypatch.setattr(
+        "services.gemini_service.GeminiRepository.log_user_request_started",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "services.gemini_service.GeminiRepository.get_active_account",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "services.gemini_service.GeminiRepository.log_user_request_finished",
+        lambda **kwargs: finished.append(kwargs),
+    )
+
+    try:
+        svc.execute_gemini_request_with_failover(lambda: None)
+    except GeminiServiceNoAvailableAccountError as error:
+        assert error.code == "no_available_account"
+    else:
+        raise AssertionError("GeminiServiceNoAvailableAccountError was not raised")
+
+    assert finished == [
+        {
+            "status": "request_finished_failed",
+            "model_name": "gemini-2.5-flash",
+            "attempts": 0,
+            "retries": 0,
+            "error_type": "unavailable",
+            "error_message": "no_available_account",
+        }
+    ]

@@ -238,6 +238,8 @@ def translate_error_type(error_type: str | None) -> str:
         "temporary": "Временная ошибка",
         "quota": "Превышен лимит",
         "auth": "Ошибка авторизации",
+        "location": "Регион сервера не поддерживается",
+        "unavailable": "Нет доступных ключей",
         "unknown": "Неизвестная ошибка",
     }
     if not error_type:
@@ -337,7 +339,8 @@ def build_account_block(account, *, active_account_name: str | None, compact: bo
             f"{title}\n"
             f"  • Запросы: <b>{_val(getattr(account, 'total_requests', 0), default='0')}</b>, "
             f"Ошибки: <b>{_val(getattr(account, 'error_requests', 0), default='0')}</b>, "
-            f"Состояние: <b>{_account_health(account)}</b>"
+            f"Состояние: <b>{_account_health(account)}</b>\n"
+            f"  • Последняя ошибка: <b>{translate_error_type(getattr(account, 'last_error_type', None))}</b>"
         )
 
     lines = [
