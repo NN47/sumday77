@@ -33,6 +33,7 @@ from services.error_logging_service import log_app_error
 from utils.log_sanitizer import safe_exception_summary
 from services.extended_activity_analysis_service import AnalysisPeriod, extended_activity_analysis_service
 from utils.telegram_text import split_telegram_message, strip_telegram_html
+from utils.note_factors import normalize_note_rating, sanitize_note_factors
 from services.notification_scheduler import (
     EVENING_ANALYSIS_REMIND_PREFIX,
     EVENING_ANALYSIS_REMINDER_DELAY,
@@ -390,7 +391,7 @@ async def generate_activity_analysis(
     from database.repositories import (
         WorkoutRepository, MealRepository, WeightRepository,
         WaterRepository, SupplementRepository, ProcedureRepository,
-        WellbeingRepository, NoteRepository
+        NoteRepository
     )
     from utils.workout_utils import calculate_workout_calories
     from utils.formatters import format_count_with_unit, get_kbju_goal_label
@@ -658,47 +659,6 @@ async def generate_activity_analysis(
     if procedure_count > 0:
         procedure_summary = f"\nПроцедуры: {procedure_count} записей за период."
 
-    # 🔹 Самочувствие за период
-    wellbeing_entries = WellbeingRepository.get_entries_for_period(user_id, start_date, end_date)
-    wellbeing_summary = ""
-    if wellbeing_entries:
-        quick_entries = [entry for entry in wellbeing_entries if entry.entry_type == "quick"]
-        comment_entries = [
-            entry for entry in wellbeing_entries if entry.entry_type == "comment" and entry.comment
-        ]
-        mood_counts = Counter(entry.mood for entry in quick_entries if entry.mood)
-        influence_counts = Counter(entry.influence for entry in quick_entries if entry.influence)
-        difficulty_counts = Counter(entry.difficulty for entry in quick_entries if entry.difficulty)
-
-        mood_summary = ", ".join(
-            f"{mood} — {count}" for mood, count in mood_counts.most_common()
-        )
-        influence_summary = ", ".join(
-            f"{influence} — {count}" for influence, count in influence_counts.most_common()
-        )
-        difficulty_summary = ", ".join(
-            f"{difficulty} — {count}" for difficulty, count in difficulty_counts.most_common()
-        )
-
-        wellbeing_parts = [
-            f"Записей самочувствия: {len(wellbeing_entries)} "
-            f"(быстрых опросов: {len(quick_entries)}, комментариев: {len(comment_entries)})."
-        ]
-        if mood_summary:
-            wellbeing_parts.append(f"Настроение: {mood_summary}.")
-        if influence_summary:
-            wellbeing_parts.append(f"Что влияло чаще всего: {influence_summary}.")
-        if difficulty_summary:
-            wellbeing_parts.append(f"Сложности: {difficulty_summary}.")
-        if comment_entries:
-            latest_comment = comment_entries[0]
-            wellbeing_parts.append(
-                f"Последний комментарий ({latest_comment.date.strftime('%d.%m')}): {latest_comment.comment}."
-            )
-        wellbeing_summary = "\n" + " ".join(wellbeing_parts)
-    else:
-        wellbeing_summary = "\nСамочувствие: записей за период нет."
-
     # 🔹 Заметки дня за период
     note_entries = []
     current_date = start_date
@@ -711,23 +671,28 @@ async def generate_activity_analysis(
     notes_summary = "\nЗаметки дня: записей за период нет."
     note_day_entry = next((note for note in note_entries if note.date == end_date), None)
     if note_entries:
-        avg_note_rating = sum(int(note.day_rating or 0) for note in note_entries) / len(note_entries)
+        valid_ratings = [
+            rating
+            for note in note_entries
+            if (rating := normalize_note_rating(note.day_rating)) is not None
+        ]
+        allowed_factor_lists = [
+            sanitize_note_factors(note.factors) for note in note_entries
+        ]
         factors_counter = Counter(
-            factor for note in note_entries for factor in (note.factors or [])
+            factor
+            for factors in allowed_factor_lists
+            for factor in factors
         )
         top_factors = ", ".join(
             f"{factor} — {count}" for factor, count in factors_counter.most_common(3)
         )
-        notes_parts = [
-            f"Заметок: {len(note_entries)} из {days_count} дней.",
-            f"Средняя оценка дня: {avg_note_rating:.1f}/5.",
-        ]
+        notes_parts = [f"Заметок: {len(note_entries)} из {days_count} дней."]
+        if valid_ratings:
+            avg_note_rating = sum(valid_ratings) / len(valid_ratings)
+            notes_parts.append(f"Средняя оценка дня: {avg_note_rating:.1f}/5.")
         if top_factors:
             notes_parts.append(f"Частые факторы: {top_factors}.")
-        if note_day_entry and note_day_entry.text:
-            notes_parts.append(
-                f"Комментарий за {end_date.strftime('%d.%m')}: {note_day_entry.text}."
-            )
         notes_summary = "\n" + " ".join(notes_parts)
     
     # 🔹 Вес и история веса
@@ -835,7 +800,7 @@ async def generate_activity_analysis(
 {meals_summary}
 
 Норма / цель КБЖУ:
-{kbju_goal_summary}{water_summary}{supplement_summary}{procedure_summary}{wellbeing_summary}{notes_summary}
+{kbju_goal_summary}{water_summary}{supplement_summary}{procedure_summary}{notes_summary}
 
 Вес:
 {weight_summary}{comparison_summary}
@@ -990,14 +955,13 @@ async def generate_activity_analysis(
         # 📝 Заметки дня
         notes_lines: list[str] = []
         if note_day_entry:
+            note_rating = normalize_note_rating(note_day_entry.day_rating)
+            note_factors = sanitize_note_factors(note_day_entry.factors)
             notes_lines = ["📝 Заметки дня"]
-            notes_lines.append(
-                f"• Оценка дня: {int(note_day_entry.day_rating or 0)}/5"
-            )
-            if note_day_entry.factors:
-                notes_lines.append(f"• Факторы: {', '.join(note_day_entry.factors)}")
-            if note_day_entry.text:
-                notes_lines.append(f"• Комментарий: {note_day_entry.text}")
+            if note_rating is not None:
+                notes_lines.append(f"• Оценка дня: {note_rating}/5")
+            if note_factors:
+                notes_lines.append(f"• Факторы: {', '.join(note_factors)}")
 
         supplements_lines: list[str] = []
         if today_supplement_entries:
@@ -1123,8 +1087,7 @@ async def generate_activity_analysis(
 - Обязательно учитывай оценку сожжённых калорий на тренировках в поле "Сожжённые калории" и выводах по нагрузке.
 
 Пиши структурированно, но компактно. Используй <b>жирный шрифт</b> для заголовков разделов, общей оценки, важных показателей (например: <b>3290 ккал</b>, <b>+849 ккал</b>, <b>136 г белка</b>) и ключевых выводов, когда это улучшает читаемость. Не перебарщивай: жирный шрифт должен помогать быстро сканировать текст глазами.
-Учитывай блок самочувствия и отражай его выводы в рекомендациях и гипотезе.
-Учитывай блок заметок дня (оценка, факторы, комментарий) и отражай это в рекомендациях.
+Учитывай структурированный блок заметок дня (оценка и факторы) и отражай его в рекомендациях.
 Для блока "Питание" используй логику:
 - обязательно упомяни, сколько калорий сожжено за день, сколько учтено в норме и какая получилась скорректированная норма;
 - если калории выше скорректированной нормы: главный совет — вернуться в целевой калораж;

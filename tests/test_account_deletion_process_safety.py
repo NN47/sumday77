@@ -73,7 +73,7 @@ class AccountDeletionProcessSafetyTests(unittest.TestCase):
             storage = MemoryStorage()
             state_a = make_fsm_context(storage, self.user_a)
             state_b = make_fsm_context(storage, self.user_b)
-            await state_b.set_state(WellbeingStates.note_text)
+            await state_b.set_state(WellbeingStates.note_factors)
             await state_b.update_data(private_draft="B")
             message_a = make_message(self.user_a, bot, "🗑 Удалить аккаунт")
             message_b = make_message(self.user_b, bot, "🗑 Удалить аккаунт")
@@ -85,7 +85,7 @@ class AccountDeletionProcessSafetyTests(unittest.TestCase):
                 await state_a.get_state(),
                 AccountDeletionStates.waiting_for_button_confirmation.state,
             )
-            self.assertEqual(await state_b.get_state(), WellbeingStates.note_text.state)
+            self.assertEqual(await state_b.get_state(), WellbeingStates.note_factors.state)
             self.assertEqual(await state_b.get_data(), {"private_draft": "B"})
 
             async with user_operation_guard.operation(self.user_b):
@@ -128,9 +128,9 @@ class AccountDeletionProcessSafetyTests(unittest.TestCase):
             state_b = make_fsm_context(storage, self.user_b)
             await state_a.set_state(AccountDeletionStates.waiting_for_text_confirmation)
             await state_a.update_data(confirmation="A")
-            await secondary_state_a.set_state(WellbeingStates.note_text)
+            await secondary_state_a.set_state(WellbeingStates.note_factors)
             await secondary_state_a.update_data(private_draft="A-secondary")
-            await state_b.set_state(WellbeingStates.note_text)
+            await state_b.set_state(WellbeingStates.note_factors)
             await state_b.update_data(private_draft="B")
             message_a = make_message(
                 self.user_a,
@@ -145,7 +145,7 @@ class AccountDeletionProcessSafetyTests(unittest.TestCase):
             self.assertFalse(
                 any(str(key.user_id) == self.user_a for key in storage.storage)
             )
-            self.assertEqual(await state_b.get_state(), WellbeingStates.note_text.state)
+            self.assertEqual(await state_b.get_state(), WellbeingStates.note_factors.state)
             self.assertEqual(await state_b.get_data(), {"private_draft": "B"})
 
             self.assertEqual(bot.last_meal_ids, {self.user_b: 22})

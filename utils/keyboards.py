@@ -7,7 +7,6 @@ LEGACY_MAIN_MENU_BUTTON_TEXT = "🏠 Главное меню"
 ONBOARDING_OPEN_MENU_BUTTON_TEXT = "Открыть меню"
 MAIN_MENU_BUTTON_ALIASES = {MAIN_MENU_BUTTON_TEXT, LEGACY_MAIN_MENU_BUTTON_TEXT, ONBOARDING_OPEN_MENU_BUTTON_TEXT}
 main_menu_button = KeyboardButton(text=MAIN_MENU_BUTTON_TEXT)
-WELLBEING_BUTTON_TEXT = "🙂 Самочувствие"
 WELLBEING_AND_PROCEDURES_BUTTON_TEXT = "📝 Заметки"
 LEGACY_WELLBEING_AND_PROCEDURES_BUTTON_TEXT = "📝 Заметки/\n💆 Процедуры"
 WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT = "⚖️ Вес и замеры"
@@ -58,22 +57,6 @@ onboarding_open_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
-# Меню самочувствия
-wellbeing_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="🟢 Быстрый опрос (20 секунд)")],
-        [KeyboardButton(text="✍️ Оставить комментарий")],
-        [KeyboardButton(text="📆 Календарь самочувствия")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
-    ],
-    resize_keyboard=True,
-)
-
-wellbeing_and_procedures_menu = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="⬅️ Назад"), main_menu_button]],
-    resize_keyboard=True,
-)
-
 notes_main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="➕ Добавить запись")],
@@ -88,64 +71,6 @@ notes_rating_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="😁 Отлично"), KeyboardButton(text="🙂 Нормально")],
         [KeyboardButton(text="😐 Средне"), KeyboardButton(text="😞 Плохо")],
         [KeyboardButton(text="😫 Очень тяжело")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
-    ],
-    resize_keyboard=True,
-)
-
-
-def build_notes_factors_menu(factor_labels: list[str], show_continue: bool = False) -> ReplyKeyboardMarkup:
-    keyboard = [[KeyboardButton(text=label)] for label in factor_labels]
-    keyboard.append([KeyboardButton(text="✍️ Свой вариант")])
-    if show_continue:
-        keyboard.append([KeyboardButton(text="✅ Продолжить"), KeyboardButton(text="⏭ Пропустить")])
-    else:
-        keyboard.append([KeyboardButton(text="⏭ Пропустить")])
-    keyboard.append([KeyboardButton(text="⬅️ Назад"), main_menu_button])
-    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
-
-
-notes_text_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="💾 Сохранить"), KeyboardButton(text="⏭ Пропустить")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
-    ],
-    resize_keyboard=True,
-)
-
-wellbeing_quick_mood_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="😄 Отлично"), KeyboardButton(text="🙂 Нормально")],
-        [KeyboardButton(text="😐 Так себе"), KeyboardButton(text="😣 Плохо")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
-    ],
-    resize_keyboard=True,
-)
-
-wellbeing_quick_influence_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="Сон"), KeyboardButton(text="Питание")],
-        [KeyboardButton(text="Нагрузка / тренировка"), KeyboardButton(text="Стресс")],
-        [KeyboardButton(text="Всё было нормально")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
-    ],
-    resize_keyboard=True,
-)
-
-wellbeing_quick_difficulty_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="Мало энергии")],
-        [KeyboardButton(text="Голод / тяга к сладкому")],
-        [KeyboardButton(text="Настроение / мотивация")],
-        [KeyboardButton(text="Физический дискомфорт")],
-        [KeyboardButton(text="Всё ок")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
-    ],
-    resize_keyboard=True,
-)
-
-wellbeing_comment_menu = ReplyKeyboardMarkup(
-    keyboard=[
         [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,

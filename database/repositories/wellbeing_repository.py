@@ -33,21 +33,6 @@ class WellbeingRepository:
             return entry.id
 
     @staticmethod
-    def save_comment_entry(user_id: str, comment: str, entry_date: date) -> int:
-        """Сохраняет комментарий о самочувствии."""
-        with get_db_session() as session:
-            entry = WellbeingEntry(
-                user_id=str(user_id),
-                entry_type="comment",
-                comment=comment,
-                date=entry_date,
-            )
-            session.add(entry)
-            session.commit()
-            session.refresh(entry)
-            return entry.id
-
-    @staticmethod
     def update_quick_entry(
         entry_id: int,
         user_id: str,
@@ -70,24 +55,6 @@ class WellbeingRepository:
             entry.mood = mood
             entry.influence = influence
             entry.difficulty = difficulty
-            entry.date = entry_date
-            session.commit()
-            return True
-
-    @staticmethod
-    def update_comment_entry(entry_id: int, user_id: str, comment: str, entry_date: date) -> bool:
-        """Обновляет комментарий о самочувствии."""
-        with get_db_session() as session:
-            entry = (
-                session.query(WellbeingEntry)
-                .filter(WellbeingEntry.id == entry_id)
-                .filter(WellbeingEntry.user_id == str(user_id))
-                .first()
-            )
-            if not entry:
-                return False
-            entry.entry_type = "comment"
-            entry.comment = comment
             entry.date = entry_date
             session.commit()
             return True

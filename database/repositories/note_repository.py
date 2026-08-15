@@ -5,6 +5,7 @@ from typing import Optional
 
 from database.models import NoteEntry
 from database.session import get_db_session
+from utils.note_factors import normalize_note_rating, sanitize_note_factors
 
 
 class NoteRepository:
@@ -16,9 +17,13 @@ class NoteRepository:
         entry_date: date,
         day_rating: int,
         factors: list[str],
-        text: Optional[str],
     ) -> NoteEntry:
-        """Создаёт или обновляет заметку за конкретный день."""
+        """Создаёт или обновляет структурированную заметку за конкретный день."""
+        normalized_rating = normalize_note_rating(day_rating)
+        if normalized_rating is None:
+            raise ValueError("Unsupported note rating")
+        allowed_factors = sanitize_note_factors(factors)
+
         with get_db_session() as session:
             note = (
                 session.query(NoteEntry)
@@ -27,13 +32,11 @@ class NoteRepository:
                 .first()
             )
 
-            normalized_text = (text or "").strip()[:500] or None
-            factors_json = NoteEntry.serialize_factors(factors)
+            factors_json = NoteEntry.serialize_factors(allowed_factors)
 
             if note:
-                note.day_rating = int(day_rating)
+                note.day_rating = normalized_rating
                 note.factors_json = factors_json
-                note.text = normalized_text
                 note.updated_at = datetime.utcnow()
                 session.commit()
                 session.refresh(note)
@@ -42,9 +45,8 @@ class NoteRepository:
             note = NoteEntry(
                 user_id=str(user_id),
                 date=entry_date,
-                day_rating=int(day_rating),
+                day_rating=normalized_rating,
                 factors_json=factors_json,
-                text=normalized_text,
             )
             session.add(note)
             session.commit()

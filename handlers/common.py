@@ -223,14 +223,6 @@ async def quick_weight(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(lambda c: c.data == "quick_wellbeing")
-async def quick_wellbeing(callback: CallbackQuery, state: FSMContext):
-    """Быстрый переход к самочувствию."""
-    await callback.answer()
-    from handlers.wellbeing import start_wellbeing
-    await start_wellbeing(callback.message, state)
-
-
 @router.callback_query(lambda c: c.data == "quick_recommendations")
 async def quick_recommendations(callback: CallbackQuery):
     """Быстрый показ рекомендаций."""

@@ -145,4 +145,3 @@ class WellbeingStates(StatesGroup):
     """Состояния для дневных заметок."""
     note_rating = State()
     note_factors = State()
-    note_text = State()

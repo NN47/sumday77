@@ -6,12 +6,13 @@ import json
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from database.repositories import MealRepository, WeightRepository, WorkoutRepository, WaterRepository, NoteRepository, WellbeingRepository
+from database.repositories import MealRepository, WeightRepository, WorkoutRepository, WaterRepository, NoteRepository
 from handlers.water import get_water_recommended
 from services.deepseek_service import deepseek_service
 from utils.formatters import get_kbju_goal_label
 from utils.meal_types import display_meal_type
 from utils.progress_formatters import LIFESTYLE_ACTIVITY_COEFFICIENTS
+from utils.note_factors import normalize_note_rating, sanitize_note_factors
 from utils.workout_utils import calculate_workout_calories
 
 DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT = """# Роль
@@ -468,7 +469,6 @@ class ExtendedActivityAnalysisService:
         water_goal = get_water_recommended(user_id)
 
         notes = [n for n in (NoteRepository.get_note_for_date(user_id, period.end_date),) if n]
-        wellbeing = WellbeingRepository.get_entries_for_period(user_id, period.start_date, period.end_date)
 
         return {
             "period": {"label": period.label, "start_date": period.start_date.isoformat(), "end_date": period.end_date.isoformat()},
@@ -479,8 +479,13 @@ class ExtendedActivityAnalysisService:
             "water": {"fact_ml": sum(water_by_day.values()), "goal_ml": water_goal, "by_day": water_by_day},
             "activity": {"steps": steps, "exercises_and_workouts": workout_items, "estimated_burned_kcal": round(burned), "counted_in_goal_kcal": counted},
             "meals": [{"date": m.date.isoformat(), "type": display_meal_type(m.meal_type), "raw_query": m.raw_query, "description": m.description, "kcal": m.calories, "protein": m.protein, "fat": m.fat, "carbs": m.carbs, "products": _products(m)} for m in meals],
-            "notes": [{"rating": n.day_rating, "factors": n.factors, "text": n.text} for n in notes],
-            "wellbeing": [{"date": e.date.isoformat(), "type": e.entry_type, "mood": e.mood, "influence": e.influence, "difficulty": e.difficulty, "comment": e.comment} for e in wellbeing],
+            "notes": [
+                {
+                    "rating": normalize_note_rating(n.day_rating),
+                    "factors": sanitize_note_factors(n.factors),
+                }
+                for n in notes
+            ],
         }
 
     def build_prompt(self, context: dict) -> str:
