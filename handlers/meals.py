@@ -56,6 +56,7 @@ from services.ai_food_parser import parse_kbju_json
 from services.ai_usage_logger import log_ai_usage
 from utils.validators import parse_date
 from utils.log_sanitizer import safe_exception_summary
+from utils.sensitive_meal_text import check_sensitive_meal_text
 from datetime import datetime
 from utils.meal_types import (
     MealType,
@@ -82,6 +83,11 @@ MEAL_TYPE_BUTTONS = {
 BACK_BUTTON_TEXTS = {"⬅️ Назад", "↩️ Назад", "Назад"}
 MEAL_FINISH_BUTTON_TEXTS = {FINISH_MEAL_BUTTON_TEXT, LEGACY_FINISH_MEAL_BUTTON_TEXT}
 CARBS_EMOJI = EMOJI_MAP["carbs"]
+SENSITIVE_MEAL_INPUT_REJECTED_TEXT = (
+    "⚠️ В сообщении обнаружена информация, не относящаяся к описанию еды.\n\n"
+    "Укажите только продукты, блюда и примерное количество.\n\n"
+    "Например: <code>колбаса 200 г, хлеб 30 г</code>"
+)
 
 
 MEAL_COMPLETION_COMMENT_SYSTEM_PROMPT = """Ты — спортивный друг пользователя, который хорошо разбирается в питании и помогает в Telegram-боте Sumday77.
@@ -3805,6 +3811,18 @@ async def _handle_provider_food_input(
         return
     if not user_text:
         await message.answer("Напиши, пожалуйста, что ты съел(а) 🙏")
+        return
+
+    sensitive_check = check_sensitive_meal_text(user_text)
+    if sensitive_check.is_sensitive:
+        logger.warning(
+            "Sensitive meal input rejected reason=%s",
+            sensitive_check.reason.value if sensitive_check.reason else "unknown",
+        )
+        await message.answer(
+            SENSITIVE_MEAL_INPUT_REJECTED_TEXT,
+            parse_mode="HTML",
+        )
         return
 
     user_id = str(message.from_user.id)
