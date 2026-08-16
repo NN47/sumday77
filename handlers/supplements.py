@@ -38,11 +38,17 @@ from utils.supplement_keyboards import (
     SUPPLEMENT_EDIT_TIME_PREFIX,
     SUPPLEMENT_CATALOG_PREFIX,
     SUPPLEMENT_NOTIFICATIONS_PREFIX,
+    SUPPLEMENT_CREATE_DAYS_PREFIX,
+    SUPPLEMENT_CREATE_DURATION_PREFIX,
+    SUPPLEMENT_WEEK_DAYS,
+    SUPPLEMENT_DURATION_OPTIONS,
     supplement_catalog_categories_inline_menu,
     supplement_catalog_items_inline_menu,
     supplement_test_time_inline_menu,
     supplement_edit_time_inline_menu,
     supplement_notifications_inline_menu,
+    supplement_create_days_inline_menu,
+    supplement_create_duration_inline_menu,
 )
 from utils.calendar_utils import (
     build_supplement_calendar_keyboard,
@@ -154,6 +160,33 @@ def parse_supplement_time_input(text: str) -> Optional[str]:
     return None
 
 
+async def _send_inline_step_with_reply_keyboard_removed(
+    message: Message,
+    text: str,
+    keyboard: InlineKeyboardMarkup,
+    *,
+    parse_mode: str | None = None,
+) -> None:
+    """Скрывает нижнюю клавиатуру и прикрепляет inline-кнопки к сообщению."""
+    sent_message = await message.answer(
+        text,
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode=parse_mode,
+    )
+    try:
+        await sent_message.edit_reply_markup(reply_markup=keyboard)
+    except Exception:
+        await message.answer("Выбери действие:", reply_markup=keyboard)
+
+
+async def _remove_inline_keyboard(callback: CallbackQuery) -> None:
+    """Убирает кнопки завершённого inline-шага."""
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+
 def build_supplement_time_step_text(name: str, times: list[str] | None = None) -> str:
     """Формирует текст шага выбора времени при создании добавки."""
     current_times = times or []
@@ -205,8 +238,7 @@ async def go_to_supplement_days_step(message: Message, state: FSMContext, prefix
     data = await state.get_data()
     days = data.get("days", [])
     await state.set_state(SupplementStates.selecting_days)
-    keyboard = days_menu(days, show_cancel=True, show_skip=True)
-    push_menu_stack(message.bot, keyboard)
+    keyboard = supplement_create_days_inline_menu(days)
     await message.answer(
         f"<b>{html.escape(prefix)}</b>\n\n"
         "📅 <b>Шаг 3:</b> Выбери дни приёма добавки\n\n"
@@ -297,7 +329,6 @@ async def supplements_list_view(message: Message, state: FSMContext):
 @router.message(lambda m: m.text == "➕ Создать добавку")
 async def start_create_supplement(message: Message, state: FSMContext):
     """Начинает процесс создания добавки."""
-    user_id = str(message.from_user.id)
     logger.info("Supplement creation started")
     
     await state.update_data({
@@ -312,11 +343,28 @@ async def start_create_supplement(message: Message, state: FSMContext):
         "catalog_mode": "create",
     })
     await state.set_state(SupplementStates.selecting_catalog_item)
-    await message.answer(
+    await _send_inline_step_with_reply_keyboard_removed(
+        message,
         "<b>✨ Начинаем создание добавки!</b>\n\n"
         "<b>Шаг 1 из 5</b> — выбери категорию, а затем добавку из справочника.\n\n"
         "Если нужной позиции нет, выбери «Другие добавки» → «Другая пищевая/спортивная добавка».",
-        reply_markup=supplement_catalog_categories_inline_menu(),
+        supplement_catalog_categories_inline_menu(),
+        parse_mode="HTML",
+    )
+
+
+async def go_to_supplement_duration_step(
+    message: Message,
+    state: FSMContext,
+    prefix: str,
+) -> None:
+    """Переводит создание добавки к inline-выбору длительности."""
+    await state.set_state(SupplementStates.choosing_duration)
+    await message.answer(
+        f"{prefix}\n\n"
+        "⏳ <b>Шаг 4:</b> Выбери длительность приёма добавки\n\n"
+        "Или нажми «⏭️ Пропустить», чтобы оставить «Постоянно».",
+        reply_markup=supplement_create_duration_inline_menu(),
         parse_mode="HTML",
     )
 
@@ -457,7 +505,7 @@ async def handle_supplement_catalog_callback(callback: CallbackQuery, state: FSM
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-        await supplements(callback.message)
+        await supplements(callback.message, user_id=str(callback.from_user.id))
         return
 
     await callback.answer("Неизвестное действие", show_alert=True)
@@ -1557,7 +1605,7 @@ async def handle_create_supplement_time_callback(callback: CallbackQuery, state:
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-        await supplements(callback.message)
+        await supplements(callback.message, user_id=str(callback.from_user.id))
         return
 
     await callback.answer("Неизвестное действие", show_alert=True)
@@ -1706,6 +1754,101 @@ async def handle_time_value(message: Message, state: FSMContext):
     )
 
 
+@router.callback_query(
+    lambda c: c.data and c.data.startswith(f"{SUPPLEMENT_CREATE_DAYS_PREFIX}:")
+)
+async def handle_create_supplement_days_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    """Обрабатывает inline-выбор дней при создании добавки."""
+    data = await state.get_data()
+    if (
+        await state.get_state() != SupplementStates.selecting_days.state
+        or data.get("supplement_id") is not None
+    ):
+        await callback.answer("Эта кнопка уже неактуальна", show_alert=True)
+        return
+
+    parts = callback.data.split(":", 2)
+    action = parts[1] if len(parts) > 1 else ""
+    days = data.get("days", []).copy()
+
+    if action == "toggle":
+        day_by_id = dict(SUPPLEMENT_WEEK_DAYS)
+        day = day_by_id.get(parts[2] if len(parts) > 2 else "")
+        if day is None:
+            await callback.answer("Не удалось выбрать день", show_alert=True)
+            return
+        if day in days:
+            days.remove(day)
+        else:
+            days.append(day)
+        await state.update_data(days=days)
+        days_text = ", ".join(days) if days else "не выбрано"
+        await callback.answer(f"Дни обновлены: {days_text}")
+        await callback.message.edit_text(
+            f"✅ Дни обновлены: {days_text}",
+            reply_markup=supplement_create_days_inline_menu(days),
+        )
+        return
+
+    if action == "all":
+        days = [label for _, label in SUPPLEMENT_WEEK_DAYS]
+        await state.update_data(days=days)
+        await callback.answer("Все дни выбраны")
+        await callback.message.edit_text(
+            "✅ Все дни выбраны",
+            reply_markup=supplement_create_days_inline_menu(days),
+        )
+        return
+
+    if action == "save":
+        times = data.get("times", [])
+        await state.update_data(days=days, times=times)
+        days_text = ", ".join(days) if days else "не выбрано"
+        await callback.answer()
+        await _remove_inline_keyboard(callback)
+        await go_to_supplement_duration_step(
+            callback.message,
+            state,
+            f"✅ <b>Дни сохранены:</b> {html.escape(days_text)}",
+        )
+        return
+
+    if action == "skip":
+        await state.update_data(days=[], times=data.get("times", []))
+        await callback.answer()
+        await _remove_inline_keyboard(callback)
+        await go_to_supplement_duration_step(
+            callback.message,
+            state,
+            "<b>⏭️ Дни пропущены</b>",
+        )
+        return
+
+    if action == "back":
+        await callback.answer()
+        await _remove_inline_keyboard(callback)
+        await state.set_state(SupplementStates.entering_time)
+        await callback.message.answer(
+            "⏪ Возвращаемся к шагу 2\n\n"
+            + build_supplement_time_step_text(data.get("name", ""), data.get("times", [])),
+            reply_markup=supplement_test_time_inline_menu(data.get("times", [])),
+            parse_mode="HTML",
+        )
+        return
+
+    if action == "cancel":
+        await callback.answer()
+        await _remove_inline_keyboard(callback)
+        await state.clear()
+        await supplements(callback.message, user_id=str(callback.from_user.id))
+        return
+
+    await callback.answer("Неизвестное действие", show_alert=True)
+
+
 @router.message(SupplementStates.editing_supplement, lambda m: m.text == "📅 Редактировать дни")
 async def edit_days(message: Message, state: FSMContext):
     """Начинает редактирование дней приёма."""
@@ -1730,103 +1873,11 @@ async def toggle_day(message: Message, state: FSMContext):
         data = await state.get_data()
         supplement_id = data.get("supplement_id")
         
-        # Если это создание новой добавки (тест)
+        # Создание управляется только inline-callbacks; middleware блокирует сообщения.
         if supplement_id is None:
-            # Проверяем пропуск
-            if message.text == "⏭️ Пропустить":
-                times = data.get("times", [])
-                # Явно сохраняем дни и времена в state перед переходом
-                await state.update_data(days=[], times=times)
-                # Переходим к следующему шагу - длительность
-                await state.set_state(SupplementStates.choosing_duration)
-                push_menu_stack(message.bot, duration_menu())
-                await message.answer(
-                    "<b>⏭️ Дни пропущены</b>\n\n"
-                    "⏳ <b>Шаг 4:</b> Выбери длительность приёма добавки\n\n"
-                    "Или нажми «⏭️ Пропустить», чтобы оставить «Постоянно».",
-                    reply_markup=duration_menu(),
-                    parse_mode="HTML",
-                )
-                return
-            
-            # Проверяем отмену
-            if message.text == "❌ Отменить":
-                await state.clear()
-                await supplements(message)
-                return
-            
-            # Проверяем назад - возвращаемся к шагу времени
-            if message.text == "⬅️ Назад":
-                data = await state.get_data()
-                name = data.get("name", "")
-                times = data.get("times", [])
-                
-                # Возвращаемся к шагу времени
-                await state.set_state(SupplementStates.entering_time)
-                await message.answer(
-                    "⏪ Возвращаемся к шагу 2\n\n"
-                    + build_supplement_time_step_text(name, times),
-                    reply_markup=supplement_test_time_inline_menu(times),
-                    parse_mode="HTML",
-                )
-                return
-            
-            # Проверяем "Выбрать все"
-            if message.text == "Выбрать все":
-                await state.update_data(days=["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"])
-                data = await state.get_data()
-                keyboard = days_menu(
-                    data.get("days", []), show_cancel=True, show_skip=True
-                )
-                push_menu_stack(message.bot, keyboard)
-                await message.answer("✅ Все дни выбраны", reply_markup=keyboard)
-                return
-            
-            # Проверяем "💾 Сохранить" - переход к следующему шагу
-            if message.text == "💾 Сохранить":
-                days = data.get("days", [])
-                times = data.get("times", [])
-                # Явно сохраняем дни и времена в state перед переходом
-                await state.update_data(days=days, times=times)
-                # Переходим к следующему шагу - длительность
-                await state.set_state(SupplementStates.choosing_duration)
-                push_menu_stack(message.bot, duration_menu())
-                days_text = ", ".join(days) if days else "не выбрано"
-                await message.answer(
-                    f"✅ <b>Дни сохранены:</b> {html.escape(days_text)}\n\n"
-                    "⏳ <b>Шаг 4:</b> Выбери длительность приёма добавки\n\n"
-                    "Или нажми «⏭️ Пропустить», чтобы оставить «Постоянно».",
-                    reply_markup=duration_menu(),
-                    parse_mode="HTML",
-                )
-                return
-            
-            # Обрабатываем выбор дня
-            day = message.text.replace("✅ ", "").strip()
-            if day not in ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]:
-                # Если это не день, показываем подсказку
-                current_days = data.get("days", [])
-                await message.answer(
-                    "Пожалуйста, выбери дни недели из меню, нажми «💾 Сохранить» "
-                    "или «⏭️ Пропустить».",
-                    reply_markup=days_menu(
-                        current_days, show_cancel=True, show_skip=True
-                    ),
-                )
-                return
-            
-            days = data.get("days", []).copy()
-            if day in days:
-                days.remove(day)
-            else:
-                days.append(day)
-            
-            await state.update_data(days=days)
-            keyboard = days_menu(days, show_cancel=True, show_skip=True)
-            push_menu_stack(message.bot, keyboard)
-            days_text = ", ".join(days) if days else "не выбрано"
             await message.answer(
-                f"✅ Дни обновлены: {days_text}", reply_markup=keyboard
+                "На этом шаге используй кнопки под сообщением бота.",
+                reply_markup=ReplyKeyboardRemove(),
             )
             return
         
@@ -1847,14 +1898,14 @@ async def toggle_day(message: Message, state: FSMContext):
             return
         
         if message.text == "Выбрать все":
-            await state.update_data(days=["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"])
+            await state.update_data(days=[label for _, label in SUPPLEMENT_WEEK_DAYS])
             data = await state.get_data()
             push_menu_stack(message.bot, days_menu(data.get("days", [])))
             await message.answer("Все дни выбраны", reply_markup=days_menu(data.get("days", [])))
             return
         
         day = message.text.replace("✅ ", "").strip()
-        if day not in ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]:
+        if day not in {label for _, label in SUPPLEMENT_WEEK_DAYS}:
             # Если это не день, показываем подсказку
             current_days = data.get("days", [])
             await message.answer(
@@ -1964,15 +2015,12 @@ async def _send_notification_step(
         creation=creation,
         notifications_enabled=bool(data.get("notifications_enabled", False)),
     )
-    sent_message = await message.answer(
+    await _send_inline_step_with_reply_keyboard_removed(
+        message,
         _build_notification_step_text(data, creation=creation),
-        reply_markup=ReplyKeyboardRemove(),
+        keyboard,
         parse_mode="HTML",
     )
-    try:
-        await sent_message.edit_reply_markup(reply_markup=keyboard)
-    except Exception:
-        await message.answer("Выбери действие:", reply_markup=keyboard)
 
     logger.info(
         "Supplement notification step opened mode=%s times_count=%s days_count=%s",
@@ -1985,14 +2033,6 @@ async def _send_notification_step(
 async def ask_notifications_in_test(message: Message, state: FSMContext) -> None:
     """Открывает inline-настройку уведомлений при создании добавки."""
     await _send_notification_step(message, state, creation=True)
-
-
-async def _remove_notification_inline_keyboard(callback: CallbackQuery) -> None:
-    """Убирает кнопки завершённого шага уведомлений."""
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass
 
 
 async def _return_to_supplement_edit_menu(
@@ -2059,7 +2099,7 @@ async def handle_supplement_notifications_callback(
 
         await state.update_data(notifications_enabled=True)
         await callback.answer("Уведомления включены")
-        await _remove_notification_inline_keyboard(callback)
+        await _remove_inline_keyboard(callback)
         if creation:
             await save_supplement_from_test(
                 callback.message,
@@ -2080,7 +2120,7 @@ async def handle_supplement_notifications_callback(
             return
         await state.update_data(notifications_enabled=False)
         await callback.answer("Уведомления выключены")
-        await _remove_notification_inline_keyboard(callback)
+        await _remove_inline_keyboard(callback)
         await _return_to_supplement_edit_menu(
             callback.message,
             state,
@@ -2094,7 +2134,7 @@ async def handle_supplement_notifications_callback(
             return
         await state.update_data(notifications_enabled=False)
         await callback.answer()
-        await _remove_notification_inline_keyboard(callback)
+        await _remove_inline_keyboard(callback)
         await save_supplement_from_test(
             callback.message,
             state,
@@ -2104,13 +2144,12 @@ async def handle_supplement_notifications_callback(
 
     if action == "back":
         await callback.answer()
-        await _remove_notification_inline_keyboard(callback)
+        await _remove_inline_keyboard(callback)
         if creation:
             duration = data.get("duration", "постоянно")
             await state.update_data(notification_mode=None)
             await state.set_state(SupplementStates.choosing_duration)
-            keyboard = duration_menu()
-            push_menu_stack(callback.message.bot, keyboard)
+            keyboard = supplement_create_duration_inline_menu()
             duration_text = duration.capitalize() if duration != "постоянно" else "Постоянно"
             await callback.message.answer(
                 "⏪ Возвращаемся к шагу 4\n\n"
@@ -2131,7 +2170,7 @@ async def handle_supplement_notifications_callback(
             await callback.answer("Эта кнопка уже неактуальна", show_alert=True)
             return
         await callback.answer()
-        await _remove_notification_inline_keyboard(callback)
+        await _remove_inline_keyboard(callback)
         await state.clear()
         await supplements(
             callback.message,
@@ -2142,12 +2181,88 @@ async def handle_supplement_notifications_callback(
     await callback.answer("Неизвестное действие", show_alert=True)
 
 
+@router.callback_query(
+    lambda c: c.data and c.data.startswith(f"{SUPPLEMENT_CREATE_DURATION_PREFIX}:")
+)
+async def handle_create_supplement_duration_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    """Обрабатывает inline-выбор длительности при создании добавки."""
+    data = await state.get_data()
+    if (
+        await state.get_state() != SupplementStates.choosing_duration.state
+        or data.get("supplement_id") is not None
+    ):
+        await callback.answer("Эта кнопка уже неактуальна", show_alert=True)
+        return
+
+    parts = callback.data.split(":", 2)
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action in {"set", "skip"}:
+        if action == "skip":
+            duration = "постоянно"
+        else:
+            duration_by_id = {
+                identifier: stored_value
+                for identifier, _, stored_value in SUPPLEMENT_DURATION_OPTIONS
+            }
+            duration = duration_by_id.get(parts[2] if len(parts) > 2 else "")
+            if duration is None:
+                await callback.answer("Не удалось выбрать длительность", show_alert=True)
+                return
+
+        times, days = _normalize_notification_schedule(data)
+        await state.update_data(duration=duration, times=times, days=days)
+        logger.info(
+            "Supplement duration selected times_count=%s days_count=%s",
+            len(times),
+            len(days),
+        )
+        await callback.answer()
+        await _remove_inline_keyboard(callback)
+        await ask_notifications_in_test(callback.message, state)
+        return
+
+    if action == "back":
+        days = data.get("days", [])
+        days_text = ", ".join(days) if days else "не выбрано"
+        await callback.answer()
+        await _remove_inline_keyboard(callback)
+        await state.set_state(SupplementStates.selecting_days)
+        await callback.message.answer(
+            "⏪ Возвращаемся к шагу 3\n\n"
+            f"📅 Текущие дни: {days_text}\n\n"
+            "Выбери дни приёма добавки или нажми «⏭️ Пропустить».",
+            reply_markup=supplement_create_days_inline_menu(days),
+        )
+        return
+
+    if action == "cancel":
+        await callback.answer()
+        await _remove_inline_keyboard(callback)
+        await state.clear()
+        await supplements(callback.message, user_id=str(callback.from_user.id))
+        return
+
+    await callback.answer("Неизвестное действие", show_alert=True)
+
+
 @router.message(SupplementStates.choosing_duration)
 async def handle_duration_or_notifications(message: Message, state: FSMContext):
     """Обрабатывает выбор длительности при создании или редактировании."""
     data = await state.get_data()
     supplement_id = data.get("supplement_id")
-    # Если это режим выбора длительности
+
+    # Создание управляется только inline-callbacks; middleware блокирует сообщения.
+    if supplement_id is None:
+        await message.answer(
+            "На этом шаге используй кнопки под сообщением бота.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+
     # Проверяем отмену
     if message.text == "❌ Отменить":
         await state.clear()
@@ -2156,56 +2271,13 @@ async def handle_duration_or_notifications(message: Message, state: FSMContext):
     
     # Проверяем назад - возвращаемся к шагу дней
     if message.text == "⬅️ Назад":
-        if supplement_id is None:
-            # Возвращаемся к шагу дней
-            data = await state.get_data()
-            days = data.get("days", [])
-            await state.set_state(SupplementStates.selecting_days)
-            keyboard = days_menu(days, show_cancel=True, show_skip=True)
-            push_menu_stack(message.bot, keyboard)
-            days_text = ", ".join(days) if days else "не выбрано"
-            await message.answer(
-                f"⏪ Возвращаемся к шагу 3\n\n"
-                f"📅 Текущие дни: {days_text}\n\n"
-                f"Выбери дни приёма добавки или нажми «⏭️ Пропустить».",
-                reply_markup=keyboard,
-            )
-        else:
-            await state.clear()
-            await supplements(message)
-        return
-    
-    # Проверяем пропуск (только в режиме теста)
-    if supplement_id is None and message.text == "⏭️ Пропустить":
-        current_data = await state.get_data()
-        times, days = _normalize_notification_schedule(current_data)
-        await state.update_data(
-            duration="постоянно",
-            times=times,
-            days=days,
-        )
-        
-        logger.info("Supplement duration skipped times_count=%s days_count=%s", len(times), len(days))
-        await ask_notifications_in_test(message, state)
+        await state.clear()
+        await supplements(message)
         return
     
     # Проверяем выбор длительности
     if message.text in {"Постоянно", "14 дней", "30 дней"}:
         duration = message.text.lower()
-        
-        # Если это создание новой добавки (тест) - переходим к уведомлениям
-        if supplement_id is None:
-            current_data = await state.get_data()
-            times, days = _normalize_notification_schedule(current_data)
-            await state.update_data(
-                duration=duration,
-                times=times,
-                days=days,
-            )
-            
-            logger.info("Supplement duration selected times_count=%s days_count=%s", len(times), len(days))
-            await ask_notifications_in_test(message, state)
-            return
         
         # Если это редактирование - показываем меню редактирования
         await state.update_data(duration=duration)
@@ -2234,6 +2306,23 @@ async def handle_duration_or_notifications(message: Message, state: FSMContext):
     )
 
 
+async def _finish_failed_supplement_creation(
+    message: Message,
+    state: FSMContext,
+    user_id: str,
+    error_text: str,
+) -> None:
+    """Завершает неуспешное создание и восстанавливает меню добавок."""
+    await state.clear()
+    try:
+        has_items = bool(SupplementRepository.get_supplements(user_id))
+    except Exception:
+        has_items = False
+    keyboard = supplements_main_menu(has_items=has_items)
+    push_menu_stack(message.bot, keyboard)
+    await message.answer(error_text, reply_markup=keyboard)
+
+
 async def save_supplement_from_test(
     message: Message,
     state: FSMContext,
@@ -2249,8 +2338,12 @@ async def save_supplement_from_test(
         name = data.get("name", "").strip()
         identifier = data.get("identifier") or resolve_supplement_identifier(name)
         if not identifier:
-            await message.answer("❌ Ошибка: название добавки не указано.")
-            await state.clear()
+            await _finish_failed_supplement_creation(
+                message,
+                state,
+                user_id,
+                "❌ Ошибка: название добавки не указано.",
+            )
             return
 
         item = get_supplement_item(identifier)
@@ -2281,12 +2374,20 @@ async def save_supplement_from_test(
                 parse_mode="HTML",
             )
         else:
-            await message.answer("❌ Не удалось сохранить добавку. Попробуйте позже.")
-            await state.clear()
+            await _finish_failed_supplement_creation(
+                message,
+                state,
+                user_id,
+                "❌ Не удалось сохранить добавку. Попробуйте позже.",
+            )
     except Exception as e:
         logger.error("Error saving supplement error_type=%s", safe_exception_summary(e), exc_info=True)
-        await message.answer("❌ Произошла ошибка при сохранении добавки. Попробуйте позже.")
-        await state.clear()
+        await _finish_failed_supplement_creation(
+            message,
+            state,
+            user_id,
+            "❌ Произошла ошибка при сохранении добавки. Попробуйте позже.",
+        )
 
 
 @router.message(SupplementStates.editing_supplement, lambda m: m.text == "🔔 Уведомления")
@@ -2753,8 +2854,8 @@ async def confirm_supplement_intake_from_notification(callback: CallbackQuery, s
 def register_supplement_handlers(dp):
     """Регистрирует обработчики добавок."""
     from middlewares.supplement_notifications import (
-        SupplementNotificationMessageGuard,
+        SupplementCreationMessageGuard,
     )
 
-    dp.message.outer_middleware(SupplementNotificationMessageGuard())
+    dp.message.outer_middleware(SupplementCreationMessageGuard())
     dp.include_router(router)

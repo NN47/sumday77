@@ -13,6 +13,24 @@ SUPPLEMENT_CREATE_TIME_PREFIX = "sup_create_time"
 SUPPLEMENT_EDIT_TIME_PREFIX = "sup_edit_time"
 SUPPLEMENT_CATALOG_PREFIX = "sup_catalog"
 SUPPLEMENT_NOTIFICATIONS_PREFIX = "sup_notifications"
+SUPPLEMENT_CREATE_DAYS_PREFIX = "sup_create_days"
+SUPPLEMENT_CREATE_DURATION_PREFIX = "sup_create_duration"
+
+SUPPLEMENT_WEEK_DAYS = (
+    ("mon", "Пн"),
+    ("tue", "Вт"),
+    ("wed", "Ср"),
+    ("thu", "Чт"),
+    ("fri", "Пт"),
+    ("sat", "Сб"),
+    ("sun", "Вс"),
+)
+
+SUPPLEMENT_DURATION_OPTIONS = (
+    ("permanent", "Постоянно", "постоянно"),
+    ("14_days", "14 дней", "14 дней"),
+    ("30_days", "30 дней", "30 дней"),
+)
 
 
 def supplement_catalog_categories_inline_menu(*, rename: bool = False) -> InlineKeyboardMarkup:
@@ -217,9 +235,8 @@ def days_menu(
     show_skip: bool = False,
 ) -> ReplyKeyboardMarkup:
     """Меню выбора дней."""
-    week_days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     rows = []
-    for day in week_days:
+    for _, day in SUPPLEMENT_WEEK_DAYS:
         prefix = "✅ " if day in selected else ""
         rows.append([KeyboardButton(text=f"{prefix}{day}")])
     rows.append([KeyboardButton(text="Выбрать все"), KeyboardButton(text="💾 Сохранить")])
@@ -230,6 +247,81 @@ def days_menu(
     else:
         rows.append([KeyboardButton(text="⬅️ Назад")])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def supplement_create_days_inline_menu(selected: list[str]) -> InlineKeyboardMarkup:
+    """Inline-меню выбора дней при создании добавки."""
+    selected_days = set(selected or [])
+    day_buttons = [
+        InlineKeyboardButton(
+            text=f"{'✅ ' if label in selected_days else ''}{label}",
+            callback_data=f"{SUPPLEMENT_CREATE_DAYS_PREFIX}:toggle:{identifier}",
+        )
+        for identifier, label in SUPPLEMENT_WEEK_DAYS
+    ]
+    rows = [day_buttons[:3], day_buttons[3:6], day_buttons[6:]]
+    rows.extend([
+        [
+            InlineKeyboardButton(
+                text="Выбрать все",
+                callback_data=f"{SUPPLEMENT_CREATE_DAYS_PREFIX}:all",
+            ),
+            InlineKeyboardButton(
+                text="💾 Сохранить",
+                callback_data=f"{SUPPLEMENT_CREATE_DAYS_PREFIX}:save",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="⏭️ Пропустить",
+                callback_data=f"{SUPPLEMENT_CREATE_DAYS_PREFIX}:skip",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=f"{SUPPLEMENT_CREATE_DAYS_PREFIX}:back",
+            ),
+            InlineKeyboardButton(
+                text="❌ Отменить",
+                callback_data=f"{SUPPLEMENT_CREATE_DAYS_PREFIX}:cancel",
+            ),
+        ],
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def supplement_create_duration_inline_menu() -> InlineKeyboardMarkup:
+    """Inline-меню длительности при создании добавки."""
+    duration_buttons = [
+        InlineKeyboardButton(
+            text=label,
+            callback_data=f"{SUPPLEMENT_CREATE_DURATION_PREFIX}:set:{identifier}",
+        )
+        for identifier, label, _ in SUPPLEMENT_DURATION_OPTIONS
+    ]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            duration_buttons[:2],
+            duration_buttons[2:],
+            [
+                InlineKeyboardButton(
+                    text="⏭️ Пропустить",
+                    callback_data=f"{SUPPLEMENT_CREATE_DURATION_PREFIX}:skip",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад",
+                    callback_data=f"{SUPPLEMENT_CREATE_DURATION_PREFIX}:back",
+                ),
+                InlineKeyboardButton(
+                    text="❌ Отменить",
+                    callback_data=f"{SUPPLEMENT_CREATE_DURATION_PREFIX}:cancel",
+                ),
+            ],
+        ]
+    )
 
 
 def duration_menu() -> ReplyKeyboardMarkup:
