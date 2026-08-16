@@ -30,7 +30,9 @@ from utils.supplement_keyboards import (
     duration_menu,
     SUPPLEMENT_CREATE_TIME_PREFIX,
     SUPPLEMENT_EDIT_TIME_PREFIX,
-    supplement_creation_cancel_menu,
+    SUPPLEMENT_CATALOG_PREFIX,
+    supplement_catalog_categories_inline_menu,
+    supplement_catalog_items_inline_menu,
     supplement_test_time_inline_menu,
     supplement_edit_time_inline_menu,
 )
@@ -53,6 +55,11 @@ from services.notification_scheduler import (
 )
 from user_operation_guard import UserOperationBlocked, user_operation_guard
 from utils.log_sanitizer import safe_exception_summary
+from utils.supplement_catalog import (
+    get_supplement_category,
+    get_supplement_item,
+    resolve_supplement_identifier,
+)
 
 logger = logging.getLogger(__name__)
 MSK_TZ = ZoneInfo("Europe/Moscow")
@@ -213,10 +220,12 @@ async def supplements(message: Message):
     
     dairi_description = (
         "<b>💊 Раздел «Добавки»</b>\n\n"
-        "Здесь ты можешь записывать свои добавки: лекарства, витамины, БАДы и любые другие препараты. "
+        "Здесь ты можешь отмечать пищевые и спортивные добавки. "
         "Я помогу тебе отслеживать их приём, настроить расписание и получать статистику.\n\n"
-        "⚠️ Важно: добавки протеина нужно вписывать в раздел КБЖУ, потому что там подсчитывается количество белков "
-        "для твоей дневной нормы. Этот раздел предназначен для лекарств и добавок, которые не влияют на калорийность и БЖУ.\n\n"
+        "Здесь можно отмечать только пищевые и спортивные добавки. Не указывайте лекарства, диагнозы, "
+        "назначения врача или сведения о лечении.\n\n"
+        "⚠️ Важно: протеин и другие добавки, влияющие на калорийность и БЖУ, также нужно записывать в раздел КБЖУ, "
+        "чтобы они учитывались в дневной норме. Этот раздел отслеживает расписание и факт приёма, но не калорийность.\n\n"
     )
     
     if not supplements_list:
@@ -282,49 +291,164 @@ async def start_create_supplement(message: Message, state: FSMContext):
     
     await state.update_data({
         "supplement_id": None,
+        "identifier": None,
         "name": "",
         "times": [],
         "days": [],
         "duration": "постоянно",
         "notifications_enabled": True,
+        "catalog_mode": "create",
     })
-    await state.set_state(SupplementStates.entering_name)
-    push_menu_stack(message.bot, supplement_creation_cancel_menu())
+    await state.set_state(SupplementStates.selecting_catalog_item)
     await message.answer(
         "<b>✨ Начинаем создание добавки!</b>\n\n"
-        "<b>Шаг 1 из 5</b> — напиши название добавки. Например: «Магний», «Витамин D» или «Омега‑3».\n\n"
-        "Если нажал кнопку случайно, просто выбери «❌ Отменить» внизу.",
-        reply_markup=supplement_creation_cancel_menu(),
+        "<b>Шаг 1 из 5</b> — выбери категорию, а затем добавку из справочника.\n\n"
+        "Если нужной позиции нет, выбери «Другие добавки» → «Другая пищевая/спортивная добавка».",
+        reply_markup=supplement_catalog_categories_inline_menu(),
         parse_mode="HTML",
     )
 
 
 @router.message(SupplementStates.entering_name)
 async def handle_supplement_name(message: Message, state: FSMContext):
-    """Обрабатывает ввод названия добавки - начало теста."""
-    # Проверяем кнопку отмены
-    if message.text == "❌ Отменить":
+    """Safely redirects legacy free-name FSM sessions to the catalog."""
+    if message.text in {"❌ Отменить", "⬅️ Назад"}:
         await state.clear()
         await supplements(message)
         return
-    
-    name = message.text.strip()
-    if not name:
-        await message.answer(
-            "Название не может быть пустым. Напиши, как будет называться добавка.",
-            reply_markup=supplement_creation_cancel_menu(),
-        )
-        return
-    
-    await state.update_data(name=name)
-    # Переходим к следующему шагу - время
-    await state.set_state(SupplementStates.entering_time)
-    
+
+    data = await state.get_data()
+    rename = data.get("supplement_id") is not None
+    await state.update_data(catalog_mode="rename" if rename else "create")
+    await state.set_state(SupplementStates.selecting_catalog_item)
     await message.answer(
-        build_supplement_time_step_text(name),
-        reply_markup=supplement_test_time_inline_menu([]),
+        "Свободный ввод названия недоступен. Выбери добавку из справочника:",
+        reply_markup=supplement_catalog_categories_inline_menu(rename=rename),
         parse_mode="HTML",
     )
+
+
+@router.message(SupplementStates.selecting_catalog_item)
+async def handle_supplement_catalog_text(message: Message, state: FSMContext):
+    """Does not accept arbitrary supplement names in the catalog step."""
+    if message.text in {"❌ Отменить", "⬅️ Назад"}:
+        data = await state.get_data()
+        if data.get("catalog_mode") == "rename" and data.get("supplement_id") is not None:
+            await state.set_state(SupplementStates.editing_supplement)
+            await message.answer(
+                "Изменение названия отменено.",
+                reply_markup=supplement_edit_menu(show_save=True),
+            )
+        else:
+            await state.clear()
+            await supplements(message)
+        return
+    if message.text in MAIN_MENU_BUTTON_ALIASES:
+        await state.clear()
+        from handlers.common import go_main_menu
+        await go_main_menu(message, state)
+        return
+
+    data = await state.get_data()
+    await message.answer(
+        "Название нельзя вводить вручную. Выбери категорию кнопкой под сообщением.",
+        reply_markup=supplement_catalog_categories_inline_menu(
+            rename=data.get("catalog_mode") == "rename"
+        ),
+    )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith(f"{SUPPLEMENT_CATALOG_PREFIX}:"))
+async def handle_supplement_catalog_callback(callback: CallbackQuery, state: FSMContext):
+    """Handles category and item selection using stable callback identifiers."""
+    current_state = await state.get_state()
+    if current_state not in {
+        SupplementStates.selecting_catalog_item.state,
+        SupplementStates.entering_name.state,
+    }:
+        await callback.answer("Эта кнопка уже неактуальна", show_alert=True)
+        return
+
+    parts = callback.data.split(":", 2)
+    action = parts[1] if len(parts) > 1 else ""
+    value = parts[2] if len(parts) > 2 else ""
+    data = await state.get_data()
+    is_rename = data.get("catalog_mode") == "rename" and data.get("supplement_id") is not None
+
+    if action == "category":
+        category = get_supplement_category(value)
+        if category is None:
+            await callback.answer("Категория не найдена", show_alert=True)
+            return
+        await callback.answer()
+        await callback.message.edit_text(
+            f"<b>{html.escape(category.display_name)}</b>\n\nВыбери добавку:",
+            reply_markup=supplement_catalog_items_inline_menu(category),
+            parse_mode="HTML",
+        )
+        return
+
+    if action == "categories":
+        await callback.answer()
+        await callback.message.edit_text(
+            "<b>Выбери категорию добавки</b>",
+            reply_markup=supplement_catalog_categories_inline_menu(rename=is_rename),
+            parse_mode="HTML",
+        )
+        return
+
+    if action == "item":
+        item = get_supplement_item(value)
+        if item is None:
+            await callback.answer("Добавка не найдена", show_alert=True)
+            return
+        await state.update_data(identifier=item.identifier, name=item.display_name)
+        await callback.answer(f"Выбрано: {item.display_name}")
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+        if is_rename:
+            await state.set_state(SupplementStates.editing_supplement)
+            await callback.message.answer(
+                f"✅ Выбрано новое название: {item.display_name}",
+                reply_markup=supplement_edit_menu(show_save=True),
+            )
+            return
+
+        await state.set_state(SupplementStates.entering_time)
+        await callback.message.answer(
+            build_supplement_time_step_text(item.display_name),
+            reply_markup=supplement_test_time_inline_menu([]),
+            parse_mode="HTML",
+        )
+        return
+
+    if action == "back_to_edit" and is_rename:
+        await callback.answer()
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await state.set_state(SupplementStates.editing_supplement)
+        await callback.message.answer(
+            "Изменение названия отменено.",
+            reply_markup=supplement_edit_menu(show_save=True),
+        )
+        return
+
+    if action == "cancel" and not is_rename:
+        await callback.answer()
+        await state.clear()
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await supplements(callback.message)
+        return
+
+    await callback.answer("Неизвестное действие", show_alert=True)
 
 
 async def send_supplement_history_time_prompt(
@@ -776,6 +900,7 @@ async def finish_supplement_editing(message: Message, state: FSMContext, data: d
     user_id = str(message.from_user.id)
     supplement_payload = {
         "name": name,
+        "identifier": data.get("identifier"),
         "times": data.get("times", []).copy(),
         "days": data.get("days", []).copy(),
         "duration": data.get("duration", "постоянно"),
@@ -895,6 +1020,7 @@ async def edit_supplement_start(message: Message, state: FSMContext):
     if selected:
         await state.update_data(
             supplement_id=selected.get("id"),
+            identifier=selected.get("identifier"),
             name=selected.get("name", ""),
             times=selected.get("times", []).copy(),
             days=selected.get("days", []).copy(),
@@ -1031,6 +1157,7 @@ async def choose_supplement_to_edit(message: Message, state: FSMContext):
     selected = supplements_list[target_index]
     await state.update_data(
         supplement_id=selected.get("id"),
+        identifier=selected.get("identifier"),
         name=selected.get("name", ""),
         times=selected.get("times", []).copy(),
         days=selected.get("days", []).copy(),
@@ -1191,6 +1318,7 @@ async def save_supplement(message: Message, state: FSMContext):
     
     supplement_payload = {
         "name": name,
+        "identifier": data.get("identifier"),
         "times": data.get("times", []).copy(),
         "days": data.get("days", []).copy(),
         "duration": data.get("duration", "постоянно"),
@@ -1398,17 +1526,15 @@ async def handle_create_supplement_time_callback(callback: CallbackQuery, state:
 
     if action == "back":
         await callback.answer()
-        await state.set_state(SupplementStates.entering_name)
-        push_menu_stack(callback.message.bot, supplement_creation_cancel_menu())
+        await state.update_data(catalog_mode="create")
+        await state.set_state(SupplementStates.selecting_catalog_item)
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
         await callback.message.answer(
-            f"⏪ Возвращаемся к шагу 1\n\n"
-            f"Текущее название: {name}\n\n"
-            "Введите новое название добавки или оставьте текущее.",
-            reply_markup=supplement_creation_cancel_menu(),
+            "⏪ Возвращаемся к шагу 1\n\nВыбери категорию добавки:",
+            reply_markup=supplement_catalog_categories_inline_menu(),
         )
         return
 
@@ -1442,21 +1568,12 @@ async def handle_time_value(message: Message, state: FSMContext):
         
         # Проверяем назад - возвращаемся к шагу названия
         if text == "⬅️ Назад":
-            data = await state.get_data()
-            name = data.get("name", "")
-            if name:
-                # Возвращаемся к шагу названия
-                await state.set_state(SupplementStates.entering_name)
-                push_menu_stack(message.bot, supplement_creation_cancel_menu())
-                await message.answer(
-                    f"⏪ Возвращаемся к шагу 1\n\n"
-                    f"Текущее название: {name}\n\n"
-                    f"Введите новое название добавки или оставьте текущее.",
-                    reply_markup=supplement_creation_cancel_menu(),
-                )
-            else:
-                await state.clear()
-                await supplements(message)
+            await state.update_data(catalog_mode="create")
+            await state.set_state(SupplementStates.selecting_catalog_item)
+            await message.answer(
+                "⏪ Возвращаемся к шагу 1\n\nВыбери категорию добавки:",
+                reply_markup=supplement_catalog_categories_inline_menu(),
+            )
             return
         
         # Проверяем пропуск (только если времен нет)
@@ -2025,15 +2142,19 @@ async def save_supplement_from_test(message: Message, state: FSMContext):
     
     try:
         data = await state.get_data()
-        
+
         name = data.get("name", "").strip()
-        if not name:
+        identifier = data.get("identifier") or resolve_supplement_identifier(name)
+        if not identifier:
             await message.answer("❌ Ошибка: название добавки не указано.")
             await state.clear()
             return
-        
+
+        item = get_supplement_item(identifier)
+        display_name = item.display_name if item else name
         supplement_payload = {
-            "name": name,
+            "name": display_name,
+            "identifier": identifier,
             "times": data.get("times", []),
             "days": data.get("days", []),
             "duration": data.get("duration", "постоянно"),
@@ -2048,7 +2169,7 @@ async def save_supplement_from_test(message: Message, state: FSMContext):
             push_menu_stack(message.bot, supplements_main_menu(has_items=True))
             await message.answer(
                 "<b>✅ Добавка успешно создана!</b>\n\n"
-                f"💊 <b>{html.escape(supplement_payload['name'])}</b>\n"
+                f"💊 <b>{html.escape(display_name)}</b>\n"
                 f"⏰ <b>Время:</b> {html.escape(', '.join(supplement_payload['times']) or 'не указано')}\n"
                 f"📅 <b>Дни:</b> {html.escape(', '.join(supplement_payload['days']) or 'не указано')}\n"
                 f"⏳ <b>Длительность:</b> {html.escape(supplement_payload['duration'])}\n"
@@ -2087,9 +2208,13 @@ async def toggle_notifications(message: Message, state: FSMContext):
 
 @router.message(SupplementStates.editing_supplement, lambda m: m.text == "✏️ Изменить название")
 async def rename_supplement(message: Message, state: FSMContext):
-    """Начинает изменение названия добавки."""
-    await state.set_state(SupplementStates.entering_name)
-    await message.answer("Введите новое название добавки.")
+    """Lets the user replace a supplement name with a catalog item."""
+    await state.update_data(catalog_mode="rename")
+    await state.set_state(SupplementStates.selecting_catalog_item)
+    await message.answer(
+        "Выбери новое название из справочника:",
+        reply_markup=supplement_catalog_categories_inline_menu(rename=True),
+    )
 
 
 @router.message(lambda m: m.text == "❌ Отменить")

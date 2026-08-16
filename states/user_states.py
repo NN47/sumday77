@@ -75,6 +75,7 @@ class WeightStates(StatesGroup):
 class SupplementStates(StatesGroup):
     """Состояния для работы с добавками."""
     entering_name = State()
+    selecting_catalog_item = State()
     entering_time = State()
     selecting_days = State()
     choosing_duration = State()

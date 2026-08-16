@@ -6,6 +6,10 @@ from typing import Optional, List, Dict
 from database.session import get_db_session
 from database.models import Supplement, SupplementEntry, SupplementNotificationState
 from utils.log_sanitizer import safe_exception_summary
+from utils.supplement_catalog import (
+    get_supplement_display_name,
+    resolve_supplement_identifier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +44,7 @@ class SupplementRepository:
             
             result: List[Dict] = []
             for sup in supplements:
+                identifier = resolve_supplement_identifier(sup.name)
                 notifications_enabled = True
                 try:
                     if hasattr(sup, 'notifications_enabled'):
@@ -49,7 +54,8 @@ class SupplementRepository:
                 
                 result.append({
                     "id": sup.id,
-                    "name": sup.name,
+                    "identifier": identifier,
+                    "name": get_supplement_display_name(sup.name),
                     "times": json.loads(sup.times_json or "[]"),
                     "days": json.loads(sup.days_json or "[]"),
                     "duration": sup.duration or "постоянно",
@@ -62,7 +68,7 @@ class SupplementRepository:
     
     @staticmethod
     def save_supplement(user_id: str, payload: Dict, supplement_id: Optional[int] = None) -> Optional[int]:
-        """Сохраняет или обновляет добавку."""
+        """Save catalog identifiers while preserving unknown historical names."""
         with get_db_session() as session:
             if supplement_id:
                 sup = session.query(Supplement).filter_by(id=supplement_id, user_id=user_id).first()
@@ -70,8 +76,20 @@ class SupplementRepository:
                     return None
             else:
                 sup = Supplement(user_id=user_id)
-            
-            sup.name = payload.get("name", sup.name)
+
+            requested_identifier = payload.get("identifier")
+            identifier = resolve_supplement_identifier(requested_identifier)
+            if identifier is None:
+                identifier = resolve_supplement_identifier(payload.get("name"))
+
+            if identifier is None and not supplement_id:
+                logger.warning("Rejected supplement creation without catalog identifier")
+                return None
+            if identifier is not None:
+                sup.name = identifier
+            # For an unrecognized legacy value, editing schedule, duration, or
+            # notifications deliberately leaves the stored name untouched.
+
             sup.times_json = json.dumps(payload.get("times", []), ensure_ascii=False)
             sup.days_json = json.dumps(payload.get("days", []), ensure_ascii=False)
             sup.duration = payload.get("duration", sup.duration or "постоянно")

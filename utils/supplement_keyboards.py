@@ -6,10 +6,52 @@ from aiogram.types import (
     InlineKeyboardMarkup,
 )
 from utils.keyboards import main_menu_button
+from utils.supplement_catalog import SUPPLEMENT_CATEGORIES, SupplementCategory
 
 
 SUPPLEMENT_CREATE_TIME_PREFIX = "sup_create_time"
 SUPPLEMENT_EDIT_TIME_PREFIX = "sup_edit_time"
+SUPPLEMENT_CATALOG_PREFIX = "sup_catalog"
+
+
+def supplement_catalog_categories_inline_menu(*, rename: bool = False) -> InlineKeyboardMarkup:
+    """Inline menu of supplement categories backed by stable identifiers."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for index in range(0, len(SUPPLEMENT_CATEGORIES), 2):
+        rows.append([
+            InlineKeyboardButton(
+                text=category.display_name,
+                callback_data=f"{SUPPLEMENT_CATALOG_PREFIX}:category:{category.identifier}",
+            )
+            for category in SUPPLEMENT_CATEGORIES[index:index + 2]
+        ])
+    rows.append([
+        InlineKeyboardButton(
+            text="⬅️ Назад" if rename else "❌ Отменить",
+            callback_data=f"{SUPPLEMENT_CATALOG_PREFIX}:{'back_to_edit' if rename else 'cancel'}",
+        )
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def supplement_catalog_items_inline_menu(category: SupplementCategory) -> InlineKeyboardMarkup:
+    """Inline menu of catalog items for one category."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for index in range(0, len(category.items), 2):
+        rows.append([
+            InlineKeyboardButton(
+                text=item.display_name,
+                callback_data=f"{SUPPLEMENT_CATALOG_PREFIX}:item:{item.identifier}",
+            )
+            for item in category.items[index:index + 2]
+        ])
+    rows.append([
+        InlineKeyboardButton(
+            text="⬅️ К категориям",
+            callback_data=f"{SUPPLEMENT_CATALOG_PREFIX}:categories",
+        )
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def supplement_test_time_inline_menu(times: list[str]) -> InlineKeyboardMarkup:

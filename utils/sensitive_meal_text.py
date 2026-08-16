@@ -1,4 +1,4 @@
-"""Локальная проверка свободного текста еды до отправки внешнему AI."""
+"""Shared local sensitive-text checks with context-specific policies."""
 from __future__ import annotations
 
 import re
@@ -17,6 +17,15 @@ class SensitiveDataType(str, Enum):
     PERSONAL_IDENTITY = "personal_identity"
     MEDICAL = "medical"
     ADDRESS = "address"
+    CREDENTIAL = "credential"
+    BANKING = "banking"
+
+
+class SensitiveTextPolicy(str, Enum):
+    """Context-specific policies for the shared local text check."""
+
+    MEAL = "meal"
+    SUPPORT = "support"
 
 
 @dataclass(frozen=True)
@@ -319,6 +328,51 @@ MEDICAL_STRONG_PATTERNS = (
 )
 
 
+# Support intentionally uses narrower, high-confidence patterns than meal input.
+# Mentioning a password, a doctor, an analysis screen, or a procedure is not by
+# itself treated as sensitive data.
+CREDENTIAL_PATTERNS = _compile(
+    r"\b(?:мой\s+)?(?:пароль|password|токен|token|api[-_ ]?key|секрет(?:ный)?\s+ключ)\s*(?:[:=]|[—-])\s*[^\s,;]{4,}\b",
+    r"\b(?:код\s+(?:доступа|подтверждения)|одноразовый\s+код|otp)\s*(?:[:=]|[—-])?\s*\d{4,8}\b",
+    r"\b(?:bearer|basic)\s+[a-z0-9._~+/=-]{12,}\b",
+)
+
+SUPPORT_DOCUMENT_PATTERNS = _compile(
+    r"\b(?:паспорт|номер\s+паспорта|серия\s+паспорта)\s*[:№-]?\s*\d{2}\s*\d{2}\s*\d{6}\b",
+    r"\bснилс\s*[:№-]?\s*\d{3}[- ]?\d{3}[- ]?\d{3}[- ]?\d{2}\b",
+    r"\bинн\s*[:№-]?\s*\d{10,12}\b",
+)
+
+BANKING_PATTERNS = _compile(
+    r"\b(?:номер\s+)?(?:банковской\s+)?карт(?:ы|а)\s*[:№-]?\s*(?:\d[ -]?){13,19}\b",
+    r"\b(?:cvv|cvc)\s*[:=-]?\s*\d{3,4}\b",
+    r"\b(?:расч[её]тный\s+сч[её]т|корреспондентский\s+сч[её]т)\s*[:№-]?\s*\d{20}\b",
+)
+
+SUPPORT_PERSON_MARKER_PATTERNS = _compile(
+    r"\bу\s+меня\b",
+    r"\bмо(?:й|я|е|и|его|ей|их)\b",
+    r"\bмне\b",
+    r"\bя\s+(?:болею|лечусь|принимаю|пью|колю|чувствую)\b",
+    r"\b(?:болею|лечусь|принимаю|пью|колю)\b",
+    r"\b(?:у|для)\s+(?:сына|дочери|мужа|жены|матери|отца|реб[её]нка)\b",
+)
+
+SUPPORT_MEDICAL_DETAIL_PATTERNS = (
+    MEDICAL_DISEASE_PATTERNS
+    + MEDICAL_SYMPTOM_PATTERNS
+    + MEDICAL_MEDICATION_PATTERNS
+    + MEDICAL_REPRODUCTIVE_PATTERNS
+    + MEDICAL_MENTAL_HEALTH_PATTERNS
+    + MEDICAL_PHRASE_PATTERNS
+    + MEDICAL_CONTEXT_PATTERNS
+    + _compile(
+        r"\bрезультат\w*\s+(?:анализ\w*|обследован\w*|мрт|кт|узи|экг|ээг)\b",
+        r"\b(?:анализ\w*|мрт|кт|узи|экг|ээг)\s+(?:показал\w*|выявил\w*|обнаружил\w*)\b",
+    )
+)
+
+
 def _normalize_text(text: str) -> str:
     normalized = unicodedata.normalize("NFKC", text).replace("ё", "е").replace("Ё", "Е")
     return re.sub(r"\s+", " ", normalized).strip()
@@ -328,11 +382,7 @@ def _matches_any(text: str, patterns: tuple[Pattern[str], ...]) -> bool:
     return any(pattern.search(text) is not None for pattern in patterns)
 
 
-def check_sensitive_meal_text(text: str) -> SensitiveMealTextCheck:
-    """Проверяет копию текста локально и не возвращает найденные фрагменты."""
-    normalized_original = _normalize_text(str(text or ""))
-    normalized = normalized_original.casefold()
-
+def _check_meal_text(normalized: str, normalized_original: str) -> SensitiveMealTextCheck:
     checks = (
         (SensitiveDataType.PHONE, PHONE_PATTERNS, normalized),
         (SensitiveDataType.EMAIL, EMAIL_PATTERNS, normalized),
@@ -348,3 +398,69 @@ def check_sensitive_meal_text(text: str) -> SensitiveMealTextCheck:
         if _matches_any(candidate, patterns):
             return SensitiveMealTextCheck(is_sensitive=True, reason=reason)
     return SensitiveMealTextCheck(is_sensitive=False)
+
+
+def _contains_payment_card_number(text: str) -> bool:
+    """Detect plausible card numbers with a Luhn check and no retained value."""
+    for match in re.finditer(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)", text):
+        digits = re.sub(r"\D", "", match.group(0))
+        if not 13 <= len(digits) <= 19 or len(set(digits)) == 1:
+            continue
+        checksum = 0
+        parity = len(digits) % 2
+        for index, character in enumerate(digits):
+            digit = int(character)
+            if index % 2 == parity:
+                digit *= 2
+                if digit > 9:
+                    digit -= 9
+            checksum += digit
+        if checksum % 10 == 0:
+            return True
+    return False
+
+
+def _check_support_text(normalized: str) -> SensitiveMealTextCheck:
+    checks = (
+        (SensitiveDataType.CREDENTIAL, CREDENTIAL_PATTERNS),
+        (SensitiveDataType.DOCUMENT, SUPPORT_DOCUMENT_PATTERNS),
+        (SensitiveDataType.BANKING, BANKING_PATTERNS),
+    )
+    for reason, patterns in checks:
+        if _matches_any(normalized, patterns):
+            return SensitiveMealTextCheck(is_sensitive=True, reason=reason)
+
+    if _contains_payment_card_number(normalized):
+        return SensitiveMealTextCheck(is_sensitive=True, reason=SensitiveDataType.BANKING)
+
+    has_person = _matches_any(normalized, SUPPORT_PERSON_MARKER_PATTERNS)
+    has_medical_detail = _matches_any(normalized, SUPPORT_MEDICAL_DETAIL_PATTERNS)
+    if has_person and has_medical_detail:
+        return SensitiveMealTextCheck(is_sensitive=True, reason=SensitiveDataType.MEDICAL)
+
+    return SensitiveMealTextCheck(is_sensitive=False)
+
+
+def check_sensitive_text(
+    text: str,
+    *,
+    policy: SensitiveTextPolicy,
+) -> SensitiveMealTextCheck:
+    """Check text locally without returning or logging matching fragments."""
+    normalized_original = _normalize_text(str(text or ""))
+    normalized = normalized_original.casefold()
+    if policy is SensitiveTextPolicy.MEAL:
+        return _check_meal_text(normalized, normalized_original)
+    if policy is SensitiveTextPolicy.SUPPORT:
+        return _check_support_text(normalized)
+    raise ValueError(f"Unsupported sensitive-text policy: {policy!r}")
+
+
+def check_sensitive_meal_text(text: str) -> SensitiveMealTextCheck:
+    """Backward-compatible meal-specific wrapper."""
+    return check_sensitive_text(text, policy=SensitiveTextPolicy.MEAL)
+
+
+def check_sensitive_support_text(text: str) -> SensitiveMealTextCheck:
+    """High-confidence support-message policy."""
+    return check_sensitive_text(text, policy=SensitiveTextPolicy.SUPPORT)

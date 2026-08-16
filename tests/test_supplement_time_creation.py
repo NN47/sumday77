@@ -8,6 +8,7 @@ os.environ.setdefault("API_TOKEN", "test-token")
 from handlers import supplements
 from utils.supplement_keyboards import (
     supplement_creation_cancel_menu,
+    supplement_catalog_categories_inline_menu,
     supplement_test_time_inline_menu,
     supplement_edit_time_inline_menu,
     supplement_edit_menu,
@@ -66,22 +67,85 @@ def test_creation_cancel_menu_only_contains_cancel_button():
     assert button_texts == ["❌ Отменить"]
 
 
-def test_start_create_supplement_shows_friendly_prompt_and_cancel_menu():
+def test_start_create_supplement_shows_catalog_without_free_name_input():
     message = _build_message("➕ Создать добавку")
     state = _DummyState()
 
-    with patch("handlers.supplements.push_menu_stack") as push_menu_stack:
-        asyncio.run(supplements.start_create_supplement(message, state))
+    asyncio.run(supplements.start_create_supplement(message, state))
 
-    state.set_state.assert_awaited_once_with(supplements.SupplementStates.entering_name)
+    state.set_state.assert_awaited_once_with(supplements.SupplementStates.selecting_catalog_item)
     message.answer.assert_awaited_once()
     text, kwargs = message.answer.await_args
     assert "✨ Начинаем создание добавки!" in text[0]
     assert "Шаг 1 из 5" in text[0]
     keyboard = kwargs["reply_markup"]
-    button_texts = [button.text for row in keyboard.keyboard for button in row]
-    assert button_texts == ["❌ Отменить"]
-    push_menu_stack.assert_called_once()
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    assert any(button.text == "Витамины" for button in buttons)
+    assert any(button.text == "❌ Отменить" for button in buttons)
+    assert state._data["identifier"] is None
+
+
+def test_catalog_callbacks_use_stable_identifiers_and_never_display_names():
+    keyboard = supplement_catalog_categories_inline_menu()
+    category_callbacks = [
+        button.callback_data for row in keyboard.inline_keyboard for button in row
+    ]
+
+    assert "sup_catalog:category:vitamins" in category_callbacks
+    assert all("Витамин" not in value for value in category_callbacks)
+
+
+def test_arbitrary_supplement_name_is_rejected_without_state_storage():
+    message = _build_message("Моя секретная добавка")
+    state = _DummyState(
+        {"supplement_id": None, "identifier": None, "name": "", "catalog_mode": "create"},
+        supplements.SupplementStates.selecting_catalog_item.state,
+    )
+
+    asyncio.run(supplements.handle_supplement_catalog_text(message, state))
+
+    assert state._data["identifier"] is None
+    assert state._data["name"] == ""
+    assert "нельзя вводить вручную" in message.answer.await_args.args[0]
+
+
+def test_catalog_item_selection_stores_identifier_and_opens_time_step():
+    callback = _build_callback("sup_catalog:item:magnesium")
+    state = _DummyState(
+        {"supplement_id": None, "catalog_mode": "create", "times": []},
+        supplements.SupplementStates.selecting_catalog_item.state,
+    )
+
+    asyncio.run(supplements.handle_supplement_catalog_callback(callback, state))
+
+    assert state._data["identifier"] == "magnesium"
+    assert state._data["name"] == "Магний"
+    assert state._state == supplements.SupplementStates.entering_time.state
+    assert "Название:</b> Магний" in callback.message.answer.await_args.args[0]
+
+
+def test_completed_creation_persists_identifier_instead_of_display_name():
+    message = _build_message("✅ Выключить")
+    state = _DummyState({
+        "supplement_id": None,
+        "identifier": "magnesium",
+        "name": "Магний",
+        "times": ["09:00"],
+        "days": ["Пн"],
+        "duration": "постоянно",
+        "notifications_enabled": False,
+    })
+
+    with patch(
+        "handlers.supplements.SupplementRepository.save_supplement",
+        return_value=7,
+    ) as save_supplement, patch("handlers.supplements.push_menu_stack"):
+        asyncio.run(supplements.save_supplement_from_test(message, state))
+
+    payload = save_supplement.call_args.args[1]
+    assert payload["identifier"] == "magnesium"
+    assert payload["name"] == "Магний"
+    assert "Магний" in message.answer.await_args.args[0]
 
 
 def test_supplement_edit_menu_replaces_save_and_cancel_with_back_button():

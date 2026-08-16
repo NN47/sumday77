@@ -9,6 +9,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from database.session import get_db_session
 from database.models import ActivityAnalysisEntry, User, Supplement, SupplementEntry, SupplementNotificationState, KbjuSettings, EveningAnalysisNotificationState
+from utils.supplement_catalog import get_supplement_display_name
 from database.repositories.evening_analysis_notification_repository import EveningAnalysisNotificationRepository
 from database.technical_log_retention import (
     TECHNICAL_LOG_CLEANUP_INTERVAL_SECONDS,
@@ -672,7 +673,15 @@ class NotificationScheduler:
                         continue
 
                     pending_notifications.append(
-                        (state.user_id, state.supplement_id, supplement.name, state.scheduled_time, True, state.id, None)
+                        (
+                            state.user_id,
+                            state.supplement_id,
+                            get_supplement_display_name(supplement.name),
+                            state.scheduled_time,
+                            True,
+                            state.id,
+                            None,
+                        )
                     )
 
                 # Получаем все добавки с включенными уведомлениями только у пользователей,
@@ -736,7 +745,15 @@ class NotificationScheduler:
                             continue
 
                         pending_notifications.append(
-                            (supplement.user_id, supplement.id, supplement.name, current_time_str, False, None, notification_key)
+                            (
+                                supplement.user_id,
+                                supplement.id,
+                                get_supplement_display_name(supplement.name),
+                                current_time_str,
+                                False,
+                                None,
+                                notification_key,
+                            )
                         )
                     except Exception as e:
                         logger.error(

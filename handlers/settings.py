@@ -1,5 +1,6 @@
 """Обработчики для настроек."""
 import asyncio
+import html
 import logging
 from aiogram import Router
 from aiogram.filters import StateFilter
@@ -20,10 +21,21 @@ from user_operation_guard import user_operation_guard
 from services.user_process_cleanup import clear_user_fsm_states, clear_user_process_caches
 from config import ADMIN_ID
 from utils.log_sanitizer import safe_exception_summary
+from utils.sensitive_text import check_sensitive_support_text
 
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+SUPPORT_SENSITIVE_INPUT_WARNING = (
+    "Не отправляйте пароли, коды доступа, реквизиты документов, банковские данные, "
+    "диагнозы и подробности лечения. Для решения технической проблемы опишите действия "
+    "в боте и текст ошибки без личных подробностей."
+)
+SUPPORT_SENSITIVE_INPUT_REJECTED_TEXT = (
+    "⚠️ Сообщение не отправлено. Удалите личные и чувствительные подробности и "
+    "переформулируйте вопрос, описав только действия в боте и текст ошибки."
+)
 
 
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
@@ -164,6 +176,7 @@ async def support(message: Message, state: FSMContext):
     await message.answer(
         "💬 <b>Поддержка</b>\n\n"
         "Напишите ваш вопрос или сообщение для поддержки. Я перешлю его администратору.\n\n"
+        f"⚠️ {SUPPORT_SENSITIVE_INPUT_WARNING}\n\n"
         f"Для отмены используйте кнопку '⬅️ Назад' или '{MAIN_MENU_BUTTON_TEXT}'.",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="⬅️ Назад"), main_menu_button]],
@@ -198,18 +211,31 @@ async def handle_support_message(message: Message, state: FSMContext):
     if not user_text.strip():
         await message.answer("Пожалуйста, введите текст сообщения для поддержки.")
         return
-    
+
+    stripped_text = user_text.strip()
+    sensitive_check = check_sensitive_support_text(stripped_text)
+    if sensitive_check.is_sensitive:
+        reason = sensitive_check.reason.value if sensitive_check.reason else "unknown"
+        logger.info(
+            "Sensitive support input rejected reason=%s message_chars=%s",
+            reason,
+            len(stripped_text),
+        )
+        await message.answer(SUPPORT_SENSITIVE_INPUT_REJECTED_TEXT)
+        return
+
     # Формируем сообщение для администратора
-    user_info = f"👤 <b>Пользователь:</b>\n"
-    user_info += f"ID: <code>{user_id}</code>\n"
+    user_info = "👤 <b>Пользователь:</b>\n"
+    user_info += f"ID: <code>{html.escape(user_id)}</code>\n"
     if message.from_user.username:
-        user_info += f"Username: @{message.from_user.username}\n"
+        user_info += f"Username: @{html.escape(message.from_user.username)}\n"
     if message.from_user.first_name:
-        user_info += f"Имя: {message.from_user.first_name}\n"
+        user_info += f"Имя: {html.escape(message.from_user.first_name)}\n"
     if message.from_user.last_name:
-        user_info += f"Фамилия: {message.from_user.last_name}\n"
-    user_info += f"Язык: {message.from_user.language_code or 'не указан'}\n\n"
-    user_info += f"💬 <b>Сообщение:</b>\n{user_text}"
+        user_info += f"Фамилия: {html.escape(message.from_user.last_name)}\n"
+    language_code = html.escape(message.from_user.language_code or "не указан")
+    user_info += f"Язык: {language_code}\n\n"
+    user_info += f"💬 <b>Сообщение:</b>\n{html.escape(stripped_text)}"
     
     try:
         # Отправляем сообщение администратору
@@ -223,7 +249,7 @@ async def handle_support_message(message: Message, state: FSMContext):
             user_id=user_id,
             username=message.from_user.username,
             full_name=full_name,
-            message_text=user_text.strip(),
+            message_text=stripped_text,
         )
         AnalyticsRepository.track_event(user_id, "support_message_sent", section="support")
         
@@ -236,7 +262,7 @@ async def handle_support_message(message: Message, state: FSMContext):
             reply_markup=settings_menu,
             parse_mode="HTML",
         )
-        logger.info("Support message delivered message_chars=%s", len(user_text.strip()))
+        logger.info("Support message delivered message_chars=%s", len(stripped_text))
     except Exception as e:
         logger.error("Error sending support message error_type=%s", safe_exception_summary(e), exc_info=True)
         ErrorLogRepository.log_error(
