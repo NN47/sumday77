@@ -79,6 +79,7 @@ class SupplementStates(StatesGroup):
     entering_time = State()
     selecting_days = State()
     choosing_duration = State()
+    choosing_notifications = State()
     logging_intake = State()
     choosing_date_for_intake = State()
     entering_amount = State()

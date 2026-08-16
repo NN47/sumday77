@@ -3,9 +3,12 @@ import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from aiogram.types import ReplyKeyboardRemove
+
 os.environ.setdefault("API_TOKEN", "test-token")
 
 from handlers import supplements
+from middlewares.supplement_notifications import SupplementNotificationMessageGuard
 from utils.supplement_keyboards import (
     days_menu,
     supplement_creation_cancel_menu,
@@ -13,6 +16,7 @@ from utils.supplement_keyboards import (
     supplement_test_time_inline_menu,
     supplement_edit_time_inline_menu,
     supplement_edit_menu,
+    supplement_notifications_inline_menu,
 )
 
 
@@ -84,6 +88,7 @@ def test_start_create_supplement_shows_catalog_without_free_name_input():
     assert any(button.text == "Витамины" for button in buttons)
     assert any(button.text == "❌ Отменить" for button in buttons)
     assert state._data["identifier"] is None
+    assert state._data["notifications_enabled"] is False
 
 
 def test_catalog_callbacks_use_stable_identifiers_and_never_display_names():
@@ -374,24 +379,237 @@ def test_creation_continues_through_duration_and_notifications_after_days_skip()
 
     assert state._data["duration"] == "постоянно"
     assert state._data["days"] == []
-    assert state._data["is_test_creation"] is True
-    assert state._state == supplements.SupplementStates.choosing_duration.state
+    assert state._state == supplements.SupplementStates.choosing_notifications.state
     assert "Шаг 5" in message.answer.await_args.args[0]
+    assert isinstance(message.answer.await_args.kwargs["reply_markup"], ReplyKeyboardRemove)
+    inline_markup = message.answer.return_value.edit_reply_markup.await_args.kwargs[
+        "reply_markup"
+    ]
     notification_buttons = [
         button.text
-        for row in message.answer.await_args.kwargs["reply_markup"].keyboard
+        for row in inline_markup.inline_keyboard
         for button in row
     ]
+    assert "✅ Включить" in notification_buttons
     assert "⏭️ Пропустить" in notification_buttons
+    assert "⬅️ Назад" in notification_buttons
+    assert "❌ Отменить" in notification_buttons
+    assert "❌ Выключить" not in notification_buttons
 
-    message.answer.reset_mock()
+    callback = _build_callback("sup_notifications:skip")
     with patch(
         "handlers.supplements.save_supplement_from_test", new=AsyncMock()
     ) as save_supplement:
-        asyncio.run(supplements.handle_duration_or_notifications(message, state))
+        asyncio.run(supplements.handle_supplement_notifications_callback(callback, state))
 
     assert state._data["notifications_enabled"] is False
-    save_supplement.assert_awaited_once_with(message, state)
+    save_supplement.assert_awaited_once_with(
+        callback.message,
+        state,
+        user_id="12345",
+    )
+
+
+def test_creation_notification_inline_menu_never_contains_disable():
+    keyboard = supplement_notifications_inline_menu(
+        creation=True,
+        notifications_enabled=True,
+    )
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+
+    assert [button.text for button in buttons] == [
+        "✅ Включить",
+        "⏭️ Пропустить",
+        "⬅️ Назад",
+        "❌ Отменить",
+    ]
+    assert all(button.callback_data.startswith("sup_notifications:") for button in buttons)
+
+
+def test_creation_notification_enable_requires_both_time_and_days():
+    callback = _build_callback("sup_notifications:enable")
+    state = _DummyState(
+        {
+            "supplement_id": None,
+            "notification_mode": "create",
+            "times": ["09:00"],
+            "days": [],
+            "notifications_enabled": False,
+        },
+        supplements.SupplementStates.choosing_notifications.state,
+    )
+
+    with patch(
+        "handlers.supplements.save_supplement_from_test", new=AsyncMock()
+    ) as save_supplement:
+        asyncio.run(supplements.handle_supplement_notifications_callback(callback, state))
+
+    assert state._state == supplements.SupplementStates.choosing_notifications.state
+    assert state._data["notifications_enabled"] is False
+    save_supplement.assert_not_awaited()
+    callback.message.edit_text.assert_awaited_once()
+    error_text = callback.message.edit_text.await_args.args[0]
+    assert "Время:</b> 09:00" in error_text
+    assert "Дни:</b> не выбрано" in error_text
+    assert (
+        "Вернись назад и укажи время и дни приёма либо пропусти настройку уведомлений."
+        in error_text
+    )
+
+
+def test_creation_notification_enable_saves_when_schedule_is_complete():
+    callback = _build_callback("sup_notifications:enable")
+    state = _DummyState(
+        {
+            "supplement_id": None,
+            "notification_mode": "create",
+            "times": ["09:00"],
+            "days": ["Пн"],
+            "notifications_enabled": False,
+        },
+        supplements.SupplementStates.choosing_notifications.state,
+    )
+
+    with patch(
+        "handlers.supplements.save_supplement_from_test", new=AsyncMock()
+    ) as save_supplement:
+        asyncio.run(supplements.handle_supplement_notifications_callback(callback, state))
+
+    assert state._data["notifications_enabled"] is True
+    save_supplement.assert_awaited_once_with(
+        callback.message,
+        state,
+        user_id="12345",
+    )
+
+
+def test_creation_notification_back_restores_duration_reply_menu():
+    callback = _build_callback("sup_notifications:back")
+    state = _DummyState(
+        {
+            "supplement_id": None,
+            "notification_mode": "create",
+            "duration": "14 дней",
+            "times": ["09:00"],
+            "days": ["Пн"],
+        },
+        supplements.SupplementStates.choosing_notifications.state,
+    )
+
+    with patch("handlers.supplements.push_menu_stack"):
+        asyncio.run(supplements.handle_supplement_notifications_callback(callback, state))
+
+    assert state._state == supplements.SupplementStates.choosing_duration.state
+    assert state._data["notification_mode"] is None
+    reply_markup = callback.message.answer.await_args.kwargs["reply_markup"]
+    button_texts = [button.text for row in reply_markup.keyboard for button in row]
+    assert "Постоянно" in button_texts
+    assert "⏭️ Пропустить" in button_texts
+    assert "⬅️ Назад" in button_texts
+    assert "❌ Отменить" in button_texts
+
+
+def test_creation_notification_cancel_uses_callback_user_and_clears_state():
+    callback = _build_callback("sup_notifications:cancel")
+    state = _DummyState(
+        {
+            "supplement_id": None,
+            "notification_mode": "create",
+        },
+        supplements.SupplementStates.choosing_notifications.state,
+    )
+
+    with patch(
+        "handlers.supplements.supplements", new=AsyncMock()
+    ) as show_supplements:
+        asyncio.run(supplements.handle_supplement_notifications_callback(callback, state))
+
+    state.clear.assert_awaited_once()
+    show_supplements.assert_awaited_once_with(
+        callback.message,
+        user_id="12345",
+    )
+
+
+def test_notification_step_message_guard_blocks_stale_reply_actions():
+    middleware = SupplementNotificationMessageGuard()
+    handler = AsyncMock()
+    message = _build_message("💊 Добавки")
+    state = _DummyState(
+        {"notification_mode": "create"},
+        supplements.SupplementStates.choosing_notifications.state,
+    )
+
+    result = asyncio.run(middleware(handler, message, {"state": state}))
+
+    assert result is None
+    handler.assert_not_awaited()
+    assert state._state == supplements.SupplementStates.choosing_notifications.state
+    assert isinstance(message.answer.await_args.kwargs["reply_markup"], ReplyKeyboardRemove)
+
+
+def test_edit_notifications_uses_inline_disable_only_when_currently_enabled():
+    message = _build_message("🔔 Уведомления")
+    state = _DummyState(
+        {
+            "supplement_id": 7,
+            "name": "Магний",
+            "times": ["09:00"],
+            "days": ["Пн"],
+            "notifications_enabled": True,
+        },
+        supplements.SupplementStates.editing_supplement.state,
+    )
+
+    asyncio.run(supplements.toggle_notifications(message, state))
+
+    assert state._state == supplements.SupplementStates.choosing_notifications.state
+    inline_markup = message.answer.return_value.edit_reply_markup.await_args.kwargs[
+        "reply_markup"
+    ]
+    button_texts = [
+        button.text for row in inline_markup.inline_keyboard for button in row
+    ]
+    assert "❌ Выключить" in button_texts
+    assert "✅ Включить" not in button_texts
+    assert "⏭️ Пропустить" not in button_texts
+
+    disabled_keyboard = supplement_notifications_inline_menu(
+        creation=False,
+        notifications_enabled=False,
+    )
+    disabled_button_texts = [
+        button.text
+        for row in disabled_keyboard.inline_keyboard
+        for button in row
+    ]
+    assert "✅ Включить" in disabled_button_texts
+    assert "❌ Выключить" not in disabled_button_texts
+
+
+def test_edit_notification_disable_returns_to_edit_menu():
+    callback = _build_callback("sup_notifications:disable")
+    state = _DummyState(
+        {
+            "supplement_id": 7,
+            "notification_mode": "edit",
+            "name": "Магний",
+            "times": ["09:00"],
+            "days": ["Пн"],
+            "duration": "постоянно",
+            "notifications_enabled": True,
+        },
+        supplements.SupplementStates.choosing_notifications.state,
+    )
+
+    with patch("handlers.supplements.push_menu_stack"):
+        asyncio.run(supplements.handle_supplement_notifications_callback(callback, state))
+
+    assert state._data["notifications_enabled"] is False
+    assert state._state == supplements.SupplementStates.editing_supplement.state
+    callback.message.answer.assert_awaited_once()
+    reply_markup = callback.message.answer.await_args.kwargs["reply_markup"]
+    assert hasattr(reply_markup, "keyboard")
 
 
 def test_back_from_duration_restores_selected_days_with_skip_action():

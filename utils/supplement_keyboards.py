@@ -12,6 +12,7 @@ from utils.supplement_catalog import SUPPLEMENT_CATEGORIES, SupplementCategory
 SUPPLEMENT_CREATE_TIME_PREFIX = "sup_create_time"
 SUPPLEMENT_EDIT_TIME_PREFIX = "sup_edit_time"
 SUPPLEMENT_CATALOG_PREFIX = "sup_catalog"
+SUPPLEMENT_NOTIFICATIONS_PREFIX = "sup_notifications"
 
 
 def supplement_catalog_categories_inline_menu(*, rename: bool = False) -> InlineKeyboardMarkup:
@@ -277,16 +278,55 @@ def supplement_test_time_menu(times: list[str], show_back: bool = False) -> Repl
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 
-def supplement_test_notifications_menu() -> ReplyKeyboardMarkup:
-    """Меню выбора уведомлений в тесте."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="✅ Включить"), KeyboardButton(text="❌ Выключить")],
-            [KeyboardButton(text="⏭️ Пропустить")],
-            [KeyboardButton(text="⬅️ Назад"), KeyboardButton(text="❌ Отменить")],
-        ],
-        resize_keyboard=True,
-    )
+def supplement_notifications_inline_menu(
+    *,
+    creation: bool,
+    notifications_enabled: bool = False,
+) -> InlineKeyboardMarkup:
+    """Inline-меню настройки уведомлений при создании и редактировании."""
+    rows: list[list[InlineKeyboardButton]] = []
+
+    if creation or not notifications_enabled:
+        rows.append([
+            InlineKeyboardButton(
+                text="✅ Включить",
+                callback_data=f"{SUPPLEMENT_NOTIFICATIONS_PREFIX}:enable",
+            )
+        ])
+    else:
+        rows.append([
+            InlineKeyboardButton(
+                text="❌ Выключить",
+                callback_data=f"{SUPPLEMENT_NOTIFICATIONS_PREFIX}:disable",
+            )
+        ])
+
+    if creation:
+        rows.append([
+            InlineKeyboardButton(
+                text="⏭️ Пропустить",
+                callback_data=f"{SUPPLEMENT_NOTIFICATIONS_PREFIX}:skip",
+            )
+        ])
+        rows.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=f"{SUPPLEMENT_NOTIFICATIONS_PREFIX}:back",
+            ),
+            InlineKeyboardButton(
+                text="❌ Отменить",
+                callback_data=f"{SUPPLEMENT_NOTIFICATIONS_PREFIX}:cancel",
+            ),
+        ])
+    else:
+        rows.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=f"{SUPPLEMENT_NOTIFICATIONS_PREFIX}:back",
+            )
+        ])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def supplement_history_time_menu() -> ReplyKeyboardMarkup:

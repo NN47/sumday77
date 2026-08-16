@@ -8,7 +8,13 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 from aiogram import Bot, Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
     LEGACY_MAIN_MENU_BUTTON_TEXT,
@@ -31,10 +37,12 @@ from utils.supplement_keyboards import (
     SUPPLEMENT_CREATE_TIME_PREFIX,
     SUPPLEMENT_EDIT_TIME_PREFIX,
     SUPPLEMENT_CATALOG_PREFIX,
+    SUPPLEMENT_NOTIFICATIONS_PREFIX,
     supplement_catalog_categories_inline_menu,
     supplement_catalog_items_inline_menu,
     supplement_test_time_inline_menu,
     supplement_edit_time_inline_menu,
+    supplement_notifications_inline_menu,
 )
 from utils.calendar_utils import (
     build_supplement_calendar_keyboard,
@@ -209,9 +217,9 @@ async def go_to_supplement_days_step(message: Message, state: FSMContext, prefix
 
 
 @router.message(lambda m: m.text == "💊 Добавки")
-async def supplements(message: Message):
+async def supplements(message: Message, *, user_id: str | None = None):
     """Показывает меню добавок."""
-    user_id = str(message.from_user.id)
+    user_id = user_id or str(message.from_user.id)
     logger.info("Supplements menu opened")
     
     try:
@@ -299,7 +307,8 @@ async def start_create_supplement(message: Message, state: FSMContext):
         "times": [],
         "days": [],
         "duration": "постоянно",
-        "notifications_enabled": True,
+        "notifications_enabled": False,
+        "notification_mode": None,
         "catalog_mode": "create",
     })
     await state.set_state(SupplementStates.selecting_catalog_item)
@@ -1877,158 +1886,267 @@ async def choose_duration(message: Message, state: FSMContext):
     await message.answer("Выберите длительность приема", reply_markup=duration_menu())
 
 
-# Обработчик handle_duration_choice теперь объединен с handle_notifications_in_test выше
+def _normalize_notification_schedule(data: dict) -> tuple[list[str], list[str]]:
+    """Возвращает непустые значения времени и дней в едином формате."""
+    raw_times = data.get("times", [])
+    raw_days = data.get("days", [])
+    times = raw_times if isinstance(raw_times, list) else [raw_times] if raw_times else []
+    days = raw_days if isinstance(raw_days, list) else [raw_days] if raw_days else []
+    return [value for value in times if value], [value for value in days if value]
 
 
-async def ask_notifications_in_test(message: Message, state: FSMContext):
-    """Спрашивает про уведомления в тесте создания добавки."""
-    from utils.supplement_keyboards import supplement_test_notifications_menu
-    # Получаем текущие данные для проверки
-    data = await state.get_data()
-    times = data.get("times", [])
-    days = data.get("days", [])
-    
-    # Убеждаемся, что times и days являются списками
-    if not isinstance(times, list):
-        times = [times] if times else []
-    if not isinstance(days, list):
-        days = [days] if days else []
-    
-    logger.info(
-        "Supplement notification setup times_count=%s days_count=%s state_key_count=%s",
-        len(times),
-        len(days),
-        len(data),
-    )
-    
-    # Сохраняем флаг, что это тест создания добавки, и убеждаемся, что times и days сохранены как списки
-    await state.update_data(
-        is_test_creation=True,
-        times=times,  # Явно сохраняем как список
-        days=days,   # Явно сохраняем как список
-    )
-    await state.set_state(SupplementStates.choosing_duration)  # Используем существующее состояние
-    push_menu_stack(message.bot, supplement_test_notifications_menu())
-    
-    # Показываем текущие значения времени и дней в сообщении
-    times_text = ", ".join(times) if times and len(times) > 0 else "не указано"
-    days_text = ", ".join(days) if days and len(days) > 0 else "не выбрано"
-    
-    await message.answer(
-        f"🔔 <b>Шаг 5:</b> Включить уведомления о приёме добавки?\n\n"
-        f"Если включишь уведомления, я буду напоминать тебе о приёме добавки в указанное время.\n\n"
+def _build_notification_step_text(
+    data: dict,
+    *,
+    creation: bool,
+    validation_error: bool = False,
+) -> str:
+    """Формирует общий текст inline-шага настройки уведомлений."""
+    times, days = _normalize_notification_schedule(data)
+    times_text = ", ".join(times) if times else "не указано"
+    days_text = ", ".join(days) if days else "не выбрано"
+
+    if validation_error:
+        if creation:
+            guidance = (
+                "Вернись назад и укажи время и дни приёма либо пропусти "
+                "настройку уведомлений."
+            )
+        else:
+            guidance = (
+                "Вернись назад, укажи время и дни приёма, затем снова открой "
+                "настройку уведомлений."
+            )
+        return (
+            "⚠️ <b>Чтобы включить уведомления, укажи время и дни приёма.</b>\n\n"
+            f"⏰ <b>Время:</b> {html.escape(times_text)}\n"
+            f"📅 <b>Дни:</b> {html.escape(days_text)}\n\n"
+            f"{guidance}"
+        )
+
+    if creation:
+        title = "🔔 <b>Шаг 5:</b> Включить уведомления о приёме добавки?"
+        description = (
+            "Если включишь уведомления, я буду напоминать тебе о приёме "
+            "добавки в указанное время."
+        )
+    else:
+        enabled = data.get("notifications_enabled", False)
+        status = "включены" if enabled else "выключены"
+        title = "🔔 <b>Настройка уведомлений</b>"
+        description = f"Сейчас уведомления <b>{status}</b>."
+
+    return (
+        f"{title}\n\n{description}\n\n"
         f"⏰ <b>Время:</b> {html.escape(times_text)}\n"
         f"📅 <b>Дни:</b> {html.escape(days_text)}\n\n"
-        f"<b>⚠️ Для уведомлений нужно указать время и дни приёма.</b>",
-        reply_markup=supplement_test_notifications_menu(),
+        "<b>⚠️ Для уведомлений нужно указать время и дни приёма.</b>"
+    )
+
+
+async def _send_notification_step(
+    message: Message,
+    state: FSMContext,
+    *,
+    creation: bool,
+) -> None:
+    """Скрывает reply-клавиатуру и открывает inline-only шаг уведомлений."""
+    data = await state.get_data()
+    times, days = _normalize_notification_schedule(data)
+    await state.update_data(
+        notification_mode="create" if creation else "edit",
+        times=times,
+        days=days,
+    )
+    await state.set_state(SupplementStates.choosing_notifications)
+
+    keyboard = supplement_notifications_inline_menu(
+        creation=creation,
+        notifications_enabled=bool(data.get("notifications_enabled", False)),
+    )
+    sent_message = await message.answer(
+        _build_notification_step_text(data, creation=creation),
+        reply_markup=ReplyKeyboardRemove(),
         parse_mode="HTML",
     )
+    try:
+        await sent_message.edit_reply_markup(reply_markup=keyboard)
+    except Exception:
+        await message.answer("Выбери действие:", reply_markup=keyboard)
+
+    logger.info(
+        "Supplement notification step opened mode=%s times_count=%s days_count=%s",
+        "create" if creation else "edit",
+        len(times),
+        len(days),
+    )
+
+
+async def ask_notifications_in_test(message: Message, state: FSMContext) -> None:
+    """Открывает inline-настройку уведомлений при создании добавки."""
+    await _send_notification_step(message, state, creation=True)
+
+
+async def _remove_notification_inline_keyboard(callback: CallbackQuery) -> None:
+    """Убирает кнопки завершённого шага уведомлений."""
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+
+async def _return_to_supplement_edit_menu(
+    message: Message,
+    state: FSMContext,
+    prefix: str,
+) -> None:
+    """Возвращает редактирование уведомлений в общий экран добавки."""
+    await state.set_state(SupplementStates.editing_supplement)
+    data = await state.get_data()
+    keyboard = supplement_edit_menu(show_save=True)
+    push_menu_stack(message.bot, keyboard)
+    status = "включены" if data.get("notifications_enabled", False) else "выключены"
+    await message.answer(
+        f"{prefix}\n\n"
+        f"💊 {data.get('name', 'Добавка')}\n"
+        f"⏰ Время: {', '.join(data.get('times', [])) or 'не выбрано'}\n"
+        f"📅 Дни: {', '.join(data.get('days', [])) or 'не выбрано'}\n"
+        f"⏳ Длительность: {data.get('duration', 'постоянно')}\n"
+        f"🔔 Уведомления: {status}",
+        reply_markup=keyboard,
+    )
+
+
+@router.callback_query(
+    lambda c: c.data and c.data.startswith(f"{SUPPLEMENT_NOTIFICATIONS_PREFIX}:")
+)
+async def handle_supplement_notifications_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    """Обрабатывает inline-действия настройки уведомлений."""
+    if await state.get_state() != SupplementStates.choosing_notifications.state:
+        await callback.answer("Эта кнопка уже неактуальна", show_alert=True)
+        return
+
+    data = await state.get_data()
+    creation = data.get("notification_mode") == "create" and data.get("supplement_id") is None
+    editing = data.get("notification_mode") == "edit" and data.get("supplement_id") is not None
+    action = callback.data.split(":", 1)[1]
+
+    if not creation and not editing:
+        await callback.answer("Эта кнопка уже неактуальна", show_alert=True)
+        return
+
+    if action == "enable":
+        times, days = _normalize_notification_schedule(data)
+        if not times or not days:
+            keyboard = supplement_notifications_inline_menu(
+                creation=creation,
+                notifications_enabled=bool(data.get("notifications_enabled", False)),
+            )
+            await callback.answer("Нужно указать время и дни приёма", show_alert=True)
+            await callback.message.edit_text(
+                _build_notification_step_text(
+                    data,
+                    creation=creation,
+                    validation_error=True,
+                ),
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+            return
+
+        await state.update_data(notifications_enabled=True)
+        await callback.answer("Уведомления включены")
+        await _remove_notification_inline_keyboard(callback)
+        if creation:
+            await save_supplement_from_test(
+                callback.message,
+                state,
+                user_id=str(callback.from_user.id),
+            )
+        elif editing:
+            await _return_to_supplement_edit_menu(
+                callback.message,
+                state,
+                "🔔 Уведомления включены",
+            )
+        return
+
+    if action == "disable":
+        if not editing or not data.get("notifications_enabled", False):
+            await callback.answer("Отключать нечего", show_alert=True)
+            return
+        await state.update_data(notifications_enabled=False)
+        await callback.answer("Уведомления выключены")
+        await _remove_notification_inline_keyboard(callback)
+        await _return_to_supplement_edit_menu(
+            callback.message,
+            state,
+            "🔔 Уведомления выключены",
+        )
+        return
+
+    if action == "skip":
+        if not creation:
+            await callback.answer("Эта кнопка уже неактуальна", show_alert=True)
+            return
+        await state.update_data(notifications_enabled=False)
+        await callback.answer()
+        await _remove_notification_inline_keyboard(callback)
+        await save_supplement_from_test(
+            callback.message,
+            state,
+            user_id=str(callback.from_user.id),
+        )
+        return
+
+    if action == "back":
+        await callback.answer()
+        await _remove_notification_inline_keyboard(callback)
+        if creation:
+            duration = data.get("duration", "постоянно")
+            await state.update_data(notification_mode=None)
+            await state.set_state(SupplementStates.choosing_duration)
+            keyboard = duration_menu()
+            push_menu_stack(callback.message.bot, keyboard)
+            duration_text = duration.capitalize() if duration != "постоянно" else "Постоянно"
+            await callback.message.answer(
+                "⏪ Возвращаемся к шагу 4\n\n"
+                f"⏳ Текущая длительность: {duration_text}\n\n"
+                "Выбери длительность приёма добавки:",
+                reply_markup=keyboard,
+            )
+        elif editing:
+            await _return_to_supplement_edit_menu(
+                callback.message,
+                state,
+                "Настройка уведомлений не изменена.",
+            )
+        return
+
+    if action == "cancel":
+        if not creation:
+            await callback.answer("Эта кнопка уже неактуальна", show_alert=True)
+            return
+        await callback.answer()
+        await _remove_notification_inline_keyboard(callback)
+        await state.clear()
+        await supplements(
+            callback.message,
+            user_id=str(callback.from_user.id),
+        )
+        return
+
+    await callback.answer("Неизвестное действие", show_alert=True)
 
 
 @router.message(SupplementStates.choosing_duration)
 async def handle_duration_or_notifications(message: Message, state: FSMContext):
-    """Обрабатывает выбор длительности или уведомлений в тесте создания добавки."""
+    """Обрабатывает выбор длительности при создании или редактировании."""
     data = await state.get_data()
     supplement_id = data.get("supplement_id")
-    is_test_creation = data.get("is_test_creation", False)
-    
-    # Если это режим уведомлений (is_test_creation=True и supplement_id=None)
-    if supplement_id is None and is_test_creation:
-        # Обрабатываем кнопки уведомлений
-        if message.text == "❌ Отменить":
-            await state.clear()
-            await supplements(message)
-            return
-        
-        if message.text == "⬅️ Назад":
-            # Возвращаемся к шагу длительности
-            data = await state.get_data()
-            duration = data.get("duration", "постоянно")
-            # Снимаем флаг is_test_creation, чтобы вернуться к выбору длительности
-            await state.update_data(is_test_creation=False)
-            await state.set_state(SupplementStates.choosing_duration)
-            push_menu_stack(message.bot, duration_menu())
-            duration_text = duration.capitalize() if duration != "постоянно" else "Постоянно"
-            await message.answer(
-                f"⏪ Возвращаемся к шагу 4\n\n"
-                f"⏳ Текущая длительность: {duration_text}\n\n"
-                f"Выбери длительность приёма добавки:",
-                reply_markup=duration_menu(),
-            )
-            return
-        
-        if message.text == "⏭️ Пропустить":
-            await state.update_data(notifications_enabled=False)
-            await save_supplement_from_test(message, state)
-            return
-        
-        if message.text == "✅ Включить":
-            # Перезагружаем данные из state, чтобы убедиться, что у нас актуальные данные
-            current_data = await state.get_data()
-            times = current_data.get("times", [])
-            days = current_data.get("days", [])
-            
-            # Проверяем, что есть хотя бы одно время и хотя бы один день
-            # Исправляем проверку: times может быть None или пустым списком
-            times_list = []
-            if times:
-                if isinstance(times, list):
-                    times_list = [t for t in times if t]  # Убираем пустые значения
-                elif isinstance(times, str):
-                    times_list = [times]
-            
-            days_list = []
-            if days:
-                if isinstance(days, list):
-                    days_list = [d for d in days if d]  # Убираем пустые значения
-                elif isinstance(days, str):
-                    days_list = [days]
-            
-            logger.info(
-                "Supplement notification validation times_count=%s days_count=%s state_key_count=%s",
-                len(times_list),
-                len(days_list),
-                len(current_data),
-            )
-            
-            if not times_list or not days_list:
-                from utils.supplement_keyboards import supplement_test_notifications_menu
-                times_status = "не указано" if not times_list or len(times_list) == 0 else f"указано: {', '.join(times_list)}"
-                days_status = "не выбрано" if not days_list or len(days_list) == 0 else f"выбрано: {', '.join(days_list)}"
-                await message.answer(
-                    f"⚠️ Для уведомлений нужно указать время и дни приёма!\n\n"
-                    f"⏰ Время: {times_status}\n"
-                    f"📅 Дни: {days_status}\n\n"
-                    f"Вернись назад и заполни эти поля, или выключи уведомления.",
-                    reply_markup=supplement_test_notifications_menu(),
-                )
-                return
-            
-            await state.update_data(notifications_enabled=True)
-            logger.info(
-                "Supplement notifications enabled times_count=%s days_count=%s",
-                len(times_list),
-                len(days_list),
-            )
-            await save_supplement_from_test(message, state)
-            return
-        
-        if message.text == "❌ Выключить":
-            await state.update_data(notifications_enabled=False)
-            await save_supplement_from_test(message, state)
-            return
-        
-        # Если это неизвестное сообщение в режиме уведомлений
-        from utils.supplement_keyboards import supplement_test_notifications_menu
-        await message.answer(
-            "Пожалуйста, выбери один из вариантов:\n"
-            "✅ Включить - включить уведомления\n"
-            "❌ Выключить - выключить уведомления\n"
-            "⏭️ Пропустить - пропустить этот шаг",
-            reply_markup=supplement_test_notifications_menu(),
-        )
-        return
-    
     # Если это режим выбора длительности
     # Проверяем отмену
     if message.text == "❌ Отменить":
@@ -2059,23 +2177,12 @@ async def handle_duration_or_notifications(message: Message, state: FSMContext):
     
     # Проверяем пропуск (только в режиме теста)
     if supplement_id is None and message.text == "⏭️ Пропустить":
-        # Получаем текущие данные и убеждаемся, что times и days сохранены как списки
         current_data = await state.get_data()
-        times = current_data.get("times", [])
-        days = current_data.get("days", [])
-        
-        # Убеждаемся, что times и days являются списками
-        if not isinstance(times, list):
-            times = [times] if times else []
-        if not isinstance(days, list):
-            days = [days] if days else []
-        
-        # Сохраняем все данные вместе
+        times, days = _normalize_notification_schedule(current_data)
         await state.update_data(
             duration="постоянно",
-            is_test_creation=True,
-            times=times,  # Явно сохраняем как список
-            days=days,    # Явно сохраняем как список
+            times=times,
+            days=days,
         )
         
         logger.info("Supplement duration skipped times_count=%s days_count=%s", len(times), len(days))
@@ -2088,23 +2195,12 @@ async def handle_duration_or_notifications(message: Message, state: FSMContext):
         
         # Если это создание новой добавки (тест) - переходим к уведомлениям
         if supplement_id is None:
-            # Получаем текущие данные и убеждаемся, что times и days сохранены как списки
             current_data = await state.get_data()
-            times = current_data.get("times", [])
-            days = current_data.get("days", [])
-            
-            # Убеждаемся, что times и days являются списками
-            if not isinstance(times, list):
-                times = [times] if times else []
-            if not isinstance(days, list):
-                days = [days] if days else []
-            
-            # Сохраняем все данные вместе, включая флаг is_test_creation
+            times, days = _normalize_notification_schedule(current_data)
             await state.update_data(
                 duration=duration,
-                is_test_creation=True,
-                times=times,  # Явно сохраняем как список
-                days=days,    # Явно сохраняем как список
+                times=times,
+                days=days,
             )
             
             logger.info("Supplement duration selected times_count=%s days_count=%s", len(times), len(days))
@@ -2138,9 +2234,14 @@ async def handle_duration_or_notifications(message: Message, state: FSMContext):
     )
 
 
-async def save_supplement_from_test(message: Message, state: FSMContext):
+async def save_supplement_from_test(
+    message: Message,
+    state: FSMContext,
+    *,
+    user_id: str | None = None,
+):
     """Сохраняет добавку после завершения теста."""
-    user_id = str(message.from_user.id)
+    user_id = user_id or str(message.from_user.id)
     
     try:
         data = await state.get_data()
@@ -2190,22 +2291,12 @@ async def save_supplement_from_test(message: Message, state: FSMContext):
 
 @router.message(SupplementStates.editing_supplement, lambda m: m.text == "🔔 Уведомления")
 async def toggle_notifications(message: Message, state: FSMContext):
-    """Переключает уведомления (для редактирования)."""
+    """Открывает inline-настройку уведомлений существующей добавки."""
     data = await state.get_data()
-    supplement_id = data.get("supplement_id")
-    
-    # Только для редактирования существующих добавок
-    if supplement_id is not None:
-        current_status = data.get("notifications_enabled", True)
-        new_status = not current_status
-        await state.update_data(notifications_enabled=new_status)
-        status_text = "включены" if new_status else "выключены"
-        push_menu_stack(message.bot, supplement_edit_menu(show_save=True))
-        await message.answer(
-            f"🔔 Уведомления {status_text}\n\n"
-            f"Уведомления будут приходить в указанное время приема добавки.",
-            reply_markup=supplement_edit_menu(show_save=True),
-        )
+    if data.get("supplement_id") is None:
+        return
+
+    await _send_notification_step(message, state, creation=False)
 
 
 @router.message(SupplementStates.editing_supplement, lambda m: m.text == "✏️ Изменить название")
@@ -2661,4 +2752,9 @@ async def confirm_supplement_intake_from_notification(callback: CallbackQuery, s
 
 def register_supplement_handlers(dp):
     """Регистрирует обработчики добавок."""
+    from middlewares.supplement_notifications import (
+        SupplementNotificationMessageGuard,
+    )
+
+    dp.message.outer_middleware(SupplementNotificationMessageGuard())
     dp.include_router(router)
