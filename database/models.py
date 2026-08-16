@@ -12,7 +12,11 @@ from sqlalchemy import (
     Index,
     UniqueConstraint,
     JSON,
+    ForeignKey,
+    Numeric,
+    CheckConstraint,
 )
+from sqlalchemy.orm import relationship
 from datetime import date, datetime, timezone
 import json
 
@@ -116,6 +120,76 @@ class Meal(Base):
     meal_type = Column(String, nullable=False, default="snack", index=True)
     date = Column(Date, default=date.today)
     save_token = Column(String(64), nullable=True)
+    # ``Meal`` is a diary entry, not a reusable recipe.  Legacy entries contain
+    # ordinary product snapshots; dish entries additionally point at the
+    # reusable template they were created from while keeping their own snapshot.
+    entry_kind = Column(String, nullable=False, default="products", index=True)
+    dish_id = Column(Integer, ForeignKey("dishes.id", ondelete="SET NULL"), nullable=True, index=True)
+    dish_name_snapshot = Column(String(80), nullable=True)
+    entry_source = Column(String, nullable=True, index=True)
+
+
+class Dish(Base):
+    """Reusable user-owned dish template.
+
+    Nutrition is intentionally derived from ``DishIngredient`` rows.  Diary
+    history never reads current ingredient rows as its source of truth.
+    """
+
+    __tablename__ = "dishes"
+    __table_args__ = (
+        Index("ix_dishes_user_normalized_name", "user_id", "normalized_name"),
+        Index("uq_dishes_save_token", "save_token", unique=True),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    name = Column(String(80), nullable=False)
+    normalized_name = Column(String(80), nullable=False)
+    source = Column(String, nullable=False, default="photo_analysis", index=True)
+    source_provider = Column(String, nullable=True)
+    composition_fingerprint = Column(String(64), nullable=True, index=True)
+    save_token = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    archived_at = Column(DateTime, nullable=True, index=True)
+
+    ingredients = relationship(
+        "DishIngredient",
+        back_populates="dish",
+        cascade="all, delete-orphan",
+        order_by="DishIngredient.position",
+        lazy="selectin",
+    )
+
+
+class DishIngredient(Base):
+    """Nutrition snapshot belonging to a reusable dish template."""
+
+    __tablename__ = "dish_ingredients"
+    __table_args__ = (
+        UniqueConstraint("dish_id", "position", name="uq_dish_ingredients_position"),
+        CheckConstraint("weight_g > 0", name="ck_dish_ingredients_positive_weight"),
+        CheckConstraint("calories_per_100g >= 0", name="ck_dish_ingredients_nonnegative_calories"),
+        CheckConstraint("protein_per_100g >= 0", name="ck_dish_ingredients_nonnegative_protein"),
+        CheckConstraint("fat_per_100g >= 0", name="ck_dish_ingredients_nonnegative_fat"),
+        CheckConstraint("carbs_per_100g >= 0", name="ck_dish_ingredients_nonnegative_carbs"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    dish_id = Column(Integer, ForeignKey("dishes.id", ondelete="CASCADE"), nullable=False, index=True)
+    position = Column(Integer, nullable=False)
+    name_snapshot = Column(String(160), nullable=False)
+    weight_g = Column(Numeric(12, 4), nullable=False)
+    calories_per_100g = Column(Numeric(12, 4), nullable=False, default=0)
+    protein_per_100g = Column(Numeric(12, 4), nullable=False, default=0)
+    fat_per_100g = Column(Numeric(12, 4), nullable=False, default=0)
+    carbs_per_100g = Column(Numeric(12, 4), nullable=False, default=0)
+    is_manually_corrected = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    dish = relationship("Dish", back_populates="ingredients")
 
 
 class SavedProduct(Base):

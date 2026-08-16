@@ -40,8 +40,8 @@ def test_photo_analysis_confirm_menu_uses_single_product_edit_and_save_buttons()
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
     callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
 
-    assert rows == [["✏️ Пицца 4 сыра"], ["⚖️ Общий вес", "✅ Сохранить"]]
-    assert callbacks == [["edit_photo_food_item:0"], ["photo_total_weight", f"save_photo_food_analysis:{save_token}"]]
+    assert rows == [["✏️ Пицца 4 сыра"], ["✏️ Название блюда"], ["⚖️ Общий вес", "✅ Сохранить"]]
+    assert callbacks == [["edit_photo_food_item:0"], ["photo_dish_name"], ["photo_total_weight", f"save_photo_food_analysis:{save_token}"]]
 
 
 def test_photo_analysis_confirm_menu_uses_product_edit_buttons_for_multiple_items():
@@ -54,8 +54,8 @@ def test_photo_analysis_confirm_menu_uses_product_edit_buttons_for_multiple_item
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
     callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
 
-    assert rows == [["✏️ Кусочек медовика"], ["✏️ Кофе с молоком"], ["⚖️ Общий вес", "✅ Сохранить"]]
-    assert callbacks == [["edit_photo_food_item:0"], ["edit_photo_food_item:1"], ["photo_total_weight", f"save_photo_food_analysis:{save_token}"]]
+    assert rows == [["✏️ Кусочек медовика"], ["✏️ Кофе с молоком"], ["✏️ Название блюда"], ["⚖️ Общий вес", "✅ Сохранить"]]
+    assert callbacks == [["edit_photo_food_item:0"], ["edit_photo_food_item:1"], ["photo_dish_name"], ["photo_total_weight", f"save_photo_food_analysis:{save_token}"]]
 
 
 def test_food_photo_clarification_menu_offers_skip_or_cancel():
@@ -208,10 +208,11 @@ def test_show_input_methods_sends_add_menu():
     assert message.answer.await_count == 2
     first_call, second_call = message.answer.await_args_list
     assert first_call.args[0].startswith("Теперь выбери способ добавления приёма пищи.\n\n")
-    assert "💡 Если уже добавлял этот продукт — нажми «📦 Мои продукты»." in first_call.args[0]
+    assert "💡 Для повторного добавления используй «📦 Мои продукты» или «🍽 Мои блюда»." in first_call.args[0]
     inline_keyboard = first_call.kwargs["reply_markup"].inline_keyboard
-    assert [[button.text for button in row] for row in inline_keyboard] == [["📦 Мои продукты"]]
-    assert inline_keyboard[0][0].callback_data == "meal_entry_my_products:snack:1"
+    assert [[button.text for button in row] for row in inline_keyboard] == [["🍽 Мои блюда"], ["📦 Мои продукты"]]
+    assert inline_keyboard[0][0].callback_data == "meal_entry_my_dishes:snack:1"
+    assert inline_keyboard[1][0].callback_data == "meal_entry_my_products:snack:1"
     assert second_call.args[0] == "⬇️ Кнопки управления"
     assert second_call.kwargs["reply_markup"] == meals.kbju_add_menu
 
@@ -239,10 +240,11 @@ def test_show_input_methods_points_to_my_product_products_when_available():
     assert message.answer.await_count == 2
     methods_text = message.answer.await_args_list[0].args[0]
     assert methods_text.startswith("Теперь выбери способ добавления приёма пищи.\n\n")
-    assert "💡 Если уже добавлял этот продукт — нажми «📦 Мои продукты»." in methods_text
+    assert "💡 Для повторного добавления используй «📦 Мои продукты» или «🍽 Мои блюда»." in methods_text
     inline_keyboard = message.answer.await_args_list[0].kwargs["reply_markup"].inline_keyboard
-    assert [[button.text for button in row] for row in inline_keyboard] == [["📦 Мои продукты"]]
-    assert inline_keyboard[0][0].callback_data == "meal_entry_my_products:snack:1"
+    assert [[button.text for button in row] for row in inline_keyboard] == [["🍽 Мои блюда"], ["📦 Мои продукты"]]
+    assert inline_keyboard[0][0].callback_data == "meal_entry_my_dishes:snack:1"
+    assert inline_keyboard[1][0].callback_data == "meal_entry_my_products:snack:1"
     assert "• 📝 Ввести приём пищи текстом (AI-анализ)" not in methods_text
     assert "• 📷 Анализ еды по фото" not in methods_text
     assert "• 📋 Анализ этикетки" not in methods_text
@@ -287,9 +289,13 @@ def test_reopening_filled_meal_from_diary_shows_existing_products_before_new_add
     assert "<b>Итого перекус:</b>" in current_meal_text
     assert "🔥 <b>Калории:</b> 94 ккал" in current_meal_text
     keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"]
-    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [["✏️ Редактировать", "📦 Мои продукты"]]
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
+        ["✏️ Редактировать", "📦 Мои продукты"],
+        ["🍽 Мои блюда"],
+    ]
     assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
-        ["edit_meal:snack:2026-04-08", "meal_entry_my_products:snack:1"]
+        ["edit_meal:snack:2026-04-08", "meal_entry_my_products:snack:1"],
+        ["meal_entry_my_dishes:snack:1"],
     ]
     add_menu_call = callback.message.answer.await_args_list[2]
     assert add_menu_call.args[0] == "Можно добавить ещё продукт в этот приём пищи или завершить его."
@@ -364,9 +370,13 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_switches_bottom_
     assert "➕ Добавь следующий продукт" not in answer_text
     assert "✅ Когда приём пищи заполнен" not in answer_text
     keyboard = message.answer.await_args_list[1].kwargs["reply_markup"]
-    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [["✏️ Редактировать", "📦 Мои продукты"]]
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
+        ["✏️ Редактировать", "📦 Мои продукты"],
+        ["🍽 Мои блюда"],
+    ]
     assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
-        ["edit_meal:breakfast:2026-04-08", "meal_entry_my_products:breakfast:1"]
+        ["edit_meal:breakfast:2026-04-08", "meal_entry_my_products:breakfast:1"],
+        ["meal_entry_my_dishes:breakfast:1"],
     ]
     assert message.answer.await_args_list[1].kwargs["parse_mode"] == "HTML"
     add_menu_call = message.answer.await_args_list[-1]
@@ -2170,7 +2180,10 @@ def test_back_from_ai_method_restores_open_meal_entry_screen():
     assert "• <b>Творог</b> (150 г)" in restored_text
     assert "<b>Итого завтрак:</b>" in restored_text
     inline_keyboard = message.answer.await_args_list[0].kwargs["reply_markup"].inline_keyboard
-    assert [[button.text for button in row] for row in inline_keyboard] == [["✏️ Редактировать", "📦 Мои продукты"]]
+    assert [[button.text for button in row] for row in inline_keyboard] == [
+        ["✏️ Редактировать", "📦 Мои продукты"],
+        ["🍽 Мои блюда"],
+    ]
     assert message.answer.await_args_list[1].args[0] == "Можно добавить ещё продукт в этот приём пищи или завершить его."
     assert message.answer.await_args_list[1].kwargs["reply_markup"] == meals.kbju_add_menu
 

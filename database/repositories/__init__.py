@@ -17,6 +17,7 @@ from .gemini_repository import GeminiRepository
 from .ai_usage_repository import AIUsageRepository
 from .evening_analysis_notification_repository import EveningAnalysisNotificationRepository
 from .saved_product_repository import SavedProductRepository
+from .dish_repository import DishRepository
 
 __all__ = [
     "MealRepository",
@@ -40,4 +41,5 @@ __all__ = [
     "AIUsageRepository",
     "EveningAnalysisNotificationRepository",
     "SavedProductRepository",
+    "DishRepository",
 ]

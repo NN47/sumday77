@@ -21,6 +21,7 @@ from database.repositories.meal_repository import (
     MealSaveStatus,
 )
 import database.repositories.meal_repository as meal_repository_module
+import services.dish_service as dish_service_module
 from handlers import meals
 
 
@@ -51,6 +52,7 @@ def meal_db(tmp_path, monkeypatch):
             session.close()
 
     monkeypatch.setattr(meal_repository_module, "get_db_session", get_test_db_session)
+    monkeypatch.setattr(dish_service_module, "get_db_session", get_test_db_session)
     analytics = Mock()
     monkeypatch.setattr(AnalyticsRepository, "track_event", analytics)
 

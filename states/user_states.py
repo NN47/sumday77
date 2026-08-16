@@ -21,6 +21,8 @@ class MealEntryStates(StatesGroup):
     editing_meal_weight = State()  # Редактирование веса продукта
     editing_meal_weight_manual_input = State()  # Ручной ввод веса для выбранного продукта
     editing_photo_total_weight_manual_input = State()  # Ручной ввод общего веса блюда после анализа фото
+    editing_photo_dish_name_input = State()  # Ручной ввод названия блюда из фотоанализа
+    editing_saved_dish_total_weight_input = State()  # Новый общий вес повторно добавляемого блюда
     waiting_for_my_products_search = State()  # Поиск продукта среди моих продуктов
     editing_meal_name_input = State()  # Ручной ввод нового названия продукта
     editing_meal_kbju = State()  # Ручная правка КБЖУ выбранного продукта

@@ -36,11 +36,20 @@ from utils.keyboards import (
 )
 from database.repositories import (
     AnalyticsRepository,
+    DishRepository,
     MealRepository,
     MealSaveResult,
     MealSaveStatus,
     SavedProductRepository,
     WorkoutRepository,
+)
+from services.dish_service import (
+    DishService,
+    calculate_dish_totals,
+    calculate_dish_weight,
+    dish_to_snapshot,
+    normalize_dish_display_name,
+    scale_dish_snapshot,
 )
 from services.gemini_service import (
     gemini_service,
@@ -519,6 +528,7 @@ def _build_photo_analysis_confirm_menu(
     for idx, item in enumerate(items):
         name = _short_product_button_name(item.get("name") or "Продукт")
         rows.append([InlineKeyboardButton(text=f"✏️ {name}", callback_data=f"edit_photo_food_item:{idx}")])
+    rows.append([InlineKeyboardButton(text="✏️ Название блюда", callback_data="photo_dish_name")])
     rows.append([
         InlineKeyboardButton(text="⚖️ Общий вес", callback_data="photo_total_weight"),
         InlineKeyboardButton(
@@ -537,6 +547,36 @@ def _build_food_photo_clarification_menu() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="❌ Отмена", callback_data="food_photo_cancel")],
         ]
     )
+
+
+def _build_photo_dish_candidates_menu(dishes: list[dict]) -> InlineKeyboardMarkup:
+    """Не объединяет несколько объектов на фото без явного выбора пользователя."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{_number_emoji(index)} {_short_product_button_name(dish.get('dish_name') or 'Блюдо')}",
+                callback_data=f"photo_dish_pick:{index}",
+            )
+        ]
+        for index, dish in enumerate(dishes)
+    ]
+    rows.append([InlineKeyboardButton(text="🍽 Объединить в одно блюдо", callback_data="photo_dish_combine")])
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="photo_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _format_photo_dish_candidates_text(dishes: list[dict]) -> str:
+    lines = [
+        "📸 <b>На фото найдено несколько отдельных блюд</b>",
+        "",
+        "Выбери одно из них или явно объедини всё в одну запись:",
+        "",
+    ]
+    for index, dish in enumerate(dishes):
+        name = normalize_dish_display_name(dish.get("dish_name"), dish.get("items") or [])
+        weight = calculate_dish_weight(dish.get("items") or [])
+        lines.append(f"{_number_emoji(index)} {html.escape(name)} — {weight:.0f} г")
+    return "\n".join(lines)
 
 
 def _build_photo_total_weight_editor_menu() -> InlineKeyboardMarkup:
@@ -610,10 +650,11 @@ async def _send_photo_analysis_confirmation(
     message: Message,
     items: list[dict],
     save_token: str,
+    dish_name: str | None = None,
 ) -> None:
     """Показывает результат анализа с inline-кнопками и нижней кнопкой полной отмены."""
     await message.answer(
-        _format_photo_analysis_confirmation_text(items),
+        _format_photo_analysis_confirmation_text(items, dish_name=dish_name),
         reply_markup=_build_photo_analysis_confirm_menu(items, save_token),
         parse_mode="HTML",
     )
@@ -714,11 +755,18 @@ def _format_photo_item_block(item: dict, index: int | None = None) -> str:
     )
 
 
-def _format_photo_analysis_confirmation_text(items: list[dict]) -> str:
+def _format_photo_analysis_confirmation_text(items: list[dict], *, dish_name: str | None = None) -> str:
     """Форматирует общий экран анализа фото до сохранения в дневник."""
     total_weight = sum(_safe_float(item.get("grams")) for item in items)
     totals = _collect_photo_totals(items)
-    lines = ["📸 <b>Анализ фото завершён</b>", "", "🍽 <b>Обнаружено:</b>", ""]
+    lines = [
+        "📸 <b>Анализ фото завершён</b>",
+        "",
+        f"🥣 <b>{html.escape(normalize_dish_display_name(dish_name, items))}</b>",
+        "",
+        "🍽 <b>Состав:</b>",
+        "",
+    ]
     for idx, item in enumerate(items):
         lines.append(_format_photo_item_block(item, idx))
         lines.append("")
@@ -810,7 +858,7 @@ MY_PRODUCTS_HISTORY_BATCH_SIZE = 100
 
 MY_PRODUCTS_SOURCE_FILTERS = {
     "text_ai": {"button": "📝 Из текстового AI-анализа", "title": "📝 <b>Мои продукты из текстового AI-анализа"},
-    "photo_analysis": {"button": "📷 Из анализа еды по фото", "title": "📷 <b>Мои продукты из анализа еды по фото"},
+    "photo_analysis": {"button": "🗂 Старые продукты из фотоанализа", "title": "🗂 <b>Старые продукты из фотоанализа"},
     "label_analysis": {"button": "📋 Из анализа этикетки", "title": "📋 <b>Мои продукты из анализа этикетки"},
     "manual": {"button": "✍️ Внесённые вручную", "title": "✍️ <b>Мои продукты, внесённые вручную"},
     "all": {"button": "📦 Все продукты", "title": "📦 <b>Все мои продукты"},
@@ -980,6 +1028,8 @@ def _expand_my_products(my_product_meals: list, limit: int = 64, source_filter: 
     items: list[MyProductItem] = []
     seen: set[str] = set()
     for meal in my_product_meals:
+        if getattr(meal, "entry_kind", "products") == "dish":
+            continue
         products = _parse_my_products(meal)
         meal_items = [
             _build_my_product_item_from_product(meal, product, idx)
@@ -2399,6 +2449,12 @@ def _build_my_products_entry_keyboard(meal_type: str) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
+                    text="🍽 Мои блюда",
+                    callback_data=f"meal_entry_my_dishes:{normalized_meal_type}:1",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="📦 Мои продукты",
                     callback_data=f"meal_entry_my_products:{normalized_meal_type}:1",
                 )
@@ -2442,7 +2498,7 @@ async def _show_input_methods(message: Message, state: FSMContext, *, user_id: s
     )
     text = (
         "Теперь выбери способ добавления приёма пищи.\n\n"
-        "💡 Если уже добавлял этот продукт — нажми «📦 Мои продукты»."
+        "💡 Для повторного добавления используй «📦 Мои продукты» или «🍽 Мои блюда»."
     )
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(text, reply_markup=_build_my_products_entry_keyboard(meal_type))
@@ -2509,7 +2565,13 @@ def _build_meal_entry_post_save_keyboard(meal_type: str, entry_date: date) -> In
                     text="📦 Мои продукты",
                     callback_data=f"meal_entry_my_products:{normalized_meal_type}:1",
                 ),
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🍽 Мои блюда",
+                    callback_data=f"meal_entry_my_dishes:{normalized_meal_type}:1",
+                )
+            ],
         ]
     )
 
@@ -2921,6 +2983,442 @@ def _build_adjusted_my_product_item(item: MyProductItem, amount_g: int) -> MyPro
         package_weight_g=item.package_weight_g,
         package_units=item.package_units,
     )
+
+
+MY_DISHES_PAGE_SIZE = 8
+
+
+def _format_saved_dishes_page(dishes: list, page: int) -> str:
+    lines = ["🍽 <b>Мои блюда</b>", "", "Выбери блюдо, чтобы посмотреть состав и добавить порцию:", ""]
+    for index, dish in enumerate(dishes, start=1):
+        snapshot = dish_to_snapshot(dish)
+        totals = calculate_dish_totals(snapshot)
+        lines.append(
+            f"{_format_emoji_number(index)} {html.escape(dish.name)} — "
+            f"{calculate_dish_weight(snapshot):.0f} г, {totals['calories']:.0f} ккал"
+        )
+    lines.extend(["", f"Страница {page}"])
+    return "\n".join(lines)
+
+
+def _build_saved_dishes_keyboard(
+    dishes: list,
+    meal_type: str,
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{_format_emoji_number(index)} {_truncate_product_name(dish.name)}",
+                callback_data=f"my_dish_pick:{meal_type}:{page}:{dish.id}",
+            )
+        ]
+        for index, dish in enumerate(dishes, start=1)
+    ]
+    navigation = []
+    if page > 1:
+        navigation.append(
+            InlineKeyboardButton(text="⬅️", callback_data=f"meal_entry_my_dishes:{meal_type}:{page - 1}")
+        )
+    if page < total_pages:
+        navigation.append(
+            InlineKeyboardButton(text="➡️", callback_data=f"meal_entry_my_dishes:{meal_type}:{page + 1}")
+        )
+    if navigation:
+        rows.append(navigation)
+    rows.append([InlineKeyboardButton(text="⬅️ К приёму пищи", callback_data="my_dishes_back_to_current_meal")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _format_saved_dish_card(dish, items: list[dict]) -> str:
+    totals = calculate_dish_totals(items)
+    lines = [
+        f"🥣 <b>{html.escape(dish.name)}</b>",
+        "",
+        "<b>Состав:</b>",
+    ]
+    for index, item in enumerate(items):
+        lines.append(
+            f"{_number_emoji(index)} {html.escape(str(item.get('name') or 'Ингредиент'))} — "
+            f"{_safe_float(item.get('grams')):.0f} г"
+        )
+    lines.extend(
+        [
+            "",
+            f"📦 <b>Общий вес:</b> {calculate_dish_weight(items):.0f} г",
+            f"🔥 <b>Калории:</b> {totals['calories']:.0f} ккал",
+            f"🥩 <b>Белки:</b> {totals['protein']:.1f} г",
+            f"🥑 <b>Жиры:</b> {totals['fat']:.1f} г",
+            f"🍚 <b>Углеводы:</b> {totals['carbs']:.1f} г",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _build_saved_dish_card_keyboard(meal_type: str, page: int, dish_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Добавить порцию", callback_data=f"my_dish_add:{dish_id}")],
+            [InlineKeyboardButton(text="⚖️ Изменить общий вес", callback_data=f"my_dish_weight:{dish_id}")],
+            [InlineKeyboardButton(text="🗑 Убрать из моих блюд", callback_data=f"my_dish_archive_ask:{dish_id}")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"meal_entry_my_dishes:{meal_type}:{page}")],
+        ]
+    )
+
+
+def _build_saved_dish_weight_keyboard(dish_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="−100 г", callback_data=f"my_dish_wchg:{dish_id}:-100"),
+                InlineKeyboardButton(text="−50 г", callback_data=f"my_dish_wchg:{dish_id}:-50"),
+                InlineKeyboardButton(text="+50 г", callback_data=f"my_dish_wchg:{dish_id}:50"),
+                InlineKeyboardButton(text="+100 г", callback_data=f"my_dish_wchg:{dish_id}:100"),
+            ],
+            [
+                InlineKeyboardButton(text="−10 г", callback_data=f"my_dish_wchg:{dish_id}:-10"),
+                InlineKeyboardButton(text="+10 г", callback_data=f"my_dish_wchg:{dish_id}:10"),
+            ],
+            [InlineKeyboardButton(text="⌨️ Ввести вручную", callback_data=f"my_dish_wmanual:{dish_id}")],
+            [InlineKeyboardButton(text="✅ Применить", callback_data=f"my_dish_wsave:{dish_id}")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_dish_wback:{dish_id}")],
+        ]
+    )
+
+
+def _format_saved_dish_weight_text(dish, items: list[dict]) -> str:
+    totals = calculate_dish_totals(items)
+    return "\n".join(
+        [
+            f"⚖️ <b>Порция: {html.escape(dish.name)}</b>",
+            "",
+            f"Общий вес: {calculate_dish_weight(items):.0f} г",
+            f"🔥 {totals['calories']:.0f} ккал · Б {totals['protein']:.1f} · "
+            f"Ж {totals['fat']:.1f} · У {totals['carbs']:.1f}",
+            "",
+            "Ингредиенты и КБЖУ пересчитываются пропорционально.",
+        ]
+    )
+
+
+async def _show_saved_dishes_page(
+    message: Message,
+    state: FSMContext,
+    *,
+    user_id: str,
+    meal_type: str,
+    page: int,
+    edit_message: bool = False,
+) -> bool:
+    total = DishRepository.count_active(user_id)
+    if total <= 0:
+        return False
+    total_pages = max(1, math.ceil(total / MY_DISHES_PAGE_SIZE))
+    page = min(max(1, page), total_pages)
+    dishes = DishRepository.list_active(
+        user_id,
+        offset=(page - 1) * MY_DISHES_PAGE_SIZE,
+        limit=MY_DISHES_PAGE_SIZE,
+    )
+    await state.update_data(my_dishes_page=page, meal_type=meal_type, in_my_dishes_section=True)
+    text = _format_saved_dishes_page(dishes, page)
+    keyboard = _build_saved_dishes_keyboard(dishes, meal_type, page, total_pages)
+    if edit_message:
+        await _edit_or_send_photo_analysis_message(message, text, reply_markup=keyboard, parse_mode="HTML")
+    else:
+        await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    return True
+
+
+@router.callback_query(lambda c: c.data.startswith("meal_entry_my_dishes:"))
+async def meal_entry_my_dishes(callback: CallbackQuery, state: FSMContext):
+    """Открывает отдельный каталог блюд, не смешивая их с обычными продуктами."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    meal_type = normalize_meal_type(parts[1] if len(parts) > 1 else None, fallback=MealType.SNACK.value)
+    try:
+        page = int(parts[2]) if len(parts) > 2 else 1
+    except (TypeError, ValueError):
+        page = 1
+    data = await state.get_data()
+    entry_date_raw = str(data.get("entry_date") or date.today().isoformat())
+    await state.update_data(
+        my_dishes_return_meal_type=meal_type,
+        my_dishes_return_entry_date=entry_date_raw,
+    )
+    shown = await _show_saved_dishes_page(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
+        meal_type=meal_type,
+        page=page,
+        edit_message=bool(data.get("in_my_dishes_section")),
+    )
+    if not shown:
+        await callback.message.answer(
+            "Пока нет сохранённых блюд. Они появятся здесь после сохранения анализа еды по фото."
+        )
+
+
+@router.callback_query(lambda c: c.data == "my_dishes_back_to_current_meal")
+async def my_dishes_back_to_current_meal(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("my_dishes_return_meal_type"), fallback=MealType.SNACK.value)
+    try:
+        entry_date = date.fromisoformat(str(data.get("my_dishes_return_entry_date") or ""))
+    except ValueError:
+        entry_date = date.today()
+    await state.update_data(in_my_dishes_section=False)
+    await _keep_meal_entry_open_after_save(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
+        entry_date=entry_date,
+        meal_type=meal_type,
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_pick:"))
+async def my_dish_pick(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    _, meal_type, raw_page, raw_dish_id = callback.data.split(":", 3)
+    dish = DishRepository.get_by_id(str(callback.from_user.id), int(raw_dish_id))
+    if dish is None:
+        await callback.answer("Блюдо не найдено", show_alert=True)
+        return
+    items = dish_to_snapshot(dish)
+    save_token = _new_meal_save_token()
+    await state.update_data(
+        my_dish_id=dish.id,
+        my_dish_items=items,
+        my_dish_original_items=items,
+        my_dish_save_token=save_token,
+        my_dishes_page=int(raw_page),
+        meal_type=meal_type,
+    )
+    await _edit_or_send_photo_analysis_message(
+        callback.message,
+        _format_saved_dish_card(dish, items),
+        reply_markup=_build_saved_dish_card_keyboard(meal_type, int(raw_page), dish.id),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_weight:"))
+async def my_dish_weight_open(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    dish_id = int(callback.data.split(":", 1)[1])
+    data = await state.get_data()
+    dish = DishRepository.get_by_id(str(callback.from_user.id), dish_id)
+    items = data.get("my_dish_items") or (dish_to_snapshot(dish) if dish else [])
+    if dish is None or not items:
+        await callback.answer("Блюдо не найдено", show_alert=True)
+        return
+    await state.update_data(my_dish_weight_draft=[dict(item) for item in items])
+    await callback.message.edit_text(
+        _format_saved_dish_weight_text(dish, items),
+        reply_markup=_build_saved_dish_weight_keyboard(dish_id),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_wchg:"))
+async def my_dish_weight_change(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    _, raw_dish_id, raw_delta = callback.data.split(":", 2)
+    dish_id = int(raw_dish_id)
+    data = await state.get_data()
+    draft = data.get("my_dish_weight_draft") or data.get("my_dish_items") or []
+    dish = DishRepository.get_by_id(str(callback.from_user.id), dish_id)
+    if dish is None or not draft:
+        await callback.answer("Блюдо не найдено", show_alert=True)
+        return
+    new_weight = max(1.0, calculate_dish_weight(draft) + float(raw_delta))
+    updated = scale_dish_snapshot(draft, new_weight)
+    await state.update_data(my_dish_weight_draft=updated)
+    await callback.message.edit_text(
+        _format_saved_dish_weight_text(dish, updated),
+        reply_markup=_build_saved_dish_weight_keyboard(dish_id),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_wmanual:"))
+async def my_dish_weight_manual_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    dish_id = int(callback.data.split(":", 1)[1])
+    await state.set_state(MealEntryStates.editing_saved_dish_total_weight_input)
+    await state.update_data(my_dish_id=dish_id)
+    await callback.message.answer(
+        "Введи новый общий вес порции в граммах:",
+        reply_markup=_build_photo_analysis_cancel_menu(),
+    )
+
+
+@router.message(MealEntryStates.editing_saved_dish_total_weight_input)
+async def my_dish_weight_manual_apply(message: Message, state: FSMContext):
+    raw = (message.text or "").strip().replace(",", ".")
+    if raw == "❌ Отмена":
+        data = await state.get_data()
+        dish_id = int(data.get("my_dish_id") or 0)
+        dish = DishRepository.get_by_id(str(message.from_user.id), dish_id)
+        items = data.get("my_dish_items") or []
+        await state.set_state(MealEntryStates.choosing_meal_type)
+        if dish is not None and items:
+            await message.answer(
+                _format_saved_dish_card(dish, items),
+                reply_markup=_build_saved_dish_card_keyboard(
+                    normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
+                    int(data.get("my_dishes_page") or 1),
+                    dish_id,
+                ),
+                parse_mode="HTML",
+            )
+        else:
+            await message.answer("Изменение порции отменено.")
+        return
+    try:
+        new_weight = float(raw)
+    except ValueError:
+        await message.answer("Введи вес числом, например: 350")
+        return
+    if not math.isfinite(new_weight) or new_weight < 1:
+        await message.answer("Вес должен быть не меньше 1 г.")
+        return
+    data = await state.get_data()
+    dish_id = int(data.get("my_dish_id") or 0)
+    dish = DishRepository.get_by_id(str(message.from_user.id), dish_id)
+    draft = data.get("my_dish_weight_draft") or data.get("my_dish_items") or []
+    if dish is None or not draft:
+        await message.answer("Блюдо не найдено.")
+        return
+    updated = scale_dish_snapshot(draft, new_weight)
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(my_dish_weight_draft=updated)
+    await message.answer(
+        _format_saved_dish_weight_text(dish, updated),
+        reply_markup=_build_saved_dish_weight_keyboard(dish_id),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_wsave:"))
+async def my_dish_weight_save(callback: CallbackQuery, state: FSMContext):
+    await callback.answer("Порция изменена")
+    dish_id = int(callback.data.split(":", 1)[1])
+    data = await state.get_data()
+    dish = DishRepository.get_by_id(str(callback.from_user.id), dish_id)
+    draft = data.get("my_dish_weight_draft") or []
+    if dish is None or not draft:
+        await callback.answer("Черновик порции не найден", show_alert=True)
+        return
+    await state.update_data(my_dish_items=draft, my_dish_weight_draft=None)
+    await callback.message.edit_text(
+        _format_saved_dish_card(dish, draft),
+        reply_markup=_build_saved_dish_card_keyboard(
+            normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
+            int(data.get("my_dishes_page") or 1),
+            dish_id,
+        ),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_wback:"))
+async def my_dish_weight_back(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    dish_id = int(callback.data.split(":", 1)[1])
+    data = await state.get_data()
+    dish = DishRepository.get_by_id(str(callback.from_user.id), dish_id)
+    items = data.get("my_dish_items") or []
+    if dish is None or not items:
+        await callback.answer("Блюдо не найдено", show_alert=True)
+        return
+    await state.update_data(my_dish_weight_draft=None)
+    await callback.message.edit_text(
+        _format_saved_dish_card(dish, items),
+        reply_markup=_build_saved_dish_card_keyboard(
+            normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
+            int(data.get("my_dishes_page") or 1),
+            dish_id,
+        ),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_add:"))
+async def my_dish_add(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    dish_id = int(callback.data.split(":", 1)[1])
+    token = data.get("my_dish_save_token")
+    if not _is_valid_meal_save_token(token) or dish_id != int(data.get("my_dish_id") or 0):
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    try:
+        entry_date = date.fromisoformat(str(data.get("my_dishes_return_entry_date") or data.get("entry_date") or ""))
+    except ValueError:
+        entry_date = date.today()
+    result = DishService.add_saved_dish_to_diary(
+        save_token=token,
+        user_id=str(callback.from_user.id),
+        dish_id=dish_id,
+        entry_date=entry_date,
+        meal_type=meal_type,
+        items=data.get("my_dish_items") or None,
+    )
+    if result.status is MealSaveStatus.FAILED or result.meal is None:
+        await callback.answer("Не удалось добавить блюдо", show_alert=True)
+        return
+    await callback.answer("Блюдо добавлено")
+    if not hasattr(callback.message.bot, "last_meal_ids"):
+        callback.message.bot.last_meal_ids = {}
+    callback.message.bot.last_meal_ids[str(callback.from_user.id)] = result.meal.id
+    await state.update_data(my_dish_save_token=None, my_dish_items=None, in_my_dishes_section=False)
+    await _keep_meal_entry_open_after_save(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
+        entry_date=entry_date,
+        meal_type=meal_type,
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_archive_ask:"))
+async def my_dish_archive_ask(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    dish_id = int(callback.data.split(":", 1)[1])
+    await callback.message.edit_text(
+        "Убрать блюдо из «Моих блюд»? Уже добавленные записи дневника сохранятся.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🗑 Убрать", callback_data=f"my_dish_archive:{dish_id}")],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_dish_wback:{dish_id}")],
+            ]
+        ),
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_archive:"))
+async def my_dish_archive(callback: CallbackQuery, state: FSMContext):
+    dish_id = int(callback.data.split(":", 1)[1])
+    if not DishRepository.archive(str(callback.from_user.id), dish_id):
+        await callback.answer("Блюдо не найдено", show_alert=True)
+        return
+    await callback.answer("Блюдо убрано")
+    data = await state.get_data()
+    shown = await _show_saved_dishes_page(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
+        meal_type=normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
+        page=int(data.get("my_dishes_page") or 1),
+        edit_message=True,
+    )
+    if not shown:
+        await callback.message.edit_text("В «Моих блюдах» пока пусто.")
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_entry_my_products:"))
@@ -4799,8 +5297,27 @@ async def _handle_food_photo_analysis(
         )
         return
 
-    items = _normalize_photo_analysis_items(validated_payload["items"])
-    if not items:
+    raw_dishes = validated_payload.get("dishes") or [
+        {
+            "dish_name": validated_payload.get("dish_name"),
+            "confidence": validated_payload.get("confidence"),
+            "ingredients": validated_payload.get("items") or [],
+        }
+    ]
+    candidates = []
+    for dish in raw_dishes:
+        candidate_items = _normalize_photo_analysis_items(dish.get("ingredients") or dish.get("items"))
+        if not candidate_items:
+            continue
+        candidates.append(
+            {
+                "dish_name": normalize_dish_display_name(dish.get("dish_name"), candidate_items),
+                "confidence": dish.get("confidence"),
+                "items": candidate_items,
+            }
+        )
+
+    if not candidates:
         await message.answer(
             "⚠️ Не получилось определить продукты на фото.\n"
             "Попробуй сделать фото получше или используй другой способ."
@@ -4810,14 +5327,102 @@ async def _handle_food_photo_analysis(
     save_token = _new_meal_save_token()
     await state.set_state(MealEntryStates.confirming_photo_analysis)
     await state.update_data(
-        photo_analysis_items=items,
+        photo_analysis_candidates=candidates if len(candidates) > 1 else None,
+        photo_analysis_items=candidates[0]["items"] if len(candidates) == 1 else None,
+        photo_analysis_dish_name=candidates[0]["dish_name"] if len(candidates) == 1 else None,
         photo_analysis_raw_query=raw_query,
         photo_analysis_provider=final_provider,
         entry_date=entry_date.isoformat(),
         meal_type=meal_type,
         photo_save_token=save_token,
     )
-    await _send_photo_analysis_confirmation(message, items, save_token)
+    if len(candidates) > 1:
+        await message.answer(
+            _format_photo_dish_candidates_text(candidates),
+            reply_markup=_build_photo_dish_candidates_menu(candidates),
+            parse_mode="HTML",
+        )
+        await message.answer(
+            "⬇️ Кнопки управления",
+            reply_markup=_build_photo_analysis_cancel_menu(),
+            disable_notification=True,
+        )
+        return
+    await _send_photo_analysis_confirmation(
+        message,
+        candidates[0]["items"],
+        save_token,
+        candidates[0]["dish_name"],
+    )
+
+
+async def _activate_photo_dish_candidate(
+    message: Message,
+    state: FSMContext,
+    *,
+    items: list[dict],
+    dish_name: str,
+) -> None:
+    data = await state.get_data()
+    save_token = data.get("photo_save_token")
+    if not items or not _is_valid_meal_save_token(save_token):
+        await message.answer(STALE_MEAL_SAVE_TEXT)
+        return
+    normalized_name = normalize_dish_display_name(dish_name, items)
+    await state.update_data(
+        photo_analysis_items=[dict(item) for item in items],
+        photo_analysis_dish_name=normalized_name,
+        photo_analysis_candidates=None,
+    )
+    await _edit_or_send_photo_analysis_message(
+        message,
+        _format_photo_analysis_confirmation_text(items, dish_name=normalized_name),
+        reply_markup=_build_photo_analysis_confirm_menu(items, save_token),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("photo_dish_pick:"))
+async def photo_analysis_pick_dish(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    candidates = data.get("photo_analysis_candidates") or []
+    try:
+        index = int(callback.data.split(":", 1)[1])
+    except (TypeError, ValueError, IndexError):
+        await callback.answer("Не удалось выбрать блюдо", show_alert=True)
+        return
+    if index < 0 or index >= len(candidates):
+        await callback.answer("Блюдо не найдено", show_alert=True)
+        return
+    candidate = candidates[index]
+    await callback.answer()
+    await _activate_photo_dish_candidate(
+        callback.message,
+        state,
+        items=candidate.get("items") or [],
+        dish_name=candidate.get("dish_name") or "",
+    )
+
+
+@router.callback_query(lambda c: c.data == "photo_dish_combine")
+async def photo_analysis_combine_dishes(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    candidates = data.get("photo_analysis_candidates") or []
+    items = [dict(item) for candidate in candidates for item in candidate.get("items") or []]
+    if not items:
+        await callback.answer("Черновик анализа не найден", show_alert=True)
+        return
+    combined_name = " + ".join(
+        normalize_dish_display_name(candidate.get("dish_name"), candidate.get("items") or [])
+        for candidate in candidates
+    )
+    await callback.answer()
+    await _activate_photo_dish_candidate(
+        callback.message,
+        state,
+        items=items,
+        dish_name=combined_name,
+    )
 
 
 @router.message(MealEntryStates.waiting_for_photo, F.photo)
@@ -4987,32 +5592,15 @@ async def _save_photo_analysis_confirmation(
         parsed = parse_date(entry_date_str)
         entry_date = parsed.date() if isinstance(parsed, datetime) else date.today()
 
-    totals_for_db = _collect_photo_totals(items)
-    raw_query = data.get("photo_analysis_raw_query") or "[Анализ по фото]"
-    saved_items = []
-    for item in items:
-        saved_items.append(
-            {
-                **item,
-                "calories": _safe_float(item.get("kcal")),
-                "protein_g": _safe_float(item.get("protein")),
-                "fat_total_g": _safe_float(item.get("fat")),
-                "carbohydrates_total_g": _safe_float(item.get("carbs")),
-                "source": "photo_analysis",
-            }
-        )
-
-    save_result = MealRepository.save_meal_idempotent(
+    dish_name = normalize_dish_display_name(data.get("photo_analysis_dish_name"), items)
+    save_result = DishService.save_photo_dish_entry(
         save_token=save_token,
         user_id=user_id,
-        raw_query=raw_query,
-        calories=totals_for_db["calories"],
-        protein=totals_for_db["protein"],
-        fat=totals_for_db["fat"],
-        carbs=totals_for_db["carbs"],
+        dish_name=dish_name,
+        items=items,
         entry_date=entry_date,
-        products_json=json.dumps(saved_items),
         meal_type=meal_type,
+        provider=data.get("photo_analysis_provider"),
     )
     if save_result.status is MealSaveStatus.FAILED or save_result.meal is None:
         await message.answer(
@@ -5030,6 +5618,8 @@ async def _save_photo_analysis_confirmation(
         photo_analysis_items=None,
         photo_analysis_raw_query=None,
         photo_analysis_provider=None,
+        photo_analysis_dish_name=None,
+        photo_analysis_candidates=None,
         photo_analysis_editing_idx=None,
         photo_total_weight_draft_items=None,
         photo_total_weight_original_items=None,
@@ -5053,7 +5643,7 @@ async def _save_photo_analysis_confirmation(
 
 @router.callback_query(lambda c: c.data.startswith("edit_photo_food_item:") or c.data.startswith("photo_edit:"))
 async def photo_analysis_edit_product(callback: CallbackQuery, state: FSMContext):
-    """Открывает редактирование веса конкретного продукта из анализа фото."""
+    """Открывает общий редактор ингредиента из анализа фото."""
     data = await state.get_data()
     items = data.get("photo_analysis_items") or []
     try:
@@ -5065,13 +5655,77 @@ async def photo_analysis_edit_product(callback: CallbackQuery, state: FSMContext
         await callback.answer("Продукт не найден", show_alert=True)
         return
 
-    await state.update_data(photo_analysis_editing_idx=product_idx)
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    await state.update_data(
+        photo_analysis_editing_idx=product_idx,
+        photo_draft_edit_mode=True,
+        saved_products=[dict(item) for item in items],
+        editing_product_idx=product_idx,
+        weight_drafts={},
+        kbju_drafts={},
+    )
     await callback.message.edit_text(
-        _format_photo_weight_editor_text(items[product_idx]),
-        reply_markup=_build_photo_weight_editor_menu(product_idx),
+        _render_product_actions_text(items[product_idx]),
+        reply_markup=_build_product_actions_keyboard(product_idx),
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == "photo_dish_name")
+async def photo_analysis_dish_name_start(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data.get("photo_analysis_items"):
+        await callback.answer("Черновик анализа не найден", show_alert=True)
+        return
+    await callback.answer()
+    await state.set_state(MealEntryStates.editing_photo_dish_name_input)
+    await callback.message.answer(
+        "Введи короткое название блюда (до 80 символов):",
+        reply_markup=_build_photo_analysis_cancel_menu(),
+    )
+
+
+@router.message(MealEntryStates.editing_photo_dish_name_input)
+async def photo_analysis_dish_name_apply(message: Message, state: FSMContext):
+    value = (message.text or "").strip()
+    if value == "❌ Отмена":
+        data = await state.get_data()
+        items = data.get("photo_analysis_items") or []
+        save_token = data.get("photo_save_token")
+        await state.set_state(MealEntryStates.confirming_photo_analysis)
+        if items and _is_valid_meal_save_token(save_token):
+            await message.answer(
+                _format_photo_analysis_confirmation_text(
+                    items,
+                    dish_name=data.get("photo_analysis_dish_name"),
+                ),
+                reply_markup=_build_photo_analysis_confirm_menu(items, save_token),
+                parse_mode="HTML",
+            )
+        else:
+            await message.answer(STALE_MEAL_SAVE_TEXT)
+        return
+    if not value or not any(character.isalpha() for character in value):
+        await message.answer("Название должно содержать буквы. Попробуй ещё раз.")
+        return
+    if len(value) > 80:
+        await message.answer("Название слишком длинное. Введи до 80 символов.")
+        return
+    data = await state.get_data()
+    items = data.get("photo_analysis_items") or []
+    save_token = data.get("photo_save_token")
+    if not items or not _is_valid_meal_save_token(save_token):
+        await state.set_state(MealEntryStates.confirming_photo_analysis)
+        await message.answer(STALE_MEAL_SAVE_TEXT)
+        return
+    await state.set_state(MealEntryStates.confirming_photo_analysis)
+    await state.update_data(photo_analysis_dish_name=value)
+    await message.answer(
+        _format_photo_analysis_confirmation_text(items, dish_name=value),
+        reply_markup=_build_photo_analysis_confirm_menu(items, save_token),
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("photo_wchg:"))
@@ -5156,7 +5810,10 @@ async def photo_analysis_delete_product(callback: CallbackQuery, state: FSMConte
 
     await _edit_or_send_photo_analysis_message(
         callback.message,
-        _format_photo_analysis_confirmation_text(updated_items),
+        _format_photo_analysis_confirmation_text(
+            updated_items,
+            dish_name=data.get("photo_analysis_dish_name"),
+        ),
         reply_markup=_build_photo_analysis_confirm_menu(
             updated_items,
             data.get("photo_save_token"),
@@ -5176,7 +5833,10 @@ async def photo_analysis_weight_done(callback: CallbackQuery, state: FSMContext)
     await state.update_data(photo_analysis_editing_idx=None)
     await _edit_or_send_photo_analysis_message(
         callback.message,
-        _format_photo_analysis_confirmation_text(items),
+        _format_photo_analysis_confirmation_text(
+            items,
+            dish_name=data.get("photo_analysis_dish_name"),
+        ),
         reply_markup=_build_photo_analysis_confirm_menu(
             items,
             data.get("photo_save_token"),
@@ -5301,7 +5961,10 @@ async def photo_analysis_total_weight_save(callback: CallbackQuery, state: FSMCo
         photo_total_weight_original_items=None,
     )
     await callback.message.edit_text(
-        _format_photo_analysis_confirmation_text(draft_items),
+        _format_photo_analysis_confirmation_text(
+            draft_items,
+            dish_name=data.get("photo_analysis_dish_name"),
+        ),
         reply_markup=_build_photo_analysis_confirm_menu(
             draft_items,
             data.get("photo_save_token"),
@@ -5324,7 +5987,10 @@ async def photo_analysis_total_weight_back(callback: CallbackQuery, state: FSMCo
         photo_total_weight_original_items=None,
     )
     await callback.message.edit_text(
-        _format_photo_analysis_confirmation_text(items),
+        _format_photo_analysis_confirmation_text(
+            items,
+            dish_name=data.get("photo_analysis_dish_name"),
+        ),
         reply_markup=_build_photo_analysis_confirm_menu(
             items,
             data.get("photo_save_token"),
@@ -6837,6 +7503,28 @@ async def meal_weight_done(callback: CallbackQuery, state: FSMContext):
         await _send_ai_meal_preview(callback.message, state)
         return
 
+    if data.get("photo_draft_edit_mode"):
+        items = data.get("saved_products") or []
+        dish_name = normalize_dish_display_name(data.get("photo_analysis_dish_name"), items)
+        save_token = data.get("photo_save_token")
+        await state.set_state(MealEntryStates.confirming_photo_analysis)
+        await state.update_data(
+            photo_analysis_items=items,
+            photo_analysis_dish_name=dish_name,
+            photo_draft_edit_mode=False,
+            saved_products=None,
+            meal_id=None,
+            weight_drafts={},
+            kbju_drafts={},
+        )
+        await _edit_or_send_photo_analysis_message(
+            callback.message,
+            _format_photo_analysis_confirmation_text(items, dish_name=dish_name),
+            reply_markup=_build_photo_analysis_confirm_menu(items, save_token),
+            parse_mode="HTML",
+        )
+        return
+
     await state.clear()
     await callback.message.answer("✅ Изменения выполнены")
 
@@ -6891,6 +7579,12 @@ async def meal_weight_back_to_products(callback: CallbackQuery, state: FSMContex
     if data.get("ai_text_draft_mode"):
         await callback.message.edit_text(
             "<b>✏️ Выбери продукт для редактирования:</b>",
+            reply_markup=_build_weight_products_keyboard(saved_products),
+        )
+        return
+    if data.get("photo_draft_edit_mode"):
+        await callback.message.edit_text(
+            "<b>✏️ Выбери ингредиент для редактирования:</b>",
             reply_markup=_build_weight_products_keyboard(saved_products),
         )
         return
@@ -7020,14 +7714,18 @@ async def meal_product_name_input_value(message: Message, state: FSMContext):
     if "name_ru" in product:
         product["name_ru"] = new_name
 
-    if data.get("ai_text_draft_mode"):
+    if data.get("ai_text_draft_mode") or data.get("photo_draft_edit_mode"):
         pending = data.get("ai_pending_meal") or {}
         await state.set_state(MealEntryStates.editing_meal_weight)
-        await state.update_data(
+        payload = dict(
             saved_products=saved_products,
-            ai_pending_meal={**pending, "items": saved_products},
             editing_product_idx=product_idx,
         )
+        if data.get("ai_text_draft_mode"):
+            payload["ai_pending_meal"] = {**pending, "items": saved_products}
+        else:
+            payload["photo_analysis_items"] = saved_products
+        await state.update_data(**payload)
         await message.answer("✅ Название продукта обновлено")
         await message.answer(
             _render_product_actions_text(product),
@@ -7555,15 +8253,19 @@ async def _save_kbju_changes_for_product(
         await callback.answer("Не удалось обновить КБЖУ", show_alert=True)
         return False
 
-    if data.get("ai_text_draft_mode"):
+    if data.get("ai_text_draft_mode") or data.get("photo_draft_edit_mode"):
         kbju_drafts.pop(str(product_idx), None)
         pending = data.get("ai_pending_meal") or {}
         await state.set_state(MealEntryStates.edit_kbju_menu)
-        await state.update_data(
+        payload = dict(
             saved_products=saved_products,
             kbju_drafts=kbju_drafts,
-            ai_pending_meal={**pending, "items": saved_products},
         )
+        if data.get("ai_text_draft_mode"):
+            payload["ai_pending_meal"] = {**pending, "items": saved_products}
+        else:
+            payload["photo_analysis_items"] = saved_products
+        await state.update_data(**payload)
         await callback.message.edit_text(
             _render_kbju_editor_text(product),
             reply_markup=_build_kbju_editor_keyboard(product_idx),
@@ -7659,14 +8361,18 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Не удалось пересчитать КБЖУ", show_alert=True)
         return
 
-    if data.get("ai_text_draft_mode"):
+    if data.get("ai_text_draft_mode") or data.get("photo_draft_edit_mode"):
         drafts.pop(str(product_idx), None)
         pending = data.get("ai_pending_meal") or {}
-        await state.update_data(
+        payload = dict(
             saved_products=saved_products,
             weight_drafts=drafts,
-            ai_pending_meal={**pending, "items": saved_products},
         )
+        if data.get("ai_text_draft_mode"):
+            payload["ai_pending_meal"] = {**pending, "items": saved_products}
+        else:
+            payload["photo_analysis_items"] = saved_products
+        await state.update_data(**payload)
         await callback.answer("✅ Вес обновлён в черновике")
         await callback.message.edit_text(
             "<b>✏️ Выбери продукт для редактирования:</b>",
@@ -7769,6 +8475,9 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
     if product_idx < 0 or product_idx >= len(saved_products):
         await callback.answer("Не удалось удалить продукт", show_alert=True)
         return
+    if data.get("photo_draft_edit_mode") and len(saved_products) == 1:
+        await callback.answer("В блюде должен остаться хотя бы один ингредиент", show_alert=True)
+        return
     source_meal_id = int(saved_products[product_idx].get("_source_meal_id") or meal_id or 0)
 
     saved_products.pop(product_idx)
@@ -7778,16 +8487,25 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
         if int(idx) != product_idx
     }
 
-    if data.get("ai_text_draft_mode"):
+    if data.get("ai_text_draft_mode") or data.get("photo_draft_edit_mode"):
         pending = data.get("ai_pending_meal") or {}
-        await state.update_data(
+        payload = dict(
             saved_products=saved_products,
             weight_drafts=drafts,
-            ai_pending_meal={**pending, "items": saved_products},
         )
+        if data.get("ai_text_draft_mode"):
+            payload["ai_pending_meal"] = {**pending, "items": saved_products}
+        else:
+            payload["photo_analysis_items"] = saved_products
+        await state.update_data(**payload)
         if not saved_products:
-            await state.clear()
-            await callback.message.answer("Черновик пуст. Отменил добавление.", reply_markup=kbju_menu)
+            if data.get("photo_draft_edit_mode"):
+                await callback.message.edit_text(
+                    "В блюде должен остаться хотя бы один ингредиент. Анализ не сохранён."
+                )
+            else:
+                await state.clear()
+                await callback.message.answer("Черновик пуст. Отменил добавление.", reply_markup=kbju_menu)
         else:
             await callback.message.edit_text(
                 "<b>✏️ Выбери продукт для редактирования:</b>",

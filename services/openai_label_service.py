@@ -61,26 +61,28 @@ OPENAI_FOOD_PHOTO_PROMPT = (
 Верни строго валидный JSON без пояснений:
 
 {
-  "dish_name": null,
-  "estimated_weight_g": null,
-  "calories": null,
-  "protein": null,
-  "fat": null,
-  "carbs": null,
-  "items": [
+  "dishes": [
     {
-      "name": null,
-      "estimated_weight_g": null,
-      "calories": null,
-      "protein": null,
-      "fat": null,
-      "carbs": null
+      "dish_name": "Короткое название блюда",
+      "confidence": "medium",
+      "ingredients": [
+        {
+          "name": "Ингредиент",
+          "estimated_weight_g": 100,
+          "calories": 100,
+          "protein": 10,
+          "fat": 5,
+          "carbs": 12
+        }
+      ]
     }
-  ],
-  "confidence": "low"
+  ]
 }
 
 Правила:
+- dish_name — короткое человекочитаемое название до 80 символов;
+- если на фото несколько визуально отдельных блюд, верни их отдельными элементами dishes;
+- компоненты одной порции группируй как одно блюдо;
 - не придумывай точные данные;
 - если фото неоднозначное, ставь confidence = "low";
 - если блюдо видно хорошо, confidence = "medium" или "high";
@@ -88,7 +90,7 @@ OPENAI_FOOD_PHOTO_PROMPT = (
 - если точный вес неизвестен, оцени примерную порцию по фото;
 - все значения КБЖУ должны быть примерной оценкой за estimated_weight_g, не на 100 г;
 - значения должны быть числами, не строками;
-- если числовые поля элемента невозможно оценить, не включай такой элемент в items; не возвращай null в items.
+- если числовые поля элемента невозможно оценить, не включай такой элемент в ingredients; не возвращай null в ingredients.
 """.strip()
     + "\n\n"
     + PHOTO_COMMENT_SECURITY_INSTRUCTIONS
@@ -470,7 +472,7 @@ class OpenAILabelService:
         return {
             **normalized,
             "source": "openai",
-            "confidence": payload.get("confidence"),
+            "confidence": normalized.get("confidence") or payload.get("confidence"),
         }
 
 

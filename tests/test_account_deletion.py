@@ -11,6 +11,8 @@ from database.models import (
     ActivityAnalysisEntry,
     Base,
     CustomWorkoutExercise,
+    Dish,
+    DishIngredient,
     ErrorLog,
     EveningAnalysisNotificationState,
     GeminiAccount,
@@ -82,6 +84,23 @@ class AccountDeletionTests(unittest.TestCase):
                 last_weight_g=100,
             )
         )
+        dish = Dish(
+            user_id=user_id,
+            name=f"Блюдо {user_id}",
+            normalized_name=f"блюдо {user_id}",
+        )
+        dish.ingredients.append(
+            DishIngredient(
+                position=0,
+                name_snapshot="Ингредиент",
+                weight_g=100,
+                calories_per_100g=100,
+                protein_per_100g=10,
+                fat_per_100g=5,
+                carbs_per_100g=7,
+            )
+        )
+        session.add(dish)
 
         meal = Meal(user_id=user_id, description="Тестовый приём пищи")
         session.add(meal)

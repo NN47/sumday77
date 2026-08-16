@@ -195,19 +195,20 @@ def test_safe_photo_comment_creates_structured_preview_and_saves_without_raw_com
     state.data["food_photo_comment"] = comment
     state.data["photo_analysis_comment"] = comment
     with patch(
-        "handlers.meals.MealRepository.save_meal_idempotent",
-        return_value=meals.MealSaveResult(
-            meals.MealSaveStatus.SAVED,
-            SimpleNamespace(id=777),
+        "handlers.meals.DishService.save_photo_dish_entry",
+        return_value=SimpleNamespace(
+            status=meals.MealSaveStatus.SAVED,
+            meal=SimpleNamespace(id=777),
         ),
-    ) as save_meal, patch(
+    ) as save_dish, patch(
         "handlers.meals._keep_meal_entry_open_after_save",
         new_callable=AsyncMock,
     ):
         asyncio.run(meals._save_photo_analysis_confirmation(message, state, "12345", dict(state.data)))
 
-    kwargs = save_meal.call_args.kwargs
-    assert kwargs["raw_query"] == "[Анализ по фото]"
+    kwargs = save_dish.call_args.kwargs
+    assert kwargs["dish_name"]
+    assert [item["name"] for item in kwargs["items"]] == ["Куриная грудка", "Рис"]
     assert comment not in json.dumps(kwargs, ensure_ascii=False, default=str)
     assert "food_photo_comment" not in state.data
     assert "photo_analysis_comment" not in state.data

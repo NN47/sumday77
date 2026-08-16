@@ -170,6 +170,18 @@ def init_db():
             )
             raise
 
+        # Reusable dishes and their normalized ingredient snapshots.
+        # Tables are additive: existing meal history remains untouched.
+        try:
+            Base.metadata.tables["dishes"].create(bind=engine, checkfirst=True)
+            Base.metadata.tables["dish_ingredients"].create(bind=engine, checkfirst=True)
+        except Exception as e:
+            logger.error(
+                "Ошибка при создании таблиц блюд error_type=%s",
+                safe_exception_summary(e),
+            )
+            raise
+
         # error_logs new schema fields
         try:
             error_columns = {col["name"] for col in inspector.get_columns("error_logs")}
@@ -206,7 +218,7 @@ def init_db():
         except Exception as e:
             logger.warning("Ошибка при проверке kbju_settings.gender error_type=%s", safe_exception_summary(e))
 
-        # meals.meal_type / meals.is_manually_corrected / meals.save_token
+        # meals meal metadata, idempotency and optional dish snapshot linkage
         try:
             meal_columns = {col["name"] for col in inspector.get_columns("meals")}
             if "meal_type" not in meal_columns:
@@ -232,12 +244,63 @@ def init_db():
                 conn.commit()
                 logger.info("Добавлен столбец meals.save_token")
 
+            if "entry_kind" not in meal_columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE meals ADD COLUMN entry_kind "
+                        "VARCHAR DEFAULT 'products' NOT NULL"
+                    )
+                )
+                conn.commit()
+                logger.info("Добавлен столбец meals.entry_kind")
+            else:
+                conn.execute(
+                    text(
+                        "UPDATE meals SET entry_kind = 'products' "
+                        "WHERE entry_kind IS NULL OR entry_kind = ''"
+                    )
+                )
+                conn.commit()
+
+            if "dish_id" not in meal_columns:
+                conn.execute(text("ALTER TABLE meals ADD COLUMN dish_id INTEGER"))
+                conn.commit()
+                logger.info("Добавлен столбец meals.dish_id")
+
+            if "dish_name_snapshot" not in meal_columns:
+                conn.execute(text("ALTER TABLE meals ADD COLUMN dish_name_snapshot VARCHAR(80)"))
+                conn.commit()
+                logger.info("Добавлен столбец meals.dish_name_snapshot")
+
+            if "entry_source" not in meal_columns:
+                conn.execute(text("ALTER TABLE meals ADD COLUMN entry_source VARCHAR"))
+                conn.commit()
+                logger.info("Добавлен столбец meals.entry_source")
+
+            if conn.dialect.name == "postgresql":
+                dish_foreign_key_exists = any(
+                    "dish_id" in (foreign_key.get("constrained_columns") or [])
+                    for foreign_key in inspect(conn).get_foreign_keys("meals")
+                )
+                if not dish_foreign_key_exists:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE meals ADD CONSTRAINT fk_meals_dish_id "
+                            "FOREIGN KEY (dish_id) REFERENCES dishes(id) ON DELETE SET NULL"
+                        )
+                    )
+                    conn.commit()
+                    logger.info("Добавлен внешний ключ meals.dish_id -> dishes.id")
+
             conn.execute(
                 text(
                     "CREATE UNIQUE INDEX IF NOT EXISTS uq_meals_save_token "
                     "ON meals (save_token)"
                 )
             )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meals_entry_kind ON meals (entry_kind)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meals_dish_id ON meals (dish_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meals_entry_source ON meals (entry_source)"))
             conn.commit()
         except Exception as e:
             logger.error("Ошибка при проверке meals fields error_type=%s", safe_exception_summary(e))

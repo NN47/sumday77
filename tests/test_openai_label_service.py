@@ -104,15 +104,23 @@ def test_openai_food_photo_normalization_matches_gemini_photo_shape() -> None:
 
     normalized = OpenAILabelService._normalize_food_photo_payload(payload)
 
-    assert normalized == {
-        "items": [
-            {"name": "омлет", "grams": 200.0, "kcal": 260.0, "protein": 18.0, "fat": 20.0, "carbs": 3.0},
-            {"name": "овощи", "grams": 60.0, "kcal": 50.0, "protein": 2.0, "fat": 2.0, "carbs": 5.0},
-        ],
-        "total": {"kcal": 310.0, "protein": 20.0, "fat": 22.0, "carbs": 8.0},
-        "source": "openai",
-        "confidence": "medium",
-    }
+    expected_items = [
+        {"name": "омлет", "grams": 200.0, "kcal": 260.0, "protein": 18.0, "fat": 20.0, "carbs": 3.0},
+        {"name": "овощи", "grams": 60.0, "kcal": 50.0, "protein": 2.0, "fat": 2.0, "carbs": 5.0},
+    ]
+    assert normalized["dish_name"] == "Омлет с овощами"
+    assert normalized["items"] == expected_items
+    assert normalized["total"] == {"kcal": 310.0, "protein": 20.0, "fat": 22.0, "carbs": 8.0}
+    assert normalized["source"] == "openai"
+    assert normalized["confidence"] == "medium"
+    assert normalized["dishes"] == [
+        {
+            "dish_name": "Омлет с овощами",
+            "confidence": "medium",
+            "items": expected_items,
+            "total": normalized["total"],
+        }
+    ]
 
 
 def test_openai_food_photo_normalization_sums_items_when_total_missing() -> None:

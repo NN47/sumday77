@@ -11,6 +11,8 @@ from database.models import (
     AIUsageLog,
     ActivityAnalysisEntry,
     CustomWorkoutExercise,
+    Dish,
+    DishIngredient,
     ErrorLog,
     EveningAnalysisNotificationState,
     KbjuSettings,
@@ -48,6 +50,8 @@ DELETE_ORDER = (
     Weight,
     Measurement,
     Meal,
+    DishIngredient,
+    Dish,
     SavedProduct,
     KbjuSettings,
     Supplement,
@@ -65,8 +69,10 @@ DELETE_ORDER = (
     User,
 )
 
-# Один и тот же централизованный перечень используется для удаления и проверки.
-USER_LINKED_MODELS = DELETE_ORDER
+# Модели с прямым ``user_id`` используются также общим completeness-тестом.
+# ``DishIngredient`` принадлежит пользователю через Dish и удаляется отдельным
+# фильтром ниже.
+USER_LINKED_MODELS = tuple(model for model in DELETE_ORDER if model is not DishIngredient)
 
 
 class AccountDeletionVerificationError(RuntimeError):
@@ -90,6 +96,7 @@ def delete_user_account_data(session: Session, user_id: str) -> dict[str, int]:
     """Удаляет данные пользователя в текущей транзакции без её фиксации."""
     normalized_user_id = str(user_id)
     meal_ids = _owned_ids(session, Meal, normalized_user_id)
+    dish_ids = _owned_ids(session, Dish, normalized_user_id)
     supplement_ids = _owned_ids(session, Supplement, normalized_user_id)
 
     filters = {
@@ -100,6 +107,11 @@ def delete_user_account_data(session: Session, user_id: str) -> dict[str, int]:
         MealCompletionComment.user_id == normalized_user_id,
         MealCompletionComment.meal_id,
         meal_ids,
+    )
+    filters[DishIngredient] = (
+        DishIngredient.dish_id.in_(dish_ids)
+        if dish_ids
+        else DishIngredient.id.in_([])
     )
     filters[SupplementEntry] = _linked_filter(
         SupplementEntry.user_id == normalized_user_id,
@@ -124,7 +136,7 @@ def delete_user_account_data(session: Session, user_id: str) -> dict[str, int]:
 
     remaining_tables = [
         model.__tablename__
-        for model in USER_LINKED_MODELS
+        for model in DELETE_ORDER
         if session.query(model.id).filter(filters[model]).first() is not None
     ]
     if remaining_tables:

@@ -243,16 +243,25 @@ def _collect_product_names(items: list[Meal]) -> list[str]:
     names: list[str] = []
     seen: set[str] = set()
     for meal in items:
-        products = _extract_products(meal)
-        meal_names = (
-            [extract_product_name(product) for product in products]
-            if products
-            else [
+        if getattr(meal, "entry_kind", "products") == "dish":
+            meal_names = [
                 _safe_product_name(
-                    getattr(meal, "description", None) or getattr(meal, "raw_query", None)
+                    getattr(meal, "dish_name_snapshot", None)
+                    or getattr(meal, "description", None)
+                    or getattr(meal, "raw_query", None)
                 )
             ]
-        )
+        else:
+            products = _extract_products(meal)
+            meal_names = (
+                [extract_product_name(product) for product in products]
+                if products
+                else [
+                    _safe_product_name(
+                        getattr(meal, "description", None) or getattr(meal, "raw_query", None)
+                    )
+                ]
+            )
         for name in meal_names:
             clean_name = " ".join(name.split())
             dedupe_key = clean_name.casefold()
@@ -263,12 +272,20 @@ def _collect_product_names(items: list[Meal]) -> list[str]:
     return names
 
 
-def _format_compact_product_names(names: list[str]) -> str:
+def _format_compact_product_names(
+    names: list[str],
+    *,
+    literal_names: set[str] | None = None,
+) -> str:
     """Форматирует ограниченный, но понятный список названий для сводки."""
     if not names:
         return "Продукт"
 
-    short_names = [format_diary_product_name(name) for name in names]
+    literal_names = {name.casefold() for name in (literal_names or set())}
+    short_names = [
+        name if name.casefold() in literal_names else format_diary_product_name(name)
+        for name in names
+    ]
     positions_by_name: dict[str, list[int]] = defaultdict(list)
     for index, short_name in enumerate(short_names):
         positions_by_name[short_name.casefold()].append(index)
@@ -486,7 +503,22 @@ def format_meal_details(meal_type: str, items: list[Meal]) -> str:
 def format_meal_block(meal_type: str, items: list[Meal]) -> list[str]:
     meal_ui = MEAL_UI.get(meal_type, MEAL_UI["snack"])
     totals = _collect_meal_totals(items)
-    product_names = _format_compact_product_names(_collect_product_names(items))
+    dish_titles = {
+        " ".join(
+            str(
+                getattr(meal, "dish_name_snapshot", None)
+                or getattr(meal, "description", None)
+                or getattr(meal, "raw_query", None)
+                or "Блюдо"
+            ).split()
+        )
+        for meal in items
+        if getattr(meal, "entry_kind", "products") == "dish"
+    }
+    product_names = _format_compact_product_names(
+        _collect_product_names(items),
+        literal_names=dish_titles,
+    )
     return [
         f"{meal_ui['emoji']} <b>{meal_ui['title']} — {totals['calories']:.0f} ккал</b>",
         product_names,
