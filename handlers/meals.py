@@ -39,6 +39,7 @@ from database.repositories import (
     MealRepository,
     MealSaveResult,
     MealSaveStatus,
+    SavedProductRepository,
     WorkoutRepository,
 )
 from services.gemini_service import (
@@ -847,6 +848,10 @@ class MyProductItem:
     protein: float
     fat: float
     carbs: float
+    unit_weight_g: float | None = None
+    unit_name: str | None = None
+    package_weight_g: float | None = None
+    package_units: int | None = None
 
 
 def _truncate_my_product_name(name: str, limit: int = 22) -> str:
@@ -899,6 +904,23 @@ def _my_product_value(product: dict, *keys: str) -> float:
     return 0.0
 
 
+def _optional_positive_float(value) -> float | None:
+    numeric = _safe_float(value, default=0.0)
+    return numeric if numeric > 0 else None
+
+
+def _optional_positive_int(value) -> int | None:
+    numeric = _optional_positive_float(value)
+    if numeric is None or not numeric.is_integer():
+        return None
+    return int(numeric)
+
+
+def _optional_unit_name(value) -> str | None:
+    clean = str(value or "").strip()
+    return clean or None
+
+
 def _extract_my_product_amount_g(product: dict) -> int:
     grams_value = _safe_float(product.get("grams"), default=0.0)
     if grams_value <= 0:
@@ -916,6 +938,10 @@ def _build_my_product_item_from_product(meal, product: dict, product_index: int)
         protein=_my_product_value(product, "protein", "protein_g"),
         fat=_my_product_value(product, "fat", "fat_total_g"),
         carbs=_my_product_value(product, "carbs", "carbohydrates_total_g"),
+        unit_weight_g=_optional_positive_float(product.get("unit_weight_g")),
+        unit_name=_optional_unit_name(product.get("unit_name")),
+        package_weight_g=_optional_positive_float(product.get("package_weight_g")),
+        package_units=_optional_positive_int(product.get("package_units")),
     )
 
 
@@ -2561,6 +2587,11 @@ async def _show_my_products_search_results(
         await message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
 
 
+def _format_product_weight_g(value: float | int) -> str:
+    numeric = float(value)
+    return f"{numeric:.0f}" if numeric.is_integer() else f"{numeric:.2f}".rstrip("0").rstrip(".")
+
+
 def _render_my_product_confirm_text(meal_type: str, meal, amount_g: int = 100) -> str:
     meal_ui = display_meal_type_with_bold_name(meal_type)
     if isinstance(meal, MyProductItem):
@@ -2569,34 +2600,136 @@ def _render_my_product_confirm_text(meal_type: str, meal, amount_g: int = 100) -
         protein = meal.protein
         fat = meal.fat
         carbs = meal.carbs
+        unit_weight_g = meal.unit_weight_g
+        unit_name = meal.unit_name
+        package_weight_g = meal.package_weight_g
+        package_units = meal.package_units
     else:
         title = _normalize_my_product_title(meal)
         calories = float(meal.calories or 0)
         protein = float(meal.protein or 0)
         fat = float(meal.fat or 0)
         carbs = float(meal.carbs or 0)
+        unit_weight_g = None
+        unit_name = None
+        package_weight_g = None
+        package_units = None
     safe_title = html.escape(title or "Продукт")
-    return (
+    lines = [
         f"{meal_ui} • <b>Добавить продукт?</b>\n\n"
-        f"<b>Продукт:</b> {safe_title}\n\n"
-        f"⚖️ <b>Вес:</b> {amount_g} г\n"
-        f"🔥 <b>Калории:</b> {calories:.0f} ккал\n"
-        f"🥩 <b>Белки:</b> {protein:.1f} г\n"
-        f"🥑 <b>Жиры:</b> {fat:.1f} г\n"
-        f"🍚 <b>Углеводы:</b> {carbs:.1f} г\n\n"
-        f"<b>Выбери действие:</b>"
+        f"<b>Продукт:</b> {safe_title}",
+        "",
+        f"⚖️ <b>Последняя порция:</b> {_format_product_weight_g(amount_g)} г",
+    ]
+    if unit_weight_g is not None:
+        safe_unit_name = html.escape(unit_name or "шт.")
+        lines.append(
+            f"1️⃣ <b>1 {safe_unit_name}:</b> {_format_product_weight_g(unit_weight_g)} г"
+        )
+    if package_weight_g is not None or package_units is not None:
+        package_parts = []
+        if package_weight_g is not None:
+            package_parts.append(f"{_format_product_weight_g(package_weight_g)} г")
+        if package_units is not None:
+            package_parts.append(f"{package_units} шт.")
+        lines.append(f"📦 <b>Упаковка:</b> {' • '.join(package_parts)}")
+    lines.extend(
+        [
+            "",
+            f"🔥 <b>Калории:</b> {calories:.0f} ккал",
+            f"🥩 <b>Белки:</b> {protein:.1f} г",
+            f"🥑 <b>Жиры:</b> {fat:.1f} г",
+            f"🍚 <b>Углеводы:</b> {carbs:.1f} г",
+            "",
+            "<b>Выбери действие:</b>",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _enrich_my_product_from_reference(item: MyProductItem, user_id: str | None) -> MyProductItem:
+    """Дополняет JSON старой/новой записи постоянными данными saved_products."""
+    if not user_id:
+        return item
+    try:
+        saved = SavedProductRepository.get_by_name(str(user_id), item.title)
+    except Exception as exc:
+        logger.warning(
+            "Не удалось прочитать saved_products error_type=%s",
+            safe_exception_summary(exc),
+        )
+        return item
+    if saved is None:
+        return item
+
+    amount_g = item.amount_g
+    calories = item.calories
+    protein = item.protein
+    fat = item.fat
+    carbs = item.carbs
+    if saved.last_weight_g and round(float(saved.last_weight_g), 6) != round(float(item.amount_g), 6):
+        ratio = float(saved.last_weight_g) / float(item.amount_g or 100)
+        amount_g = max(1, int(round(float(saved.last_weight_g))))
+        calories *= ratio
+        protein *= ratio
+        fat *= ratio
+        carbs *= ratio
+
+    return MyProductItem(
+        source_meal_id=item.source_meal_id,
+        product_index=item.product_index,
+        title=item.title,
+        amount_g=amount_g,
+        calories=calories,
+        protein=protein,
+        fat=fat,
+        carbs=carbs,
+        unit_weight_g=saved.unit_weight_g or item.unit_weight_g,
+        unit_name=saved.unit_name or item.unit_name,
+        package_weight_g=saved.package_weight_g or item.package_weight_g,
+        package_units=saved.package_units or item.package_units,
     )
 
 
-def _get_my_product_from_source_meal(meal, product_index: int | None) -> MyProductItem:
+def _sync_saved_product_reference(
+    user_id: str,
+    item: MyProductItem,
+    *,
+    last_weight_g: float,
+) -> None:
+    """Синхронизирует справочник, не влияя на уже сохранённый приём пищи."""
+    try:
+        SavedProductRepository.upsert(
+            user_id=str(user_id),
+            name=item.title,
+            last_weight_g=last_weight_g,
+            unit_weight_g=item.unit_weight_g,
+            unit_name=item.unit_name,
+            package_weight_g=item.package_weight_g,
+            package_units=item.package_units,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Приём пищи сохранён, но saved_products не обновлён error_type=%s",
+            safe_exception_summary(exc),
+        )
+
+
+def _get_my_product_from_source_meal(
+    meal,
+    product_index: int | None,
+    *,
+    user_id: str | None = None,
+) -> MyProductItem:
     if product_index is not None:
         products = _parse_my_products(meal)
         if 0 <= product_index < len(products):
-            return _build_my_product_item_from_product(meal, products[product_index], product_index)
-    return _build_my_product_item_from_meal(meal)
+            item = _build_my_product_item_from_product(meal, products[product_index], product_index)
+            return _enrich_my_product_from_reference(item, user_id)
+    return _enrich_my_product_from_reference(_build_my_product_item_from_meal(meal), user_id)
 
 
-def _single_product_json_for_my_product(meal, item: MyProductItem, ratio: float = 1.0, amount_g: int | None = None) -> str | None:
+def _single_product_json_for_my_product(meal, item: MyProductItem, ratio: float = 1.0, amount_g: float | None = None) -> str | None:
     if item.product_index is None:
         return meal.products_json
     products = _parse_my_products(meal)
@@ -2604,18 +2737,28 @@ def _single_product_json_for_my_product(meal, item: MyProductItem, ratio: float 
         product = dict(products[item.product_index])
         if amount_g is not None:
             product["grams"] = amount_g
-        for key in ("kcal", "calories"):
+        reference_fields = {
+            "unit_weight_g": item.unit_weight_g,
+            "unit_name": item.unit_name,
+            "package_weight_g": item.package_weight_g,
+            "package_units": item.package_units,
+        }
+        for key, value in reference_fields.items():
+            if value is not None:
+                product[key] = value
+        scaled_values = {
+            "kcal": float(item.calories) * ratio,
+            "calories": float(item.calories) * ratio,
+            "protein": float(item.protein) * ratio,
+            "protein_g": float(item.protein) * ratio,
+            "fat": float(item.fat) * ratio,
+            "fat_total_g": float(item.fat) * ratio,
+            "carbs": float(item.carbs) * ratio,
+            "carbohydrates_total_g": float(item.carbs) * ratio,
+        }
+        for key, value in scaled_values.items():
             if key in product:
-                product[key] = _safe_float(product.get(key)) * ratio
-        for key in ("protein", "protein_g"):
-            if key in product:
-                product[key] = _safe_float(product.get(key)) * ratio
-        for key in ("fat", "fat_total_g"):
-            if key in product:
-                product[key] = _safe_float(product.get(key)) * ratio
-        for key in ("carbs", "carbohydrates_total_g"):
-            if key in product:
-                product[key] = _safe_float(product.get(key)) * ratio
+                product[key] = value
         return json.dumps([product], ensure_ascii=False)
     return None
 
@@ -2657,6 +2800,7 @@ def _build_my_product_confirm_keyboard(
     *,
     save_token: str,
     include_delete: bool = False,
+    item: MyProductItem | None = None,
 ) -> InlineKeyboardMarkup:
     product_idx = "" if product_index is None else str(product_index)
     callback_token = save_token[:MEAL_SAVE_CALLBACK_TOKEN_LENGTH]
@@ -2670,8 +2814,23 @@ def _build_my_product_confirm_keyboard(
                 ),
             )
         ],
-        [InlineKeyboardButton(text="✏️ Изменить вес", callback_data=f"my_product_edit_weight:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
     ]
+    if item is not None and item.unit_weight_g is not None:
+        unit_label = _truncate_my_product_name(item.unit_name or "шт.", limit=20)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"1️⃣ Добавить 1 {unit_label}",
+                    callback_data=(
+                        f"mpu:{meal_type}:{page}:{source_meal_id}:"
+                        f"{product_idx}:{callback_token}"
+                    ),
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text="✏️ Изменить вес", callback_data=f"my_product_edit_weight:{meal_type}:{page}:{source_meal_id}:{product_idx}")]
+    )
     if include_delete:
         rows.append(
             [
@@ -2767,6 +2926,10 @@ def _build_adjusted_my_product_item(item: MyProductItem, amount_g: int) -> MyPro
         protein=float(item.protein) * ratio,
         fat=float(item.fat) * ratio,
         carbs=float(item.carbs) * ratio,
+        unit_weight_g=item.unit_weight_g,
+        unit_name=item.unit_name,
+        package_weight_g=item.package_weight_g,
+        package_units=item.package_units,
     )
 
 
@@ -2991,7 +3154,9 @@ async def my_product_pick(callback: CallbackQuery, state: FSMContext):
     if not source_meal:
         await callback.message.answer("❌ Не удалось найти продукт в истории.")
         return
-    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    my_product_item = _get_my_product_from_source_meal(
+        source_meal, product_index, user_id=user_id
+    )
     save_token = await _ensure_my_product_save_token(state, renew=True)
     await state.update_data(
         my_product_source_meal_id=source_meal_id,
@@ -3009,6 +3174,7 @@ async def my_product_pick(callback: CallbackQuery, state: FSMContext):
             page,
             product_index,
             save_token=save_token,
+            item=my_product_item,
         ),
         parse_mode="HTML",
     )
@@ -3092,7 +3258,9 @@ async def my_product_edit_weight(callback: CallbackQuery, state: FSMContext):
     if not source_meal:
         await callback.message.answer("❌ Не удалось найти продукт в истории.")
         return
-    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    my_product_item = _get_my_product_from_source_meal(
+        source_meal, product_index, user_id=user_id
+    )
     current_amount = int(my_product_item.amount_g or 100)
     custom_amount = int(data.get("my_product_custom_amount_g") or current_amount)
     pick_origin = (
@@ -3133,7 +3301,9 @@ async def my_product_weight_change_draft(callback: CallbackQuery, state: FSMCont
         return
 
     product_index = _parse_my_product_index(data.get("my_product_source_product_idx"))
-    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    my_product_item = _get_my_product_from_source_meal(
+        source_meal, product_index, user_id=str(callback.from_user.id)
+    )
     base_amount = int(data.get("my_product_weight_draft_g") or my_product_item.amount_g or 100)
     new_amount = base_amount + delta
     if new_amount < 1:
@@ -3175,7 +3345,9 @@ async def my_product_weight_save_draft(callback: CallbackQuery, state: FSMContex
 
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     product_index = _parse_my_product_index(data.get("my_product_source_product_idx"))
-    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    my_product_item = _get_my_product_from_source_meal(
+        source_meal, product_index, user_id=str(callback.from_user.id)
+    )
     new_amount = int(data.get("my_product_weight_draft_g") or my_product_item.amount_g or 100)
     adjusted = _build_adjusted_my_product_item(my_product_item, new_amount)
     save_token = await _ensure_my_product_save_token(state, data)
@@ -3195,6 +3367,7 @@ async def my_product_weight_save_draft(callback: CallbackQuery, state: FSMContex
             product_index,
             save_token=save_token,
             include_delete=data.get("my_product_pick_origin") == "custom" or data.get("in_my_product_menu"),
+            item=adjusted,
         ),
         parse_mode="HTML",
     )
@@ -3217,7 +3390,9 @@ async def my_product_weight_back(callback: CallbackQuery, state: FSMContext):
 
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     product_index = _parse_my_product_index(data.get("my_product_source_product_idx"))
-    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    my_product_item = _get_my_product_from_source_meal(
+        source_meal, product_index, user_id=str(callback.from_user.id)
+    )
     custom_amount = data.get("my_product_custom_amount_g")
     display_item = _build_adjusted_my_product_item(my_product_item, int(custom_amount)) if custom_amount else my_product_item
     display_amount = int(custom_amount or my_product_item.amount_g or 100)
@@ -3234,13 +3409,19 @@ async def my_product_weight_back(callback: CallbackQuery, state: FSMContext):
             product_index,
             save_token=save_token,
             include_delete=data.get("my_product_pick_origin") == "custom" or data.get("in_my_product_menu"),
+            item=display_item,
         ),
         parse_mode="HTML",
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("mpc:"))
-async def my_product_confirm(callback: CallbackQuery, state: FSMContext):
+async def _save_my_product_from_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+    *,
+    add_single_unit: bool,
+) -> None:
+    """Общий путь добавления последней порции или одной единицы продукта."""
     user_id = str(callback.from_user.id)
     data = await state.get_data()
     parts = callback.data.split(":")
@@ -3270,10 +3451,20 @@ async def my_product_confirm(callback: CallbackQuery, state: FSMContext):
         entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
     except ValueError:
         entry_date = date.today()
-    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    my_product_item = _get_my_product_from_source_meal(
+        source_meal, product_index, user_id=user_id
+    )
     custom_amount = data.get("my_product_custom_amount_g")
     old_amount = float(my_product_item.amount_g or 100)
-    ratio = float(custom_amount) / old_amount if custom_amount else 1.0
+    if add_single_unit:
+        if my_product_item.unit_weight_g is None:
+            await callback.message.answer("❌ Вес одной единицы для этого продукта не указан.")
+            return
+        selected_amount = float(my_product_item.unit_weight_g)
+    else:
+        selected_amount = float(custom_amount) if custom_amount else old_amount
+    ratio = selected_amount / old_amount
+    stored_amount = int(selected_amount) if selected_amount.is_integer() else selected_amount
     save_result = MealRepository.save_meal_idempotent(
         save_token=save_token,
         user_id=user_id,
@@ -3284,7 +3475,12 @@ async def my_product_confirm(callback: CallbackQuery, state: FSMContext):
         fat=float(my_product_item.fat) * ratio,
         carbs=float(my_product_item.carbs) * ratio,
         entry_date=entry_date,
-        products_json=_single_product_json_for_my_product(source_meal, my_product_item, ratio=ratio, amount_g=custom_amount),
+        products_json=_single_product_json_for_my_product(
+            source_meal,
+            my_product_item,
+            ratio=ratio,
+            amount_g=stored_amount,
+        ),
         api_details=source_meal.api_details,
         meal_type=meal_type,
     )
@@ -3298,6 +3494,11 @@ async def my_product_confirm(callback: CallbackQuery, state: FSMContext):
     if not hasattr(callback.message.bot, "last_meal_ids"):
         callback.message.bot.last_meal_ids = {}
     callback.message.bot.last_meal_ids[user_id] = new_meal.id
+    _sync_saved_product_reference(
+        user_id,
+        my_product_item,
+        last_weight_g=selected_amount,
+    )
     await state.update_data(my_product_save_token=None)
     await _keep_meal_entry_open_after_save(
         callback.message,
@@ -3311,6 +3512,24 @@ async def my_product_confirm(callback: CallbackQuery, state: FSMContext):
             else "✅ Добавил продукт."
         ],
         parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("mpc:"))
+async def my_product_confirm(callback: CallbackQuery, state: FSMContext):
+    await _save_my_product_from_callback(
+        callback,
+        state,
+        add_single_unit=False,
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("mpu:"))
+async def my_product_add_single_unit(callback: CallbackQuery, state: FSMContext):
+    await _save_my_product_from_callback(
+        callback,
+        state,
+        add_single_unit=True,
     )
 
 
@@ -3694,7 +3913,11 @@ async def custom_product_pick(callback: CallbackQuery, state: FSMContext):
     if not source_meal or not _is_custom_product_meal(source_meal):
         await callback.message.answer("❌ Не удалось найти свой продукт.")
         return
-    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    my_product_item = _get_my_product_from_source_meal(
+        source_meal,
+        product_index,
+        user_id=str(callback.from_user.id),
+    )
     save_token = await _ensure_my_product_save_token(state, renew=True)
     await state.update_data(
         my_product_source_meal_id=source_meal_id,
@@ -3714,6 +3937,7 @@ async def custom_product_pick(callback: CallbackQuery, state: FSMContext):
             product_index,
             save_token=save_token,
             include_delete=True,
+            item=my_product_item,
         ),
         parse_mode="HTML",
     )
@@ -3752,7 +3976,11 @@ async def custom_product_delete_ask(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("❌ Не удалось найти свой продукт.")
         return
 
-    my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    my_product_item = _get_my_product_from_source_meal(
+        source_meal,
+        product_index,
+        user_id=str(callback.from_user.id),
+    )
     await callback.message.edit_text(
         f'Удалить продукт «{html.escape(my_product_item.title or "Продукт")}» из списка своих продуктов?',
         reply_markup=_build_custom_product_delete_confirm_keyboard(source_meal_id, meal_type, int(page_str), product_index),
@@ -5249,6 +5477,9 @@ async def _handle_label_photo_analysis(
     package_weight = label_data.get("package_weight")
     found_weight = label_data.get("found_weight", False)
     product_name = label_data.get("product_name", "Продукт")
+    unit_weight_g = _optional_positive_float(label_data.get("unit_weight_g"))
+    unit_name = _optional_unit_name(label_data.get("unit_name"))
+    package_units = _optional_positive_int(label_data.get("package_units"))
 
     def safe_float(value) -> float:
         try:
@@ -5269,6 +5500,11 @@ async def _handle_label_photo_analysis(
         "product_name": product_name,
         "entry_date": entry_date.isoformat(),
         "label_save_token": _new_meal_save_token(),
+        "unit_weight_g": unit_weight_g,
+        "unit_name": unit_name,
+        "package_units": package_units,
+        "package_weight": None,
+        "package_weight_g": None,
     }
     if meal_source:
         update_payload["meal_source"] = meal_source
@@ -5279,6 +5515,7 @@ async def _handle_label_photo_analysis(
         if weight > 0:
             prompt_package_weight = weight
             update_payload["package_weight"] = weight
+            update_payload["package_weight_g"] = weight
 
     await state.update_data(**update_payload)
     weight_input_menu = _build_label_weight_input_menu(prompt_package_weight)
@@ -5445,6 +5682,12 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
     product_name = data.get("product_name", "Продукт")
     meal_source = data.get("meal_source")
     totals_for_db, per_100g = _calculate_label_totals(kbju_per_100g, weight_grams)
+    unit_weight_g = _optional_positive_float(data.get("unit_weight_g"))
+    unit_name = _optional_unit_name(data.get("unit_name"))
+    package_weight_g = _optional_positive_float(
+        data.get("package_weight_g") or data.get("package_weight")
+    )
+    package_units = _optional_positive_int(data.get("package_units"))
 
     if meal_source == "openai":
         lines = [_format_label_result_header("label", product_name)]
@@ -5456,25 +5699,28 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
     lines.append(f"📦 <b>Вес:</b> {weight_grams:.0f} г\n")
     lines.append("<b>КБЖУ:</b>")
     lines.append(_format_kbju_summary_block(totals_for_db))
-    products_json = json.dumps([
-        {
-            "name": product_name,
-            "grams": weight_grams,
-            "kcal": totals_for_db["calories"],
-            "protein": totals_for_db["protein"],
-            "fat": totals_for_db["fat"],
-            "carbs": totals_for_db["carbs"],
-            "calories": totals_for_db["calories"],
-            "protein_g": totals_for_db["protein"],
-            "fat_total_g": totals_for_db["fat"],
-            "carbohydrates_total_g": totals_for_db["carbs"],
-            "calories_per_100g": per_100g["kcal"],
-            "protein_per_100g": per_100g["protein"],
-            "fat_per_100g": per_100g["fat"],
-            "carbs_per_100g": per_100g["carbs"],
-            "source": "label_analysis",
-        }
-    ])
+    product_payload = {
+        "name": product_name,
+        "grams": weight_grams,
+        "kcal": totals_for_db["calories"],
+        "protein": totals_for_db["protein"],
+        "fat": totals_for_db["fat"],
+        "carbs": totals_for_db["carbs"],
+        "calories": totals_for_db["calories"],
+        "protein_g": totals_for_db["protein"],
+        "fat_total_g": totals_for_db["fat"],
+        "carbohydrates_total_g": totals_for_db["carbs"],
+        "calories_per_100g": per_100g["kcal"],
+        "protein_per_100g": per_100g["protein"],
+        "fat_per_100g": per_100g["fat"],
+        "carbs_per_100g": per_100g["carbs"],
+        "source": "label_analysis",
+        "unit_weight_g": unit_weight_g,
+        "unit_name": unit_name,
+        "package_weight_g": package_weight_g,
+        "package_units": package_units,
+    }
+    products_json = json.dumps([product_payload])
 
     save_result = MealRepository.save_meal_idempotent(
         save_token=save_token,
@@ -5496,6 +5742,14 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
 
     saved_meal = save_result.meal
 
+    try:
+        SavedProductRepository.upsert_from_product(user_id, product_payload)
+    except Exception as exc:
+        logger.warning(
+            "Этикетка сохранена, но saved_products не обновлён error_type=%s",
+            safe_exception_summary(exc),
+        )
+
     if not hasattr(message.bot, "last_meal_ids"):
         message.bot.last_meal_ids = {}
     message.bot.last_meal_ids[user_id] = saved_meal.id
@@ -5503,6 +5757,11 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
     await state.update_data(
         label_save_token=None,
         selected_label_weight=None,
+        unit_weight_g=None,
+        unit_name=None,
+        package_weight=None,
+        package_weight_g=None,
+        package_units=None,
     )
 
     await _keep_meal_entry_open_after_save(
@@ -6922,7 +7181,9 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
             return
         meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
         product_index = _parse_my_product_index(data.get("my_product_source_product_idx"))
-        my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+        my_product_item = _get_my_product_from_source_meal(
+            source_meal, product_index, user_id=user_id
+        )
         adjusted = _build_adjusted_my_product_item(my_product_item, new_weight)
         save_token = await _ensure_my_product_save_token(state, data)
         await state.set_state(MealEntryStates.choosing_meal_type)
@@ -6939,6 +7200,7 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
                 int(data.get("my_products_page") or 1),
                 product_index,
                 save_token=save_token,
+                item=adjusted,
             ),
             parse_mode="HTML",
         )

@@ -10,6 +10,7 @@ from openai import APITimeoutError, OpenAI, OpenAIError
 
 from config import OPENAI_API_KEY
 from services.ai_usage_logger import calculate_ai_cost, log_ai_usage
+from services.label_product_metadata import normalize_label_product_metadata
 from services.photo_food_validator import (
     PHOTO_COMMENT_SECURITY_INSTRUCTIONS,
     validate_photo_food_payload,
@@ -21,13 +22,17 @@ logger = logging.getLogger(__name__)
 
 OPENAI_LABEL_PROMPT = """
 Проанализируй фото этикетки продукта питания.
-Найди название продукта, вес упаковки и пищевую ценность на 100 г.
+Найди название продукта, вес упаковки, количество единиц в упаковке,
+название и вес одной единицы, а также пищевую ценность на 100 г.
 Верни строго валидный JSON без пояснений.
 
 JSON должен быть такого вида:
 {
   "name": null,
   "weight_g": null,
+  "package_units": null,
+  "unit_name": null,
+  "unit_weight_g": null,
   "calories_per_100g": null,
   "protein_per_100g": null,
   "fat_per_100g": null,
@@ -40,6 +45,10 @@ JSON должен быть такого вида:
 - не придумывай данные;
 - не используй средние значения из интернета;
 - извлекай только то, что видно на изображении.
+- package_units указывай только при явно видимом количестве отдельных единиц;
+- unit_name возвращай в единственном числе (например, "хлебец"), только если это однозначно;
+- unit_weight_g указывай только если он напечатан явно; приложение само сможет
+  вычислить его при однозначных weight_g и package_units.
 """.strip()
 
 
@@ -431,6 +440,10 @@ class OpenAILabelService:
 
         package_weight = cls._pick_first_numeric(payload, ["weight_g", "package_weight", "weight", "net_weight"])
         found_weight = bool(package_weight and package_weight > 0)
+        reference_metadata = normalize_label_product_metadata(
+            payload,
+            package_weight_g=package_weight,
+        )
         product_name = payload.get("name") or payload.get("product_name") or "Продукт"
         if not isinstance(product_name, str):
             product_name = str(product_name)
@@ -445,6 +458,7 @@ class OpenAILabelService:
             },
             "package_weight": package_weight,
             "found_weight": found_weight,
+            **reference_metadata,
             "source": "openai",
         }
 

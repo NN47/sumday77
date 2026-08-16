@@ -21,6 +21,7 @@ from config import (
     GEMINI_TEMP_KEY_COOLDOWN_SECONDS,
 )
 from database.repositories import GeminiRepository
+from services.label_product_metadata import normalize_label_product_metadata
 from services.photo_food_validator import (
     PHOTO_COMMENT_SECURITY_INSTRUCTIONS,
     validate_photo_food_payload,
@@ -477,6 +478,9 @@ class GeminiService:
     "carbs": number|null
   },
   "package_weight": number|null,
+  "package_units": integer|null,
+  "unit_name": string|null,
+  "unit_weight_g": number|null,
   "found_weight": true|false
 }
 
@@ -484,6 +488,9 @@ class GeminiService:
 - если значение не найдено — верни null.
 - kbju_per_100g должен быть на 100 г (если на порцию — пересчитай в 100 г, если возможно).
 - числа возвращай как number, не как строку.
+- package_units возвращай только при явно указанном количестве отдельных единиц.
+- unit_name возвращай в единственном числе только при однозначном названии единицы.
+- unit_weight_g не угадывай: верни только напечатанное значение либо null.
 """.strip()
         try:
             from google.genai import types
@@ -582,6 +589,11 @@ class GeminiService:
         )
         found_weight = bool(package_weight and package_weight > 0)
 
+        reference_metadata = normalize_label_product_metadata(
+            payload,
+            package_weight_g=package_weight,
+        )
+
         product_name = payload.get("product_name") or payload.get("name") or "Продукт"
         if not isinstance(product_name, str):
             product_name = str(product_name)
@@ -596,6 +608,7 @@ class GeminiService:
             },
             "package_weight": package_weight,
             "found_weight": found_weight,
+            **reference_metadata,
         }
 
     def scan_barcode(self, image_bytes: bytes) -> Optional[str]:

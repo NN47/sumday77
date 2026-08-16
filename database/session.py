@@ -158,6 +158,18 @@ def init_db():
                 safe_exception_summary(e),
             )
 
+        # saved_products table: nullable product reference data for existing users.
+        # create_all handles new databases; checkfirst keeps this migration safe and
+        # idempotent for PostgreSQL installations that already contain meal history.
+        try:
+            Base.metadata.tables["saved_products"].create(bind=engine, checkfirst=True)
+        except Exception as e:
+            logger.error(
+                "Ошибка при создании saved_products error_type=%s",
+                safe_exception_summary(e),
+            )
+            raise
+
         # error_logs new schema fields
         try:
             error_columns = {col["name"] for col in inspector.get_columns("error_logs")}

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -670,6 +671,44 @@ def test_label_back_clears_analysis_draft_and_returns_to_add_methods():
     show_methods.assert_awaited_once_with(message, state, user_id="12345")
 
 
+def test_label_save_persists_detected_unit_and_package_metadata() -> None:
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    message.text = "✅ Сохранить"
+    state = _DummyState()
+    state._data = {
+        "meal_type": "snack",
+        "entry_date": "2026-08-16",
+        "selected_label_weight": 20,
+        "kbju_per_100g": {"kcal": 330, "protein": 6.5, "fat": 1, "carbs": 70},
+        "product_name": "Хлебцы",
+        "label_save_token": "L" * meals.MEAL_SAVE_TOKEN_LENGTH,
+        "unit_weight_g": 10,
+        "unit_name": "хлебец",
+        "package_weight_g": 100,
+        "package_units": 10,
+    }
+    saved_meal = SimpleNamespace(id=77)
+
+    with patch(
+        "handlers.meals.MealRepository.save_meal_idempotent",
+        return_value=meals.MealSaveResult(meals.MealSaveStatus.SAVED, saved_meal),
+    ) as save_meal, patch(
+        "handlers.meals.SavedProductRepository.upsert_from_product"
+    ) as upsert, patch(
+        "handlers.meals._keep_meal_entry_open_after_save", new=AsyncMock()
+    ):
+        asyncio.run(meals.handle_label_weight_confirmation(message, state))
+
+    product = json.loads(save_meal.call_args.kwargs["products_json"])[0]
+    assert product["grams"] == 20
+    assert product["unit_weight_g"] == 10
+    assert product["unit_name"] == "хлебец"
+    assert product["package_weight_g"] == 100
+    assert product["package_units"] == 10
+    assert upsert.call_args.args == ("12345", product)
+
+
 def test_meal_finish_button_returns_to_food_diary_for_entry_date():
     message = _build_message()
     message.from_user = SimpleNamespace(id=12345)
@@ -785,15 +824,52 @@ def test_my_product_confirm_text_uses_photo_style_kbju_and_escapes_html():
 
     assert "🍽 <b>Ужин</b> • <b>Добавить продукт?</b>" in text
     assert "<b>Продукт:</b> Tea &lt;green&gt;" in text
-    assert "<b>Продукт:</b> Tea &lt;green&gt;\n\n⚖️ <b>Вес:</b> 300 г" in text
+    assert "<b>Продукт:</b> Tea &lt;green&gt;\n\n⚖️ <b>Последняя порция:</b> 300 г" in text
     assert "<b>Tea &lt;green&gt;</b>" not in text
-    assert "⚖️ <b>Вес:</b> 300 г" in text
+    assert "⚖️ <b>Последняя порция:</b> 300 г" in text
     assert "🔥 <b>Калории:</b> 0 ккал" in text
     assert "🥩 <b>Белки:</b> 0.3 г" in text
     assert "🥑 <b>Жиры:</b> 0.0 г" in text
     assert "🍚 <b>Углеводы:</b> 0.9 г" in text
     assert "<b>Выбери действие:</b>" in text
     assert "Tea <green>" not in text
+
+
+def test_my_product_confirm_card_and_keyboard_show_optional_unit_and_package() -> None:
+    item = meals.MyProductItem(
+        source_meal_id=7,
+        product_index=0,
+        title="Хлебцы",
+        amount_g=20,
+        calories=66,
+        protein=1.3,
+        fat=0.2,
+        carbs=14,
+        unit_weight_g=10,
+        unit_name="хлебец",
+        package_weight_g=100,
+        package_units=10,
+    )
+
+    text = meals._render_my_product_confirm_text("snack", item, amount_g=20)
+    keyboard = meals._build_my_product_confirm_keyboard(
+        7,
+        "snack",
+        1,
+        0,
+        save_token="A" * meals.MEAL_SAVE_TOKEN_LENGTH,
+        item=item,
+    )
+
+    assert "⚖️ <b>Последняя порция:</b> 20 г" in text
+    assert "1️⃣ <b>1 хлебец:</b> 10 г" in text
+    assert "📦 <b>Упаковка:</b> 100 г • 10 шт." in text
+    assert [button.text for row in keyboard.inline_keyboard for button in row] == [
+        "✅ Добавить",
+        "1️⃣ Добавить 1 хлебец",
+        "✏️ Изменить вес",
+        "⬅️ Назад",
+    ]
 
 
 def test_my_product_pick_sends_html_parse_mode_for_confirm_card():
@@ -1361,6 +1437,120 @@ def test_my_product_confirm_uses_single_selected_product():
     assert kwargs["calories"] == 120
     assert kwargs["protein"] == 6
     assert kwargs["products_json"] == '[{"name": "Окрошка без заправки", "grams": 200, "kcal": 120.0, "protein": 6.0, "fat": 3.0, "carbs": 18.0}]'
+
+
+def test_add_single_product_unit_uses_unit_weight_and_preserves_reference_data() -> None:
+    save_token = "U" * meals.MEAL_SAVE_TOKEN_LENGTH
+    callback = _build_callback(
+        f"mpu:snack:1:7:0:{save_token[:meals.MEAL_SAVE_CALLBACK_TOKEN_LENGTH]}"
+    )
+    state = _DummyState()
+    state._data["my_product_save_token"] = save_token
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Хлебцы",
+        description=None,
+        products_json=(
+            '[{"name":"Хлебцы","grams":20,"kcal":66,"protein":1.3,"fat":0.2,'
+            '"carbs":14,"unit_weight_g":10,"unit_name":"хлебец",'
+            '"package_weight_g":100,"package_units":10}]'
+        ),
+        calories=66,
+        protein=1.3,
+        fat=0.2,
+        carbs=14,
+        api_details=None,
+    )
+    saved = SimpleNamespace(id=100)
+
+    with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal), patch(
+        "handlers.meals.MealRepository.save_meal_idempotent",
+        return_value=meals.MealSaveResult(meals.MealSaveStatus.SAVED, saved),
+    ) as save_meal, patch(
+        "handlers.meals.SavedProductRepository.get_by_name", return_value=None
+    ), patch("handlers.meals.SavedProductRepository.upsert") as upsert, patch(
+        "handlers.meals._keep_meal_entry_open_after_save", new=AsyncMock()
+    ):
+        asyncio.run(meals.my_product_add_single_unit(callback, state))
+
+    kwargs = save_meal.call_args.kwargs
+    saved_product = json.loads(kwargs["products_json"])[0]
+    assert kwargs["calories"] == 33
+    assert kwargs["protein"] == 0.65
+    assert saved_product["grams"] == 10
+    assert saved_product["unit_weight_g"] == 10
+    assert saved_product["package_weight_g"] == 100
+    assert upsert.call_args.kwargs["last_weight_g"] == 10
+
+
+def test_repeat_add_updates_last_weight_without_changing_unit_weight() -> None:
+    save_token = "R" * meals.MEAL_SAVE_TOKEN_LENGTH
+    callback = _build_callback(
+        f"mpc:snack:1:7:0:{save_token[:meals.MEAL_SAVE_CALLBACK_TOKEN_LENGTH]}"
+    )
+    state = _DummyState()
+    state._data.update(
+        {
+            "my_product_save_token": save_token,
+            "my_product_custom_amount_g": 30,
+        }
+    )
+    meal = SimpleNamespace(
+        id=7,
+        raw_query="Хлебцы",
+        description=None,
+        products_json=(
+            '[{"name":"Хлебцы","grams":20,"kcal":66,"protein":1.3,"fat":0.2,'
+            '"carbs":14,"unit_weight_g":10,"package_weight_g":100}]'
+        ),
+        calories=66,
+        protein=1.3,
+        fat=0.2,
+        carbs=14,
+        api_details=None,
+    )
+
+    with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal), patch(
+        "handlers.meals.MealRepository.save_meal_idempotent",
+        return_value=meals.MealSaveResult(
+            meals.MealSaveStatus.SAVED, SimpleNamespace(id=101)
+        ),
+    ) as save_meal, patch(
+        "handlers.meals.SavedProductRepository.get_by_name", return_value=None
+    ), patch("handlers.meals.SavedProductRepository.upsert") as upsert, patch(
+        "handlers.meals._keep_meal_entry_open_after_save", new=AsyncMock()
+    ):
+        asyncio.run(meals.my_product_confirm(callback, state))
+
+    product = json.loads(save_meal.call_args.kwargs["products_json"])[0]
+    assert product["grams"] == 30
+    assert product["unit_weight_g"] == 10
+    assert product["package_weight_g"] == 100
+    assert upsert.call_args.kwargs["last_weight_g"] == 30
+    assert upsert.call_args.kwargs["unit_weight_g"] == 10
+    assert upsert.call_args.kwargs["package_weight_g"] == 100
+
+
+def test_product_weight_recalculation_does_not_change_unit_or_package_data() -> None:
+    product = {
+        "name": "Хлебцы",
+        "grams": 20,
+        "kcal": 66,
+        "protein": 1.3,
+        "fat": 0.2,
+        "carbs": 14,
+        "unit_weight_g": 10,
+        "unit_name": "хлебец",
+        "package_weight_g": 100,
+        "package_units": 10,
+    }
+
+    assert meals._apply_product_weight(product, 30) is True
+    assert product["grams"] == 30
+    assert product["unit_weight_g"] == 10
+    assert product["unit_name"] == "хлебец"
+    assert product["package_weight_g"] == 100
+    assert product["package_units"] == 10
 
 
 def test_edit_last_meal_single_label_product_opens_product_actions_menu():

@@ -118,6 +118,36 @@ class Meal(Base):
     save_token = Column(String(64), nullable=True)
 
 
+class SavedProduct(Base):
+    """Постоянные справочные данные продукта пользователя.
+
+    История фактических порций по-прежнему хранится в ``Meal.products_json``.
+    Эта сущность отделяет последнюю порцию от неизменяемых характеристик
+    единицы и упаковки.
+    """
+
+    __tablename__ = "saved_products"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "normalized_name",
+            name="uq_saved_products_user_normalized_name",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    normalized_name = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    last_weight_g = Column(Float, nullable=True)
+    unit_weight_g = Column(Float, nullable=True)
+    unit_name = Column(String, nullable=True)
+    package_weight_g = Column(Float, nullable=True)
+    package_units = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class MealCompletionComment(Base):
     """Короткий AI-комментарий к завершённому приёму пищи."""
     __tablename__ = "meal_completion_comments"

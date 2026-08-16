@@ -33,8 +33,28 @@ def test_openai_label_normalization_matches_gemini_label_shape() -> None:
         },
         "package_weight": 180.0,
         "found_weight": True,
+        "unit_weight_g": None,
+        "unit_name": None,
+        "package_units": None,
         "source": "openai",
     }
+
+
+def test_openai_label_derives_unit_weight_only_from_explicit_package_count() -> None:
+    normalized = OpenAILabelService._normalize_label_payload(
+        {
+            "name": "Хлебцы",
+            "weight_g": 100,
+            "package_units": 10,
+            "unit_name": "хлебец",
+            "calories_per_100g": 330,
+        }
+    )
+
+    assert normalized is not None
+    assert normalized["package_units"] == 10
+    assert normalized["unit_name"] == "хлебец"
+    assert normalized["unit_weight_g"] == 10
 
 
 def test_openai_label_normalization_without_kbju_returns_none() -> None:

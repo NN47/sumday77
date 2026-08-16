@@ -22,6 +22,7 @@ from database.models import (
     NoteEntry,
     Procedure,
     QuickWaterMessage,
+    SavedProduct,
     Supplement,
     SupplementEntry,
     SupplementNotificationState,
@@ -73,6 +74,14 @@ class AccountDeletionTests(unittest.TestCase):
         )
         session.add(Weight(user_id=user_id, value="70.0"))
         session.add(Measurement(user_id=user_id, waist=80.0))
+        session.add(
+            SavedProduct(
+                user_id=user_id,
+                normalized_name=f"product-{user_id}",
+                name=f"Продукт {user_id}",
+                last_weight_g=100,
+            )
+        )
 
         meal = Meal(user_id=user_id, description="Тестовый приём пищи")
         session.add(meal)

@@ -53,3 +53,21 @@ def test_normalize_label_payload_from_nested_keys_and_synonyms() -> None:
 def test_normalize_label_payload_without_kbju_returns_none() -> None:
     payload = {"product_name": "Вода", "package_weight": 500}
     assert GeminiService._normalize_label_payload(payload) is None
+
+
+def test_normalize_label_payload_keeps_unit_metadata_nullable_without_count() -> None:
+    payload = {
+        "product_name": "Печенье",
+        "kbju_per_100g": {"kcal": 450},
+        "package_weight": 120,
+        "package_units": None,
+        "unit_weight_g": None,
+        "unit_name": None,
+    }
+
+    normalized = GeminiService._normalize_label_payload(payload)
+
+    assert normalized is not None
+    assert normalized["package_units"] is None
+    assert normalized["unit_weight_g"] is None
+    assert normalized["unit_name"] is None
