@@ -7,6 +7,7 @@ import time
 from openai import OpenAI
 
 from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from services.ai_food_parser import AI_FOOD_TEXT_SYSTEM_PROMPT
 from services.ai_usage_logger import calculate_ai_cost, log_ai_usage
 from utils.log_sanitizer import safe_exception_summary
 
@@ -69,15 +70,7 @@ class DeepSeekService:
                 messages=[
                     {
                         "role": "system",
-                        "content": (
-                            "Ты нутрициолог. Верни строго JSON без markdown и текста. "
-                            "Формат ответа: "
-                            '{"items":[{"name":"...", "grams":123, "kcal":100, "protein":10, "fat":5, "carbs":12}],'
-                            '"total":{"kcal":200,"protein":20,"fat":10,"carbs":24}}. '
-                            "Обязательно поля items и total. "
-                            "Для КАЖДОГО элемента в items укажи grams, kcal, protein, fat, carbs числами (не null, не строки). "
-                            "Если нет точных данных — оцени приблизительно, но не оставляй поля пустыми."
-                        ),
+                        "content": AI_FOOD_TEXT_SYSTEM_PROMPT,
                     },
                     {"role": "user", "content": text},
                 ],

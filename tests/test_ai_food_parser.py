@@ -1,4 +1,4 @@
-from services.ai_food_parser import parse_kbju_json
+from services.ai_food_parser import FoodAnalysisStatus, parse_kbju_json
 
 
 def test_parse_kbju_json_normalizes_synonym_keys():
@@ -26,6 +26,7 @@ def test_parse_kbju_json_normalizes_synonym_keys():
     parsed = parse_kbju_json(raw)
 
     assert parsed is not None
+    assert parsed["status"] == FoodAnalysisStatus.OK.value
     assert parsed["items"][0] == {
         "name": "Яйца варёные",
         "grams": 100,
@@ -49,6 +50,7 @@ def test_parse_kbju_json_accepts_markdown_and_calculates_missing_total():
     )
 
     assert parsed is not None
+    assert parsed["status"] == FoodAnalysisStatus.OK.value
     assert parsed["total"] == {
         "kcal": 240,
         "protein": 32,
@@ -59,3 +61,39 @@ def test_parse_kbju_json_accepts_markdown_and_calculates_missing_total():
 
 def test_parse_kbju_json_returns_none_for_plain_text_response():
     assert parse_kbju_json("Обычный текст без JSON.") is None
+
+
+def test_parse_kbju_json_returns_explicit_no_food_result():
+    parsed = parse_kbju_json('{"status":"no_food","items":[]}')
+
+    assert parsed == {"status": FoodAnalysisStatus.NO_FOOD.value, "items": []}
+
+
+def test_parse_kbju_json_treats_ok_with_empty_items_as_no_food():
+    parsed = parse_kbju_json(
+        '{"status":"ok","items":[],"total":{"kcal":100,"protein":1,"fat":1,"carbs":1}}'
+    )
+
+    assert parsed == {"status": FoodAnalysisStatus.NO_FOOD.value, "items": []}
+
+
+def test_parse_kbju_json_rejects_unknown_status():
+    assert parse_kbju_json('{"status":"maybe","items":[]}') is None
+
+
+def test_parse_kbju_json_rejects_no_food_with_items():
+    assert parse_kbju_json(
+        '{"status":"no_food","items":[{"name":"Хлеб","grams":30}]}'
+    ) is None
+
+
+def test_parse_kbju_json_rejects_total_without_items():
+    assert parse_kbju_json(
+        '{"total":{"kcal":100,"protein":1,"fat":1,"carbs":1}}'
+    ) is None
+
+
+def test_parse_kbju_json_rejects_item_without_real_name_field():
+    assert parse_kbju_json(
+        '{"status":"ok","items":[{"grams":100,"kcal":0}],"total":{"kcal":0}}'
+    ) is None

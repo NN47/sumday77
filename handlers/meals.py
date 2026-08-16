@@ -52,7 +52,7 @@ from services.deepseek_service import (
     DeepSeekServiceConfigError,
     DeepSeekServiceError,
 )
-from services.ai_food_parser import parse_kbju_json
+from services.ai_food_parser import FoodAnalysisStatus, parse_kbju_json
 from services.ai_usage_logger import log_ai_usage
 from utils.validators import parse_date
 from utils.log_sanitizer import safe_exception_summary
@@ -87,6 +87,11 @@ SENSITIVE_MEAL_INPUT_REJECTED_TEXT = (
     "⚠️ В сообщении обнаружена информация, не относящаяся к описанию еды.\n\n"
     "Укажите только продукты, блюда и примерное количество.\n\n"
     "Например: <code>колбаса 200 г, хлеб 30 г</code>"
+)
+NO_FOOD_RECOGNIZED_TEXT = (
+    "⚠️ Не удалось распознать продукты или блюда.\n\n"
+    "Укажите, что вы съели и примерное количество.\n\n"
+    "Например: <code>карпаччо 150 г, хлеб 30 г</code>"
 )
 
 
@@ -3841,14 +3846,29 @@ async def _handle_provider_food_input(
         await message.answer("Можешь отправить текст ещё раз.")
         return
 
-    if not kbju_data or "total" not in kbju_data:
+    if not kbju_data:
         logger.error("%s: parse error, empty or incompatible payload", provider_name)
+        await message.answer(f"Не удалось обработать через {provider_name}. Попробуй позже.")
+        await message.answer("Можешь отправить текст ещё раз.")
+        return
+
+    analysis_status = kbju_data.get("status")
+    if analysis_status == FoodAnalysisStatus.NO_FOOD.value:
+        logger.info("Meal text analysis returned no_food")
+        await message.answer(NO_FOOD_RECOGNIZED_TEXT, parse_mode="HTML")
+        return
+    if analysis_status != FoodAnalysisStatus.OK.value or "total" not in kbju_data:
+        logger.error("%s: parse error, invalid food analysis status", provider_name)
         await message.answer(f"Не удалось обработать через {provider_name}. Попробуй позже.")
         await message.answer("Можешь отправить текст ещё раз.")
         return
 
     items = _normalize_ai_items_for_edit(kbju_data.get("items", []))
     total = kbju_data.get("total", {})
+    if not items:
+        logger.info("Meal text analysis returned no_food")
+        await message.answer(NO_FOOD_RECOGNIZED_TEXT, parse_mode="HTML")
+        return
 
     analysis_title = (
         provider_title
@@ -3865,17 +3885,6 @@ async def _handle_provider_food_input(
 
     # Для текстового AI-анализа больше не пишем в дневник автоматически:
     # сохраняем распознавание только во временный FSM-черновик до подтверждения.
-    if not items:
-        items = _normalize_ai_items_for_edit([
-            {
-                "name": "AI-анализ приёма пищи",
-                "grams": 0,
-                "kcal": float(total.get("kcal", 0) or 0),
-                "protein": float(total.get("protein", 0) or 0),
-                "fat": float(total.get("fat", 0) or 0),
-                "carbs": float(total.get("carbs", 0) or 0),
-            }
-        ])
     await state.update_data(
         ai_pending_meal={
             "raw_query": user_text,

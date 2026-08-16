@@ -2,7 +2,48 @@
 from __future__ import annotations
 
 import json
+from enum import Enum
 from typing import Optional
+
+
+class FoodAnalysisStatus(str, Enum):
+    """Provider-independent outcomes of text meal recognition."""
+
+    OK = "ok"
+    NO_FOOD = "no_food"
+
+
+AI_FOOD_TEXT_SYSTEM_PROMPT = """
+Ты анализируешь только текстовое описание приёма пищи. Верни строго один JSON-объект без markdown и пояснений.
+
+Сначала определи, содержит ли сообщение хотя бы один реально существующий пищевой продукт, блюдо или напиток.
+Если еды или напитков нет, не интерпретируй произвольный текст, действие, эмоцию, состояние, событие, предмет,
+человека, занятие или абстрактное понятие как еду. Число, масса или единица измерения сами по себе не доказывают,
+что объект является едой. Не придумывай продукт, массу или пищевую ценность ради заполнения ответа.
+
+Если еды нет, верни ровно такой контракт:
+{"status":"no_food","items":[]}
+
+Если еда есть, верни:
+{"status":"ok","items":[{"name":"...","grams":123,"kcal":100,"protein":10,"fat":5,"carbs":12}],"total":{"kcal":100,"protein":10,"fat":5,"carbs":12}}
+
+Для status="ok":
+- item.name должен обозначать реально существующий пищевой продукт, напиток или блюдо, которое человек употребляет в пищу;
+- извлекай только продукты, блюда и напитки, а нейтральную постороннюю часть сообщения игнорируй;
+- для каждого элемента укажи grams, kcal, protein, fat и carbs числами, не null и не строками;
+- если еда названа, но точные масса или КБЖУ неизвестны, можешь разумно оценить их приблизительно;
+- обязательно верни непустой items и total.
+
+Примеры отсутствия еды:
+"как дела" -> {"status":"no_food","items":[]}
+"я хочу спать" -> {"status":"no_food","items":[]}
+"А что такого я просто хотел причинить вред" -> {"status":"no_food","items":[]}
+"машина 200 г" -> {"status":"no_food","items":[]}
+"сегодня отличный день" -> {"status":"no_food","items":[]}
+
+Смешанный пример: "сегодня был тяжелый день, съел карпаччо 150 г" содержит еду — верни status="ok"
+и только карпаччо как item.
+""".strip()
 
 
 def parse_ai_json(raw: str) -> dict | list:
@@ -23,7 +64,7 @@ def parse_ai_json(raw: str) -> dict | list:
 
 
 def parse_kbju_json(raw: str) -> Optional[dict]:
-    """Нормализует JSON-ответ AI в единый формат приёма пищи."""
+    """Нормализует provider-independent JSON-контракт текстового анализа еды."""
     if not raw:
         return None
 
@@ -34,6 +75,31 @@ def parse_kbju_json(raw: str) -> Optional[dict]:
 
     if not isinstance(payload, dict):
         return None
+
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list):
+        return None
+
+    raw_status = payload.get("status")
+    if raw_status is None:
+        # Backward compatibility for valid responses produced before status was added.
+        status = FoodAnalysisStatus.OK if raw_items else None
+    elif isinstance(raw_status, str):
+        try:
+            status = FoodAnalysisStatus(raw_status.strip().lower())
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if status is None:
+        return None
+    if status is FoodAnalysisStatus.NO_FOOD:
+        if raw_items:
+            return None
+        return {"status": FoodAnalysisStatus.NO_FOOD.value, "items": []}
+    if not raw_items:
+        return {"status": FoodAnalysisStatus.NO_FOOD.value, "items": []}
 
     def to_float(value) -> float:
         try:
@@ -49,14 +115,16 @@ def parse_kbju_json(raw: str) -> Optional[dict]:
                 return to_float(source.get(key))
         return 0.0
 
-    items = payload.get("items") if isinstance(payload.get("items"), list) else []
     normalized_items = []
-    for item in items:
+    for item in raw_items:
         if not isinstance(item, dict):
-            continue
+            return None
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return None
         normalized_items.append(
             {
-                "name": item.get("name") or "продукт",
+                "name": name.strip(),
                 "grams": pick(
                     item,
                     "grams",
@@ -113,6 +181,10 @@ def parse_kbju_json(raw: str) -> Optional[dict]:
             "carbs": sum(item["carbs"] for item in normalized_items),
         }
 
-    if not normalized_items and not any(total.values()):
-        return None
-    return {"items": normalized_items, "total": total}
+    if not normalized_items:
+        return {"status": FoodAnalysisStatus.NO_FOOD.value, "items": []}
+    return {
+        "status": FoodAnalysisStatus.OK.value,
+        "items": normalized_items,
+        "total": total,
+    }
