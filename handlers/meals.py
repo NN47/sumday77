@@ -1830,17 +1830,40 @@ async def _restore_current_meal_entry_screen(
     )
 
 
-async def _return_to_add_methods_from_method_input(message: Message, state: FSMContext) -> None:
-    """Возвращает из выбранного способа ввода без анализа текста."""
+async def _return_to_add_methods_from_method_input(
+    message: Message,
+    state: FSMContext,
+    *,
+    user_id: str | None = None,
+) -> None:
+    """Очищает черновик выбранного способа и возвращает к способам добавления."""
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    entry_date_str = data.get("entry_date")
+    meal_entry_open = bool(data.get("meal_entry_open"))
+
+    # Черновики разных способов содержат много временных ключей. Полностью очищаем
+    # FSM и восстанавливаем только навигационный контекст выбранного приёма пищи.
+    await state.clear()
+    await state.update_data(
+        meal_type=meal_type,
+        entry_date=entry_date_str,
+        pending_add_method=None,
+        meal_entry_open=meal_entry_open,
+    )
+
+    resolved_user_id = user_id or str(message.from_user.id)
     if data.get("meal_entry_open"):
-        await _restore_current_meal_entry_screen(message, state, data)
+        await _restore_current_meal_entry_screen(
+            message,
+            state,
+            data,
+            user_id=resolved_user_id,
+        )
         return
 
     await state.set_state(MealEntryStates.choosing_meal_type)
-    await state.update_data(meal_type=meal_type, pending_add_method=None)
-    await _show_input_methods(message, state, user_id=str(message.from_user.id))
+    await _show_input_methods(message, state, user_id=resolved_user_id)
 
 
 async def _select_meal_type_button_if_needed(message: Message, state: FSMContext, text: str) -> bool:
@@ -3785,14 +3808,7 @@ async def handle_custom_product_name(message: Message, state: FSMContext):
     if await _reroute_add_method_button_if_needed(message, state, text):
         return
     if text in BACK_BUTTON_TEXTS or text == "❌ Отмена":
-        await state.set_state(MealEntryStates.choosing_meal_type)
-        await state.update_data(
-            custom_product={},
-            custom_product_save_token=None,
-            pending_add_method=None,
-            in_my_product_menu=False,
-        )
-        await _show_input_methods(message, state, user_id=str(message.from_user.id))
+        await _return_to_add_methods_from_method_input(message, state)
         return
     if len(text) < 2:
         await message.answer("Название слишком короткое. Введите название продукта:", reply_markup=_build_custom_product_reply_keyboard())
@@ -3817,14 +3833,7 @@ async def _handle_custom_product_macro(
         await _go_to_previous_custom_product_step(message, state)
         return
     if text == "❌ Отмена":
-        await state.set_state(MealEntryStates.choosing_meal_type)
-        await state.update_data(
-            custom_product={},
-            custom_product_save_token=None,
-            pending_add_method=None,
-            in_my_product_menu=False,
-        )
-        await _show_input_methods(message, state, user_id=str(message.from_user.id))
+        await _return_to_add_methods_from_method_input(message, state)
         return
     value = _parse_non_negative_number(text)
     if value is None:
@@ -4294,12 +4303,11 @@ async def request_cancel_ai_meal_draft(callback: CallbackQuery, state: FSMContex
 async def confirm_cancel_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
     """Удаляет текстовый AI-черновик после явного подтверждения пользователя."""
     await callback.answer()
-    await state.clear()
-    push_menu_stack(callback.message.bot, kbju_menu)
     await callback.message.edit_text("❌ Добавление приёма пищи отменено.")
-    await callback.message.answer(
-        "Ок, черновик удалён. Ничего не сохранил.",
-        reply_markup=kbju_menu,
+    await _return_to_add_methods_from_method_input(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
     )
 
 
@@ -4656,16 +4664,11 @@ async def cancel_pending_food_photo_analysis(callback: CallbackQuery, state: FSM
     """Отменяет ожидание уточнения к фото еды через inline-кнопку."""
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
-    data = await state.get_data()
-    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
-    await _clear_photo_comment_fields(state)
-    await state.set_state(MealEntryStates.choosing_meal_type)
-    await state.update_data(
-        meal_type=meal_type,
-        pending_add_method=None,
-        food_photo_file_id=None,
+    await _return_to_add_methods_from_method_input(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
     )
-    await _show_input_methods(callback.message, state, user_id=str(callback.from_user.id))
 
 
 @router.message(MealEntryStates.waiting_for_food_photo_comment)
@@ -4732,11 +4735,19 @@ async def handle_openai_food_non_photo(message: Message, state: FSMContext):
     await message.answer("Пожалуйста, отправь фото еды для OpenAI-анализа.")
 
 
-async def _cancel_photo_analysis_confirmation(message: Message, state: FSMContext, data: dict):
-    """Полностью выходит из сценария анализа блюда по фото и возвращает главное меню."""
-    await state.clear()
-    push_menu_stack(message.bot, main_menu)
-    await message.answer("❌ Анализ блюда отменён.", reply_markup=main_menu)
+async def _cancel_photo_analysis_confirmation(
+    message: Message,
+    state: FSMContext,
+    *,
+    user_id: str | None = None,
+):
+    """Удаляет черновик анализа фото и возвращает к способам добавления."""
+    await message.answer("❌ Анализ блюда отменён.")
+    await _return_to_add_methods_from_method_input(
+        message,
+        state,
+        user_id=user_id,
+    )
 
 
 async def _save_photo_analysis_confirmation(
@@ -5030,8 +5041,7 @@ async def photo_analysis_total_weight_manual_apply(message: Message, state: FSMC
     """Применяет ручной ввод общего веса блюда."""
     text = (message.text or "").strip().replace(",", ".")
     if text == "❌ Отмена":
-        data = await state.get_data()
-        await _cancel_photo_analysis_confirmation(message, state, data)
+        await _cancel_photo_analysis_confirmation(message, state)
         return
     try:
         new_total_weight = float(text)
@@ -5109,10 +5119,13 @@ async def photo_analysis_total_weight_back(callback: CallbackQuery, state: FSMCo
 @router.callback_query(lambda c: c.data == "photo_cancel")
 async def photo_analysis_cancel(callback: CallbackQuery, state: FSMContext):
     """Legacy: отменяет сохранение анализа фото через inline-кнопку."""
-    data = await state.get_data()
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
-    await _cancel_photo_analysis_confirmation(callback.message, state, data)
+    await _cancel_photo_analysis_confirmation(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("save_photo_food_analysis:"))
@@ -5173,7 +5186,7 @@ async def handle_photo_analysis_confirmation(message: Message, state: FSMContext
         return
 
     if text == "❌ Отмена":
-        await _cancel_photo_analysis_confirmation(message, state, data)
+        await _cancel_photo_analysis_confirmation(message, state)
         return
 
     return

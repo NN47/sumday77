@@ -100,6 +100,10 @@ class DummyState:
     async def set_state(self, state):
         self.state = state
 
+    async def clear(self):
+        self.data.clear()
+        self.state = None
+
 
 class DummyMessage:
     def __init__(self, text="⬅️ Назад"):

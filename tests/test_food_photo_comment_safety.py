@@ -345,11 +345,14 @@ def test_provider_error_and_cancel_remove_legacy_raw_comment_fields(caplog):
         message=SimpleNamespace(edit_reply_markup=AsyncMock(), answer=AsyncMock()),
         answer=AsyncMock(),
     )
-    with patch("handlers.meals._show_input_methods", new_callable=AsyncMock):
+    with patch("handlers.meals._show_input_methods", new_callable=AsyncMock) as show_input_methods:
         asyncio.run(meals.cancel_pending_food_photo_analysis(callback, state))
 
+    assert "food_photo_file_id" not in state.data
     assert "food_photo_comment" not in state.data
     assert "photo_analysis_comment" not in state.data
+    assert state.current_state is meals.MealEntryStates.choosing_meal_type
+    show_input_methods.assert_awaited_once_with(callback.message, state, user_id="12345")
 
 
 def test_new_photo_removes_legacy_raw_comment_fields_before_waiting_for_comment():

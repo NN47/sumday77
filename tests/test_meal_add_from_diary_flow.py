@@ -151,11 +151,13 @@ def test_send_photo_analysis_confirmation_attaches_inline_and_cancel_reply_keybo
     assert [[button.text for button in row] for row in controls_call.kwargs["reply_markup"].keyboard] == [["❌ Отмена"]]
 
 
-def test_photo_analysis_cancel_clears_state_and_returns_main_menu():
+def test_photo_analysis_cancel_clears_draft_and_returns_to_add_methods():
     message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
     state = _DummyState()
     state._data = {
         "meal_type": meals.MealType.SNACK.value,
+        "entry_date": "2026-08-11",
         "photo_analysis_items": [{"name": "Яблоко"}],
         "photo_analysis_raw_query": "raw",
         "photo_analysis_provider": "gemini",
@@ -163,15 +165,24 @@ def test_photo_analysis_cancel_clears_state_and_returns_main_menu():
         "photo_total_weight_draft_items": [{"name": "Яблоко"}],
         "photo_total_weight_original_items": [{"name": "Яблоко"}],
     }
+    state.clear = AsyncMock(side_effect=state._data.clear)
 
-    with patch("handlers.meals.push_menu_stack") as push_stack:
-        asyncio.run(meals._cancel_photo_analysis_confirmation(message, state, state._data))
+    with patch("handlers.meals.push_menu_stack") as push_stack, patch(
+        "handlers.meals.MealRepository.get_meals_for_date", return_value=[]
+    ):
+        asyncio.run(meals._cancel_photo_analysis_confirmation(message, state))
 
     state.clear.assert_awaited_once()
-    state.set_state.assert_not_awaited()
-    push_stack.assert_called_once_with(message.bot, meals.main_menu)
-    assert message.answer.await_args.args[0] == "❌ Анализ блюда отменён."
-    assert message.answer.await_args.kwargs["reply_markup"] == meals.main_menu
+    state.set_state.assert_awaited_with(meals.MealEntryStates.choosing_meal_type)
+    assert "photo_analysis_items" not in state._data
+    assert "photo_analysis_raw_query" not in state._data
+    assert "photo_analysis_provider" not in state._data
+    assert "photo_total_weight_draft_items" not in state._data
+    assert state._data["meal_type"] == meals.MealType.SNACK.value
+    assert state._data["entry_date"] == "2026-08-11"
+    push_stack.assert_called_once_with(message.bot, meals.kbju_add_menu)
+    assert message.answer.await_args_list[0].args[0] == "❌ Анализ блюда отменён."
+    assert message.answer.await_args.kwargs["reply_markup"] == meals.kbju_add_menu
 
 
 def test_photo_analysis_cancel_menu_is_regular_bottom_keyboard():
@@ -607,7 +618,16 @@ def test_custom_product_name_back_returns_to_add_methods_not_saved_products_menu
     message.from_user = SimpleNamespace(id=12345)
     message.text = "⬅️ Назад"
     state = _DummyState()
-    state._data["meal_type"] = meals.MealType.DINNER.value
+    state._data.update(
+        {
+            "meal_type": meals.MealType.DINNER.value,
+            "entry_date": "2026-08-11",
+            "custom_product": {"name": "Старый черновик"},
+            "custom_product_save_token": "temporary-token",
+            "custom_product_current_field": "calories",
+        }
+    )
+    state.clear = AsyncMock(side_effect=state._data.clear)
 
     with patch("handlers.meals._show_input_methods", new=AsyncMock()) as show_methods, patch(
         "handlers.meals._show_my_product_menu", new=AsyncMock()
@@ -615,11 +635,40 @@ def test_custom_product_name_back_returns_to_add_methods_not_saved_products_menu
         asyncio.run(meals.handle_custom_product_name(message, state))
 
     show_my_product.assert_not_awaited()
+    state.clear.assert_awaited_once()
     state.set_state.assert_awaited_once_with(meals.MealEntryStates.choosing_meal_type)
-    assert state._data["custom_product"] == {}
+    assert "custom_product" not in state._data
+    assert "custom_product_save_token" not in state._data
+    assert "custom_product_current_field" not in state._data
     assert state._data["pending_add_method"] is None
-    assert state._data["in_my_product_menu"] is False
     show_methods.assert_awaited_once_with(message, state, user_id="12345")
+
+
+def test_label_back_clears_analysis_draft_and_returns_to_add_methods():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    message.text = "⬅️ Назад"
+    state = _DummyState()
+    state._data = {
+        "meal_type": meals.MealType.LUNCH.value,
+        "entry_date": "2026-08-11",
+        "kbju_per_100g": {"kcal": 120},
+        "product_name": "Йогурт",
+        "label_save_token": "temporary-token",
+    }
+    state.clear = AsyncMock(side_effect=state._data.clear)
+
+    with patch("handlers.meals._show_input_methods", new=AsyncMock()) as show_methods:
+        asyncio.run(meals.handle_label_non_photo(message, state))
+
+    state.clear.assert_awaited_once()
+    assert "kbju_per_100g" not in state._data
+    assert "product_name" not in state._data
+    assert "label_save_token" not in state._data
+    assert state._data["meal_type"] == meals.MealType.LUNCH.value
+    assert state._data["entry_date"] == "2026-08-11"
+    show_methods.assert_awaited_once_with(message, state, user_id="12345")
+
 
 def test_meal_finish_button_returns_to_food_diary_for_entry_date():
     message = _build_message()

@@ -110,16 +110,33 @@ def test_declining_cancel_restores_unchanged_draft_preview():
     assert [button.text for button in keyboard.inline_keyboard[0]] == ["❌ Отмена", "✏️ Редактировать"]
 
 
-def test_confirmed_cancel_clears_draft_and_restores_kbju_keyboard():
-    state = DummyState({"ai_pending_meal": sample_draft(), "meal_type": "breakfast"})
+def test_confirmed_cancel_clears_draft_and_returns_to_add_methods():
+    state = DummyState(
+        {
+            "ai_pending_meal": sample_draft(),
+            "meal_type": "breakfast",
+            "entry_date": "2026-08-11",
+            "meal_entry_open": True,
+        }
+    )
     callback = build_callback("confirm_cancel_ai_meal_draft")
 
-    asyncio.run(meals.confirm_cancel_ai_meal_draft(callback, state))
+    with patch("handlers.meals.MealRepository.get_meals_for_date", return_value=[]):
+        asyncio.run(meals.confirm_cancel_ai_meal_draft(callback, state))
 
     state.clear.assert_awaited_once()
-    assert state.data == {}
+    assert "ai_pending_meal" not in state.data
+    assert state.data["meal_type"] == "breakfast"
+    assert state.data["entry_date"] == "2026-08-11"
+    assert state.data["meal_entry_open"] is True
+    assert state.current_state is meals.MealEntryStates.choosing_meal_type
     callback.message.edit_text.assert_awaited_once_with("❌ Добавление приёма пищи отменено.")
-    assert callback.message.answer.await_args.kwargs["reply_markup"] is meals.kbju_menu
+    assert callback.message.answer.await_args.kwargs["reply_markup"] is meals.kbju_add_menu
+
+    asyncio.run(meals.kbju_add_via_ai(callback.message, state))
+
+    assert state.current_state is meals.MealEntryStates.waiting_for_ai_food_input
+    assert "ai_pending_meal" not in state.data
 
 
 def test_reply_save_uses_existing_draft_save_logic():
@@ -135,4 +152,3 @@ def test_reply_save_uses_existing_draft_save_logic():
         asyncio.run(meals.handle_ai_confirm(message, state))
 
     save_draft.assert_awaited_once_with(message, state, user_id="12345")
-
