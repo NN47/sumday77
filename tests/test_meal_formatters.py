@@ -16,8 +16,9 @@ assert spec and spec.loader
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 format_today_meals = module.format_today_meals
+format_diary_product_name = module.format_diary_product_name
 format_meal_edit_details = module.format_meal_edit_details
-split_telegram_text = module.split_telegram_text
+format_meal_edit_chunks = module.format_meal_edit_chunks
 
 
 class MealFormatterTests(unittest.TestCase):
@@ -55,8 +56,8 @@ class MealFormatterTests(unittest.TestCase):
         self.assertIn("🎯 <b>Цель:</b> Не задана", text)
         self.assertIn("<b>🔥 Калории:</b> 1430/0 ккал (0%)", text)
         self.assertIn("🍳 <b>Завтрак — 560 ккал</b>", text)
-        self.assertIn("Круассан", text)
-        self.assertIn("<i>Б 19.0 / Ж 38.0 / У 33.0</i>", text)
+        self.assertIn("круассан", text)
+        self.assertIn("<b>Б 19.0 · Ж 38.0 · У 33.0</b>", text)
         self.assertNotIn("200 г", text)
         self.assertNotIn("<b>Итого завтрак:</b>", text)
 
@@ -78,9 +79,9 @@ class MealFormatterTests(unittest.TestCase):
             daily_totals={"calories": 100, "protein": 1, "fat": 2, "carbs": 3},
             day_str="08.04.2026",
         )
-        self.assertIn("Продукт", text)
+        self.assertIn("продукт", text)
         self.assertIn("🍎 <b>Перекус — 100 ккал</b>", text)
-        self.assertIn("<i>Б 1.0 / Ж 2.0 / У 3.0</i>", text)
+        self.assertIn("<b>Б 1.0 · Ж 2.0 · У 3.0</b>", text)
         self.assertNotIn("None", text)
 
     def test_duplicate_product_is_compact_once_but_edit_details_keep_both(self):
@@ -112,9 +113,74 @@ class MealFormatterTests(unittest.TestCase):
         )
 
         self.assertEqual(summary.casefold().count("хлебцы"), 1)
-        self.assertIn("1️⃣ Хлебцы — 10 г", details)
-        self.assertIn("2️⃣ хлебцы — 20 г", details)
-        self.assertIn("Итого:\n99 ккал · Б 2.0 / Ж 0.3 / У 21.0", details)
+        self.assertIn("1️⃣ <b>Хлебцы</b> — 10 г", details)
+        self.assertIn("2️⃣ <b>хлебцы</b> — 20 г", details)
+        self.assertIn("<b>Итого: 99 ккал · Б 2.0 · Ж 0.3 · У 21.0</b>", details)
+
+    def test_technical_product_names_have_human_diary_names_only(self):
+        self.assertEqual(
+            format_diary_product_name('КОНФЕТЫ НЕГЛАЗИРОВАННЫЕ «ТРЮФЕЛЬ» БЕЗ САХАРА'),
+            'конфеты «Трюфель»',
+        )
+        self.assertEqual(
+            format_diary_product_name('Хлебцы хрустящие «Кукурузно-рисовые» с имбирем и лимоном'),
+            'хлебцы',
+        )
+        self.assertEqual(format_diary_product_name("Печенье с предсказанием 1 шт"), "печенье")
+
+    def test_similar_short_names_remain_distinguishable(self):
+        meal = SimpleNamespace(
+            meal_type="snack",
+            products_json=json.dumps(
+                [
+                    {"name": 'Хлебцы хрустящие «Кукурузно-рисовые» с имбирем'},
+                    {"name": 'Хлебцы хрустящие «Гречневые» с солью'},
+                ],
+                ensure_ascii=False,
+            ),
+            raw_query="",
+            description="",
+            calories=10,
+            protein=1,
+            fat=1,
+            carbs=1,
+        )
+
+        summary = format_today_meals([meal], {"calories": 10}, "16.08.2026")
+
+        self.assertIn('хлебцы «Кукурузно-рисовые»', summary)
+        self.assertIn('хлебцы «Гречневые»', summary)
+
+    def test_eight_products_render_compact_summary_and_complete_edit_view(self):
+        products = [
+            {
+                "name": f"Продукт {index}",
+                "grams": index * 10,
+                "kcal": index * 20,
+                "protein": index,
+                "fat": index / 2,
+                "carbs": index * 2,
+            }
+            for index in range(1, 9)
+        ]
+        meal = SimpleNamespace(
+            meal_type="lunch",
+            products_json=json.dumps(products, ensure_ascii=False),
+            raw_query="",
+            description="",
+            calories=sum(product["kcal"] for product in products),
+            protein=sum(product["protein"] for product in products),
+            fat=sum(product["fat"] for product in products),
+            carbs=sum(product["carbs"] for product in products),
+        )
+
+        summary = format_today_meals([meal], {"calories": meal.calories}, "16.08.2026")
+        details = format_meal_edit_details("lunch", products)
+
+        self.assertNotIn("10 г", summary)
+        self.assertIn("продукт 1, продукт 2, продукт 3", summary)
+        self.assertIn("8️⃣ <b>Продукт 8</b> — 80 г", details)
+        self.assertEqual(details.count("</b> — "), 8)
 
     def test_long_name_is_bounded_in_summary_and_full_in_edit_details(self):
         long_name = "Очень длинное название продукта " * 12
@@ -135,9 +201,9 @@ class MealFormatterTests(unittest.TestCase):
         summary = format_today_meals([meal], {"calories": 120}, "16.08.2026")
         details = format_meal_edit_details("dinner", json.loads(meal.products_json))
 
-        self.assertIn("…", summary)
+        self.assertIn("очень длинное название продукта", summary)
         self.assertNotIn(long_name.strip(), summary)
-        self.assertIn(long_name.strip(), details)
+        self.assertIn(f"<b>{long_name.strip()}</b>", details)
 
     def test_large_edit_details_split_without_data_loss(self):
         products = [
@@ -145,11 +211,12 @@ class MealFormatterTests(unittest.TestCase):
             for index in range(1, 81)
         ]
         details = format_meal_edit_details("lunch", products)
-        chunks = split_telegram_text(details)
+        chunks = format_meal_edit_chunks("lunch", products)
 
         self.assertGreater(len(chunks), 1)
-        self.assertEqual("".join(chunks), details)
+        self.assertEqual("\n\n".join(chunks), details)
         self.assertTrue(all(len(chunk.encode("utf-16-le")) // 2 <= 4000 for chunk in chunks))
+        self.assertTrue(all(chunk.count("<b>") == chunk.count("</b>") for chunk in chunks))
 
 
 if __name__ == "__main__":

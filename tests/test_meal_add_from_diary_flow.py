@@ -282,8 +282,8 @@ def test_reopening_filled_meal_from_diary_shows_existing_products_before_new_add
     assert "🍱 <b>Уже в этом приёме пищи</b>" in current_meal_text
     assert "📅 <b>Дата:</b> 08.04.2026" in current_meal_text
     assert "🍎 <b>Перекус — 94 ккал</b>" in current_meal_text
-    assert "Яблоко" in current_meal_text
-    assert "<i>Б 0.5 / Ж 0.3 / У 25.0</i>" in current_meal_text
+    assert "яблоко" in current_meal_text
+    assert "<b>Б 0.5 · Ж 0.3 · У 25.0</b>" in current_meal_text
     assert "180 г" not in current_meal_text
     assert "<b>Итого перекус:</b>" not in current_meal_text
     keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"]
@@ -357,7 +357,7 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_switches_bottom_
     assert "🍱 <b>Уже в этом приёме пищи</b>" in answer_text
     assert "📅 <b>Дата:</b> 08.04.2026" in answer_text
     assert "🍳 <b>Завтрак — 5 ккал</b>" in answer_text
-    assert "Чёрный кофе" in answer_text
+    assert "чёрный кофе" in answer_text
     assert "250 г" not in answer_text
     assert not answer_text.endswith("\n⸻")
     assert "➕ Добавь следующий продукт" not in answer_text
@@ -776,10 +776,12 @@ def test_diary_edit_keeps_duplicate_records_and_text_button_numbering_in_sync():
     assert [product["_source_meal_id"] for product in state._data["saved_products"]] == [11, 12]
     detail_call = callback.message.answer.await_args_list[-1]
     detail_text = detail_call.args[0]
-    assert "1️⃣ Хлебцы — 10 г" in detail_text
-    assert "2️⃣ Хлебцы — 20 г" in detail_text
+    assert "1️⃣ <b>Хлебцы</b> — 10 г" in detail_text
+    assert "2️⃣ <b>Хлебцы</b> — 20 г" in detail_text
     assert "Нашёл несколько записей" not in detail_text
-    buttons = [row[0] for row in detail_call.kwargs["reply_markup"].inline_keyboard[:-1]]
+    assert "Убираю нижнюю клавиатуру" not in detail_text
+    edited_markup = callback.message.answer.return_value.edit_reply_markup.await_args.kwargs["reply_markup"]
+    buttons = [row[0] for row in edited_markup.inline_keyboard[:-1]]
     assert [button.text for button in buttons] == ["1️⃣ Хлебцы — 10 г", "2️⃣ Хлебцы — 20 г"]
     assert [button.callback_data for button in buttons] == ["meal_wsel:0", "meal_wsel:1"]
 
@@ -811,7 +813,8 @@ def test_large_meal_edit_places_keyboard_only_after_last_safe_chunk():
     assert all(len(call.args[0].encode("utf-16-le")) // 2 <= 4000 for call in calls)
     assert all(call.kwargs["reply_markup"] is None for call in calls[:-1])
     assert calls[-1].kwargs["reply_markup"].inline_keyboard[-1][0].callback_data == "meal_wdone"
-    assert all(call.kwargs["parse_mode"] is None for call in calls)
+    assert all(call.kwargs["parse_mode"] == "HTML" for call in calls)
+    assert all(call.args[0].count("<b>") == call.args[0].count("</b>") for call in calls)
 
 
 def test_long_product_name_is_shortened_only_in_button_callback_stays_stable():
@@ -1667,11 +1670,13 @@ def test_edit_last_meal_single_label_product_opens_detailed_product_list():
     assert state._data["editing_meal_type"] == meals.MealType.SNACK.value
     answer_kwargs = message.answer.await_args.kwargs
     answer_text = message.answer.await_args.args[0]
-    assert "✏️ Перекус — 112 ккал" in answer_text
-    assert "1️⃣ Eichbaum Radler Lemon — 350 г" in answer_text
+    assert "<b>✏️ Перекус — выберите продукт для редактирования</b>" in answer_text
+    assert "1️⃣ <b>Eichbaum Radler Lemon</b> — 350 г" in answer_text
     assert "112 ккал · Б 1.8 / Ж 1.8 / У 27.3" in answer_text
-    assert "Выбери продукт для редактирования:" in answer_text
-    button_texts = [button.text for row in answer_kwargs["reply_markup"].inline_keyboard for button in row]
+    assert "<b>Итого: 112 ккал · Б 1.8 · Ж 1.8 · У 27.3</b>" in answer_text
+    assert answer_kwargs["reply_markup"].remove_keyboard is True
+    edited_markup = message.answer.return_value.edit_reply_markup.await_args.kwargs["reply_markup"]
+    button_texts = [button.text for row in edited_markup.inline_keyboard for button in row]
     assert button_texts == ["1️⃣ Eichbaum Radler Lemon — 350 г", "✅ Готово"]
 
 
@@ -1853,13 +1858,82 @@ def test_meal_weight_save_stays_in_product_editing_until_done():
     callback.answer.assert_awaited_once_with("✅ Вес продукта обновлён")
     callback.message.edit_text.assert_awaited_once()
     detail_text = callback.message.edit_text.await_args.args[0]
-    assert "✏️ Перекус — 180 ккал" in detail_text
-    assert "1️⃣ Творог — 150 г" in detail_text
+    assert "<b>✏️ Перекус — выберите продукт для редактирования</b>" in detail_text
+    assert "1️⃣ <b>Творог</b> — 150 г" in detail_text
     assert "180 ккал · Б 24.0 / Ж 7.5 / У 4.5" in detail_text
     render_day.assert_not_awaited()
     state.clear.assert_not_awaited()
     assert state._data["saved_products"][0]["grams"] == 150
     assert state._data["weight_drafts"] == {}
+
+
+def test_meal_product_delete_updates_existing_record_and_detailed_list():
+    callback = _build_callback("meal_wdel:0")
+    state = _DummyState()
+    state._data.update(
+        {
+            "meal_id": 42,
+            "editing_meal_type": meals.MealType.LUNCH.value,
+            "saved_products": [
+                {
+                    "name": "Хлебцы",
+                    "grams": 10,
+                    "kcal": 33,
+                    "protein": 0.7,
+                    "fat": 0.1,
+                    "carbs": 7,
+                    "_source_meal_id": 42,
+                },
+                {
+                    "name": "Сыр",
+                    "grams": 20,
+                    "kcal": 70,
+                    "protein": 5,
+                    "fat": 5,
+                    "carbs": 1,
+                    "_source_meal_id": 42,
+                },
+            ],
+            "weight_drafts": {},
+        }
+    )
+    meal = SimpleNamespace(raw_query="Хлебцы, сыр")
+
+    with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal), patch(
+        "handlers.meals.MealRepository.update_meal", return_value=True
+    ) as update_meal:
+        asyncio.run(meals.meal_weight_delete(callback, state))
+
+    saved_payload = json.loads(update_meal.call_args.kwargs["products_json"])
+    assert [product["name"] for product in saved_payload] == ["Сыр"]
+    assert [product["name"] for product in state._data["saved_products"]] == ["Сыр"]
+    detail_text = callback.message.edit_text.await_args.args[0]
+    assert "1️⃣ <b>Сыр</b> — 20 г" in detail_text
+    assert "Хлебцы" not in detail_text
+
+
+def test_clear_whole_meal_uses_existing_repository_and_refreshes_diary():
+    target_date = date(2026, 8, 16)
+    callback = _build_callback(f"clear_meal_confirm:lunch:{target_date.isoformat()}")
+
+    with patch(
+        "handlers.meals.MealRepository.delete_meals_by_type_for_date",
+        return_value=2,
+    ) as delete_meals, patch(
+        "handlers.meals._render_day_meals_messages",
+        new=AsyncMock(),
+    ) as render_day:
+        asyncio.run(meals.clear_meal_from_diary_block_confirmed(callback))
+
+    delete_meals.assert_called_once_with("12345", target_date, meals.MealType.LUNCH.value)
+    callback.message.answer.assert_awaited_once_with("✅ 🍲 Обед очищен: удалено записей — 2.")
+    render_day.assert_awaited_once_with(
+        callback.message,
+        "12345",
+        target_date,
+        include_back=True,
+        changed_meal_type=meals.MealType.LUNCH.value,
+    )
 
 def test_format_label_result_header_bolds_label_and_escapes_product_name():
     assert meals._format_label_result_header("label", "Салат <Курочка>") == (
@@ -2088,7 +2162,7 @@ def test_back_from_ai_method_restores_open_meal_entry_screen():
     restored_text = message.answer.await_args_list[0].args[0]
     assert "🍱 <b>Уже в этом приёме пищи</b>" in restored_text
     assert "🍳 <b>Завтрак — 180 ккал</b>" in restored_text
-    assert "Творог" in restored_text
+    assert "творог" in restored_text
     assert "150 г" not in restored_text
     inline_keyboard = message.answer.await_args_list[0].kwargs["reply_markup"].inline_keyboard
     assert [[button.text for button in row] for row in inline_keyboard] == [["✏️ Редактировать", "📦 Мои продукты"]]

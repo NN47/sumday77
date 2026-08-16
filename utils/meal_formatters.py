@@ -2,6 +2,7 @@
 import logging
 import json
 import html
+import re
 from datetime import date
 from collections import defaultdict
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -17,7 +18,56 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_SAFE_TEXT_LIMIT = 4_000
 MEAL_SUMMARY_PRODUCTS_LIMIT = 900
-MEAL_SUMMARY_PRODUCT_NAME_LIMIT = 100
+
+
+_DIARY_NAME_CONNECTORS = {"с", "со", "без", "для", "из", "в", "во", "на", "при"}
+_DIARY_TECHNICAL_MODIFIERS = {
+    "глазированный",
+    "глазированная",
+    "глазированное",
+    "глазированные",
+    "неглазированный",
+    "неглазированная",
+    "неглазированное",
+    "неглазированные",
+    "хрустящий",
+    "хрустящая",
+    "хрустящее",
+    "хрустящие",
+    "пищевой",
+    "пищевая",
+    "пищевое",
+    "пищевые",
+}
+_RUSSIAN_ADJECTIVE_ENDINGS = (
+    "ый",
+    "ий",
+    "ой",
+    "ая",
+    "яя",
+    "ое",
+    "ее",
+    "ые",
+    "ие",
+    "ого",
+    "его",
+    "ому",
+    "ему",
+    "ым",
+    "им",
+    "ую",
+    "юю",
+    "ых",
+    "их",
+    "ыми",
+    "ими",
+)
+_QUOTED_PRODUCT_PART_RE = re.compile(r"[«\"]\s*([^»\"]+?)\s*[»\"]")
+_PRODUCT_QUANTITY_SUFFIX_RE = re.compile(
+    r"(?:[,;]?\s*[-–—]?\s*)\b\d+(?:[.,]\d+)?\s*"
+    r"(?:г|кг|мл|л|шт\.?|штук(?:а|и)?|порц(?:ия|ии|ий))\b.*$",
+    re.IGNORECASE,
+)
 
 
 _EMOJI_DIGITS = {
@@ -129,6 +179,50 @@ def extract_product_macros(product: dict) -> tuple[float, float, float, float]:
     return calories, protein, fat, carbs
 
 
+def _humanize_quoted_product_part(value: str) -> str:
+    clean = " ".join(value.split()).strip(" ,.;:-–—")
+    if clean.isupper():
+        return clean.capitalize()
+    return clean
+
+
+def _looks_like_product_adjective(value: str) -> bool:
+    normalized = value.casefold().strip(" ,.;:-–—")
+    return any(normalized.endswith(ending) for ending in _RUSSIAN_ADJECTIVE_ENDINGS)
+
+
+def format_diary_product_name(name: object, *, include_variant: bool = False) -> str:
+    """Возвращает короткое человекочитаемое имя только для сводки дневника."""
+    source = " ".join(_safe_product_name(name).split())
+    source = _PRODUCT_QUANTITY_SUFFIX_RE.sub("", source).strip(" ,.;:-–—")
+    quoted_match = _QUOTED_PRODUCT_PART_RE.search(source)
+    base_source = source[: quoted_match.start()] if quoted_match else source
+    raw_tokens = [token.strip(" ,.;:()[]{}") for token in base_source.split()]
+    raw_tokens = [token for token in raw_tokens if token]
+
+    if not include_variant:
+        for index, token in enumerate(raw_tokens[1:], start=1):
+            if token.casefold() in _DIARY_NAME_CONNECTORS:
+                raw_tokens = raw_tokens[:index]
+                break
+
+    meaningful_tokens = [
+        token
+        for token in raw_tokens
+        if token.casefold() not in _DIARY_TECHNICAL_MODIFIERS
+    ]
+    max_words = 6 if include_variant else 4
+    base = " ".join(meaningful_tokens[:max_words]).casefold().strip()
+
+    quoted = _humanize_quoted_product_part(quoted_match.group(1)) if quoted_match else ""
+    should_include_quote = bool(
+        quoted and (include_variant or not _looks_like_product_adjective(quoted))
+    )
+    if should_include_quote:
+        return f"{base} «{quoted}»".strip()
+    return base or quoted or "продукт"
+
+
 def _extract_products(meal: Meal) -> list[dict]:
     """Извлекает продукты из meals.products_json, сохраняя исходный порядок."""
     raw_products = getattr(meal, "products_json", None)
@@ -174,12 +268,20 @@ def _format_compact_product_names(names: list[str]) -> str:
     if not names:
         return "Продукт"
 
+    short_names = [format_diary_product_name(name) for name in names]
+    positions_by_name: dict[str, list[int]] = defaultdict(list)
+    for index, short_name in enumerate(short_names):
+        positions_by_name[short_name.casefold()].append(index)
+
+    for positions in positions_by_name.values():
+        if len(positions) <= 1:
+            continue
+        for position in positions:
+            short_names[position] = format_diary_product_name(names[position], include_variant=True)
+
     visible: list[str] = []
-    for index, name in enumerate(names):
-        shortened = name
-        if len(shortened) > MEAL_SUMMARY_PRODUCT_NAME_LIMIT:
-            shortened = f"{shortened[:MEAL_SUMMARY_PRODUCT_NAME_LIMIT - 1].rstrip()}…"
-        escaped = html.escape(shortened)
+    for index, short_name in enumerate(short_names):
+        escaped = html.escape(short_name)
         candidate = ", ".join([*visible, escaped])
         if len(candidate) <= MEAL_SUMMARY_PRODUCTS_LIMIT:
             visible.append(escaped)
@@ -221,36 +323,38 @@ def format_meal_edit_details(
     totals: dict | None = None,
 ) -> str:
     """Форматирует полную детализацию продуктов перед их редактированием."""
+    return "\n\n".join(_format_meal_edit_detail_blocks(meal_type, products, totals=totals))
+
+
+def _format_meal_edit_detail_blocks(
+    meal_type: str,
+    products: list[dict],
+    totals: dict | None = None,
+) -> list[str]:
+    """Строит независимые HTML-блоки, которые можно безопасно разбивать по сообщениям."""
     meal_ui = MEAL_UI.get(normalize_meal_type(meal_type), MEAL_UI["snack"])
     normalized_totals = _normalize_totals(totals) if totals is not None else _collect_product_totals(products)
-    lines = [f"✏️ {meal_ui['title']} — {normalized_totals['calories']:.0f} ккал", ""]
+    blocks = [f"<b>✏️ {meal_ui['title']} — выберите продукт для редактирования</b>"]
 
     for index, product in enumerate(products, start=1):
-        name = extract_product_name(product)
+        name = html.escape(extract_product_name(product))
         grams = extract_product_weight(product)
         calories, protein, fat, carbs = extract_product_macros(product)
-        lines.extend(
-            [
-                f"{format_emoji_number(index)} {name} — {grams:.0f} г",
-                f"{calories:.0f} ккал · Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f}",
-            ]
-        )
+        lines = [
+            f"{format_emoji_number(index)} <b>{name}</b> — {grams:.0f} г",
+            f"{calories:.0f} ккал · Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f}",
+        ]
         if bool(product.get("is_manually_corrected")):
             lines.append("✏️ КБЖУ скорректированы вручную")
-        lines.append("")
+        blocks.append("\n".join(lines))
 
-    lines.extend(
-        [
-            "Итого:",
-            f"{normalized_totals['calories']:.0f} ккал · "
-            f"Б {normalized_totals['protein']:.1f} / "
-            f"Ж {normalized_totals['fat']:.1f} / "
-            f"У {normalized_totals['carbs']:.1f}",
-            "",
-            "Выбери продукт для редактирования:",
-        ]
+    blocks.append(
+        f"<b>Итого: {normalized_totals['calories']:.0f} ккал · "
+        f"Б {normalized_totals['protein']:.1f} · "
+        f"Ж {normalized_totals['fat']:.1f} · "
+        f"У {normalized_totals['carbs']:.1f}</b>"
     )
-    return "\n".join(lines)
+    return blocks
 
 
 def _telegram_text_units(text: str) -> int:
@@ -258,26 +362,55 @@ def _telegram_text_units(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
-def split_telegram_text(text: str, limit: int = TELEGRAM_SAFE_TEXT_LIMIT) -> list[str]:
-    """Без потерь разбивает plain-text сообщение на безопасные для Telegram части."""
-    if limit <= 0:
-        raise ValueError("limit must be positive")
-    if not text:
-        return [""]
-
+def _split_plain_text_for_html(text: str, limit: int) -> list[str]:
+    """Разбивает plain text так, чтобы его HTML-escaped части также укладывались в лимит."""
     chunks: list[str] = []
     current: list[str] = []
     current_units = 0
     for character in text:
-        character_units = _telegram_text_units(character)
+        escaped_character = html.escape(character)
+        character_units = _telegram_text_units(escaped_character)
         if current and current_units + character_units > limit:
-            chunks.append("".join(current))
+            chunks.append(html.escape("".join(current)))
             current = []
             current_units = 0
         current.append(character)
         current_units += character_units
     if current:
-        chunks.append("".join(current))
+        chunks.append(html.escape("".join(current)))
+    return chunks
+
+
+def format_meal_edit_chunks(
+    meal_type: str,
+    products: list[dict],
+    totals: dict | None = None,
+    *,
+    limit: int = TELEGRAM_SAFE_TEXT_LIMIT,
+) -> list[str]:
+    """Разбивает подробный HTML edit-view только между валидными блоками."""
+    if limit <= 0:
+        raise ValueError("limit must be positive")
+
+    safe_blocks: list[str] = []
+    for block in _format_meal_edit_detail_blocks(meal_type, products, totals=totals):
+        if _telegram_text_units(block) <= limit:
+            safe_blocks.append(block)
+            continue
+        plain_block = html.unescape(re.sub(r"</?b>", "", block))
+        safe_blocks.extend(_split_plain_text_for_html(plain_block, limit))
+
+    chunks: list[str] = []
+    current = ""
+    for block in safe_blocks:
+        candidate = f"{current}\n\n{block}" if current else block
+        if current and _telegram_text_units(candidate) > limit:
+            chunks.append(current)
+            current = block
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
     return chunks
 
 
@@ -309,7 +442,7 @@ def format_meal_block(meal_type: str, items: list[Meal]) -> list[str]:
     return [
         f"{meal_ui['emoji']} <b>{meal_ui['title']} — {totals['calories']:.0f} ккал</b>",
         product_names,
-        f"<i>Б {totals['protein']:.1f} / Ж {totals['fat']:.1f} / У {totals['carbs']:.1f}</i>",
+        f"<b>Б {totals['protein']:.1f} · Ж {totals['fat']:.1f} · У {totals['carbs']:.1f}</b>",
     ]
 
 

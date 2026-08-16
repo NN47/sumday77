@@ -71,8 +71,7 @@ from utils.meal_formatters import (
     extract_product_name as extract_meal_product_name,
     extract_product_weight as extract_meal_product_weight,
     format_emoji_number as format_meal_emoji_number,
-    format_meal_edit_details,
-    split_telegram_text,
+    format_meal_edit_chunks,
 )
 from datetime import datetime
 from utils.meal_types import (
@@ -5933,13 +5932,7 @@ async def _show_meal_edit_products_list(
     edit_existing: bool = False,
 ) -> None:
     """Показывает полную детализацию и клавиатуру того же упорядоченного списка."""
-    if remove_reply_keyboard:
-        await message.answer(
-            "⬇️ Убираю нижнюю клавиатуру на время редактирования",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-
-    chunks = split_telegram_text(format_meal_edit_details(meal_type, products, totals=totals))
+    chunks = format_meal_edit_chunks(meal_type, products, totals=totals)
     keyboard = _build_weight_products_keyboard(products)
 
     if edit_existing:
@@ -5947,22 +5940,37 @@ async def _show_meal_edit_products_list(
             await message.edit_text(
                 chunks[0],
                 reply_markup=keyboard if len(chunks) == 1 else None,
-                parse_mode=None,
+                parse_mode="HTML",
             )
         except TelegramBadRequest:
             await message.answer(
                 chunks[0],
                 reply_markup=keyboard if len(chunks) == 1 else None,
-                parse_mode=None,
+                parse_mode="HTML",
             )
         chunks = chunks[1:]
 
     for index, chunk in enumerate(chunks):
-        await message.answer(
-            chunk,
-            reply_markup=keyboard if index == len(chunks) - 1 else None,
-            parse_mode=None,
+        is_first_chunk = index == 0
+        is_last_chunk = index == len(chunks) - 1
+        reply_markup = (
+            ReplyKeyboardRemove()
+            if remove_reply_keyboard and is_first_chunk
+            else keyboard if is_last_chunk else None
         )
+        sent = await message.answer(
+            chunk,
+            reply_markup=reply_markup,
+            parse_mode="HTML",
+        )
+        if remove_reply_keyboard and is_first_chunk and is_last_chunk:
+            try:
+                await sent.edit_reply_markup(reply_markup=keyboard)
+            except (AttributeError, TelegramBadRequest):
+                await message.answer(
+                    "Выберите продукт для редактирования:",
+                    reply_markup=keyboard,
+                )
 
 
 def _format_product_macro_summary(
