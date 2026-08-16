@@ -69,7 +69,7 @@ def test_no_food_contract_stops_before_draft_or_database_save(text, caplog):
     state = _MealInputState()
     analyzer = Mock(return_value='{"status":"no_food","items":[]}')
 
-    with patch("handlers.meals.MealRepository.save_meal") as save_meal:
+    with patch("handlers.meals.MealRepository.save_meal_idempotent") as save_meal:
         caplog.set_level(logging.INFO, logger="handlers.meals")
         _run_text_analysis(message, state, analyzer)
 
@@ -177,7 +177,7 @@ def test_ok_contract_keeps_existing_meal_preview_flow(text, response_items, expe
         )
     )
 
-    with patch("handlers.meals.MealRepository.save_meal") as save_meal:
+    with patch("handlers.meals.MealRepository.save_meal_idempotent") as save_meal:
         _run_text_analysis(message, state, analyzer)
 
     analyzer.assert_called_once_with(text)
@@ -233,7 +233,7 @@ def test_invalid_numeric_ai_response_does_not_create_preview_or_draft(caplog):
         )
     )
 
-    with patch("handlers.meals.MealRepository.save_meal") as save_meal:
+    with patch("handlers.meals.MealRepository.save_meal_idempotent") as save_meal:
         caplog.set_level(logging.INFO, logger="handlers.meals")
         _run_text_analysis(message, state, analyzer)
 
@@ -299,8 +299,11 @@ def test_confirmed_meal_persists_validated_name_summary_not_raw_message_text():
     assert private_neutral_text not in json.dumps(state._data, ensure_ascii=False)
 
     with patch(
-        "handlers.meals.MealRepository.save_meal",
-        return_value=SimpleNamespace(id=777),
+        "handlers.meals.MealRepository.save_meal_idempotent",
+        return_value=meals.MealSaveResult(
+            meals.MealSaveStatus.SAVED,
+            SimpleNamespace(id=777),
+        ),
     ) as save_meal, patch(
         "handlers.meals._keep_meal_entry_open_after_save",
         new_callable=AsyncMock,
@@ -319,7 +322,7 @@ def test_too_long_meal_text_is_rejected_before_sensitive_filter_and_ai(caplog):
     analyzer = Mock()
 
     with patch("handlers.meals.check_sensitive_meal_text") as sensitive_check, patch(
-        "handlers.meals.MealRepository.save_meal"
+        "handlers.meals.MealRepository.save_meal_idempotent"
     ) as save_meal:
         caplog.set_level(logging.INFO, logger="handlers.meals")
         _run_text_analysis(message, state, analyzer)

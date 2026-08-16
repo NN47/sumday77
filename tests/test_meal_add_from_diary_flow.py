@@ -33,23 +33,28 @@ def _build_callback(callback_data: str):
 
 
 def test_photo_analysis_confirm_menu_uses_single_product_edit_and_save_buttons():
-    keyboard = meals._build_photo_analysis_confirm_menu([{"name": "Пицца 4 сыра"}])
+    save_token = "A" * meals.MEAL_SAVE_TOKEN_LENGTH
+    keyboard = meals._build_photo_analysis_confirm_menu([{"name": "Пицца 4 сыра"}], save_token)
 
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
     callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
 
     assert rows == [["✏️ Пицца 4 сыра"], ["⚖️ Общий вес", "✅ Сохранить"]]
-    assert callbacks == [["edit_photo_food_item:0"], ["photo_total_weight", "save_photo_food_analysis"]]
+    assert callbacks == [["edit_photo_food_item:0"], ["photo_total_weight", f"save_photo_food_analysis:{save_token}"]]
 
 
 def test_photo_analysis_confirm_menu_uses_product_edit_buttons_for_multiple_items():
-    keyboard = meals._build_photo_analysis_confirm_menu([{"name": "Кусочек медовика"}, {"name": "Кофе с молоком"}])
+    save_token = "B" * meals.MEAL_SAVE_TOKEN_LENGTH
+    keyboard = meals._build_photo_analysis_confirm_menu(
+        [{"name": "Кусочек медовика"}, {"name": "Кофе с молоком"}],
+        save_token,
+    )
 
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
     callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
 
     assert rows == [["✏️ Кусочек медовика"], ["✏️ Кофе с молоком"], ["⚖️ Общий вес", "✅ Сохранить"]]
-    assert callbacks == [["edit_photo_food_item:0"], ["edit_photo_food_item:1"], ["photo_total_weight", "save_photo_food_analysis"]]
+    assert callbacks == [["edit_photo_food_item:0"], ["edit_photo_food_item:1"], ["photo_total_weight", f"save_photo_food_analysis:{save_token}"]]
 
 
 def test_food_photo_clarification_menu_offers_skip_or_cancel():
@@ -131,15 +136,16 @@ def test_photo_delete_last_product_shows_empty_message_and_no_save_button():
 def test_send_photo_analysis_confirmation_attaches_inline_and_cancel_reply_keyboard():
     message = _build_message()
     items = [{"name": "Йогурт манго", "grams": 120, "kcal": 90}]
+    save_token = "C" * meals.MEAL_SAVE_TOKEN_LENGTH
 
     with patch("handlers.meals.push_menu_stack") as push_stack:
-        asyncio.run(meals._send_photo_analysis_confirmation(message, items))
+        asyncio.run(meals._send_photo_analysis_confirmation(message, items, save_token))
 
     push_stack.assert_not_called()
     assert message.answer.await_count == 2
     result_call, controls_call = message.answer.await_args_list
     assert result_call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "edit_photo_food_item:0"
-    assert [button.callback_data for button in result_call.kwargs["reply_markup"].inline_keyboard[-1]] == ["photo_total_weight", "save_photo_food_analysis"]
+    assert [button.callback_data for button in result_call.kwargs["reply_markup"].inline_keyboard[-1]] == ["photo_total_weight", f"save_photo_food_analysis:{save_token}"]
     assert "Для отмены" not in result_call.args[0]
     assert controls_call.args[0] == "⬇️ Кнопки управления"
     assert [[button.text for button in row] for row in controls_call.kwargs["reply_markup"].keyboard] == [["❌ Отмена"]]
@@ -357,7 +363,7 @@ def test_custom_product_final_inline_save_uses_callback_user_and_restores_add_me
     # Callback messages are sent by the bot and may not carry the user's id.
     message.from_user = SimpleNamespace(id=999)
     callback = SimpleNamespace(
-        data="custom_vsave:amount",
+        data=f"custom_vsave:amount:{'D' * meals.MEAL_SAVE_TOKEN_LENGTH}",
         from_user=SimpleNamespace(id=12345),
         message=message,
         answer=AsyncMock(),
@@ -375,11 +381,15 @@ def test_custom_product_final_inline_save_uses_callback_user_and_restores_add_me
             "custom_product_draft_value": 150,
             "meal_type": meals.MealType.SNACK.value,
             "entry_date": "2026-04-08",
+            "custom_product_save_token": "D" * meals.MEAL_SAVE_TOKEN_LENGTH,
         }
     )
     saved_meal = SimpleNamespace(id=77)
 
-    with patch("handlers.meals.MealRepository.save_meal", return_value=saved_meal) as save_meal, patch(
+    with patch(
+        "handlers.meals.MealRepository.save_meal_idempotent",
+        return_value=meals.MealSaveResult(meals.MealSaveStatus.SAVED, saved_meal),
+    ) as save_meal, patch(
         "handlers.meals.MealRepository.get_meals_for_date", return_value=[]
     ), patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]), patch("handlers.meals.push_menu_stack"):
         asyncio.run(meals.custom_product_value_save(callback, state))
@@ -445,11 +455,15 @@ def test_custom_product_text_amount_save_uses_entered_per_100g_calories():
             },
             "meal_type": meals.MealType.SNACK.value,
             "entry_date": "2026-04-08",
+            "custom_product_save_token": "E" * meals.MEAL_SAVE_TOKEN_LENGTH,
         }
     )
     saved_meal = SimpleNamespace(id=77)
 
-    with patch("handlers.meals.MealRepository.save_meal", return_value=saved_meal) as save_meal, patch(
+    with patch(
+        "handlers.meals.MealRepository.save_meal_idempotent",
+        return_value=meals.MealSaveResult(meals.MealSaveStatus.SAVED, saved_meal),
+    ) as save_meal, patch(
         "handlers.meals.MealRepository.get_meals_for_date", return_value=[]
     ), patch("handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]), patch("handlers.meals.push_menu_stack"):
         asyncio.run(meals.handle_custom_product_amount(message, state))
@@ -1263,8 +1277,12 @@ def test_my_product_weight_back_from_my_products_keeps_delete_button_on_confirm_
 
 
 def test_my_product_confirm_uses_single_selected_product():
-    callback = _build_callback("my_product_confirm:dinner:1:7:1")
+    save_token = "F" * meals.MEAL_SAVE_TOKEN_LENGTH
+    callback = _build_callback(
+        f"mpc:dinner:1:7:1:{save_token[:meals.MEAL_SAVE_CALLBACK_TOKEN_LENGTH]}"
+    )
     state = _DummyState()
+    state._data["my_product_save_token"] = save_token
     meal = SimpleNamespace(
         id=7,
         raw_query="Кура гриль 150 г, окрошка 200 г",
@@ -1282,7 +1300,8 @@ def test_my_product_confirm_uses_single_selected_product():
     saved = SimpleNamespace(id=99)
 
     with patch("handlers.meals.MealRepository.get_meal_by_id", return_value=meal), patch(
-        "handlers.meals.MealRepository.save_meal", return_value=saved
+        "handlers.meals.MealRepository.save_meal_idempotent",
+        return_value=meals.MealSaveResult(meals.MealSaveStatus.SAVED, saved),
     ) as save_meal, patch("handlers.meals._keep_meal_entry_open_after_save", new=AsyncMock()) as keep_open:
         asyncio.run(meals.my_product_confirm(callback, state))
 
@@ -1543,7 +1562,7 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
 
     with patch.object(meals.deepseek_service, "analyze_food_text", return_value=raw_deepseek_json) as deepseek_analyze, \
         patch("handlers.meals._run_gemini_task", side_effect=fail_gemini) as gemini_task, \
-        patch("handlers.meals.MealRepository.save_meal") as save_meal:
+        patch("handlers.meals.MealRepository.save_meal_idempotent") as save_meal:
         caplog.set_level("INFO", logger="handlers.meals")
         asyncio.run(meals.handle_ai_food_input(message, state))
 

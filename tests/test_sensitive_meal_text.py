@@ -196,7 +196,7 @@ def test_sensitive_input_is_rejected_before_ai_without_state_or_database_storage
     state = _MealInputState()
 
     with patch.object(meals.deepseek_service, "analyze_food_text") as analyze_food, patch(
-        "handlers.meals.MealRepository.save_meal"
+        "handlers.meals.MealRepository.save_meal_idempotent"
     ) as save_meal:
         caplog.set_level("INFO", logger="handlers.meals")
         asyncio.run(meals.handle_ai_food_input(message, state))
@@ -221,4 +221,3 @@ def test_sensitive_input_is_rejected_before_ai_without_state_or_database_storage
     assert source_text not in caplog.text
     assert "Иванов" not in caplog.text
     assert "+7 999" not in caplog.text
-

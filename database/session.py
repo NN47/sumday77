@@ -194,7 +194,7 @@ def init_db():
         except Exception as e:
             logger.warning("Ошибка при проверке kbju_settings.gender error_type=%s", safe_exception_summary(e))
 
-        # meals.meal_type
+        # meals.meal_type / meals.is_manually_corrected / meals.save_token
         try:
             meal_columns = {col["name"] for col in inspector.get_columns("meals")}
             if "meal_type" not in meal_columns:
@@ -214,8 +214,22 @@ def init_db():
             else:
                 conn.execute(text("UPDATE meals SET is_manually_corrected = FALSE WHERE is_manually_corrected IS NULL"))
                 conn.commit()
+
+            if "save_token" not in meal_columns:
+                conn.execute(text("ALTER TABLE meals ADD COLUMN save_token VARCHAR(64)"))
+                conn.commit()
+                logger.info("Добавлен столбец meals.save_token")
+
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_meals_save_token "
+                    "ON meals (save_token)"
+                )
+            )
+            conn.commit()
         except Exception as e:
-            logger.warning("Ошибка при проверке meals fields error_type=%s", safe_exception_summary(e))
+            logger.error("Ошибка при проверке meals fields error_type=%s", safe_exception_summary(e))
+            raise
 
         # ai_usage_logs универсальная таблица usage/tokens/cost
         try:

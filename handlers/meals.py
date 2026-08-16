@@ -5,6 +5,7 @@ import json
 import re
 import math
 import html
+import secrets
 from dataclasses import dataclass
 from datetime import date
 from aiogram import Router, F
@@ -33,7 +34,13 @@ from utils.keyboards import (
     kbju_edit_type_menu,
     push_menu_stack,
 )
-from database.repositories import MealRepository, AnalyticsRepository, WorkoutRepository
+from database.repositories import (
+    AnalyticsRepository,
+    MealRepository,
+    MealSaveResult,
+    MealSaveStatus,
+    WorkoutRepository,
+)
 from services.gemini_service import (
     gemini_service,
     GeminiServiceTemporaryUnavailableError,
@@ -73,6 +80,28 @@ from config import DEEPSEEK_MODEL
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+MEAL_SAVE_TOKEN_BYTES = 16
+MEAL_SAVE_TOKEN_LENGTH = 22
+MEAL_SAVE_CALLBACK_TOKEN_LENGTH = 12
+STALE_MEAL_SAVE_TEXT = "Этот приём пищи уже сохранён или запрос устарел."
+
+
+def _new_meal_save_token() -> str:
+    """Returns an opaque 128-bit identifier without user-derived data."""
+    return secrets.token_urlsafe(MEAL_SAVE_TOKEN_BYTES)
+
+
+def _is_valid_meal_save_token(value: object) -> bool:
+    return bool(
+        isinstance(value, str)
+        and len(value) == MEAL_SAVE_TOKEN_LENGTH
+        and re.fullmatch(r"[A-Za-z0-9_-]+", value)
+    )
+
+
+def _failed_meal_save_result(error_type: str) -> MealSaveResult:
+    return MealSaveResult(MealSaveStatus.FAILED, error_type=error_type)
 
 MEAL_TYPE_BUTTONS = {
     "🍳 Завтрак": MealType.BREAKFAST.value,
@@ -342,8 +371,18 @@ async def _send_ai_meal_preview(message: Message, state: FSMContext) -> None:
     items = draft.get("items") or []
     title = draft.get("analysis_title") or "🧾 AI-анализ приёма пищи"
     totals = _collect_ai_draft_totals(items)
+    save_token = draft.get("save_token")
+    if not _is_valid_meal_save_token(save_token):
+        save_token = _new_meal_save_token()
     await state.set_state(MealEntryStates.confirming_ai_meal)
-    await state.update_data(ai_pending_meal={**draft, "items": items, "total": totals})
+    await state.update_data(
+        ai_pending_meal={
+            **draft,
+            "items": items,
+            "total": totals,
+            "save_token": save_token,
+        }
+    )
     await message.answer(
         _format_ai_food_analysis_message(title, items, totals, saved=False),
         reply_markup=_build_ai_meal_preview_inline_menu(),
@@ -463,7 +502,10 @@ def _short_product_button_name(name: str) -> str:
     return clean[:32]
 
 
-def _build_photo_analysis_confirm_menu(items: list[dict] | None = None) -> InlineKeyboardMarkup:
+def _build_photo_analysis_confirm_menu(
+    items: list[dict] | None,
+    save_token: str,
+) -> InlineKeyboardMarkup:
     """Строит inline-меню подтверждения анализа еды по фото."""
     items = items or []
     rows: list[list[InlineKeyboardButton]] = []
@@ -472,7 +514,10 @@ def _build_photo_analysis_confirm_menu(items: list[dict] | None = None) -> Inlin
         rows.append([InlineKeyboardButton(text=f"✏️ {name}", callback_data=f"edit_photo_food_item:{idx}")])
     rows.append([
         InlineKeyboardButton(text="⚖️ Общий вес", callback_data="photo_total_weight"),
-        InlineKeyboardButton(text="✅ Сохранить", callback_data="save_photo_food_analysis"),
+        InlineKeyboardButton(
+            text="✅ Сохранить",
+            callback_data=f"save_photo_food_analysis:{save_token}",
+        ),
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -554,11 +599,15 @@ def _build_photo_analysis_cancel_menu() -> ReplyKeyboardMarkup:
     )
 
 
-async def _send_photo_analysis_confirmation(message: Message, items: list[dict]) -> None:
+async def _send_photo_analysis_confirmation(
+    message: Message,
+    items: list[dict],
+    save_token: str,
+) -> None:
     """Показывает результат анализа с inline-кнопками и нижней кнопкой полной отмены."""
     await message.answer(
         _format_photo_analysis_confirmation_text(items),
-        reply_markup=_build_photo_analysis_confirm_menu(items),
+        reply_markup=_build_photo_analysis_confirm_menu(items, save_token),
         parse_mode="HTML",
     )
     await message.answer(
@@ -1156,6 +1205,7 @@ async def _start_custom_product_creation(message: Message, state: FSMContext, *,
     await state.update_data(
         meal_type=meal_type,
         custom_product={},
+        custom_product_save_token=_new_meal_save_token(),
         pending_add_method=None,
         in_my_product_menu=False,
     )
@@ -1206,7 +1256,12 @@ def _format_callback_delta(value: float | int) -> str:
     return f"{value:g}"
 
 
-def _build_custom_product_value_keyboard(field: str, *, unit: str) -> InlineKeyboardMarkup:
+def _build_custom_product_value_keyboard(
+    field: str,
+    *,
+    unit: str,
+    save_token: str | None = None,
+) -> InlineKeyboardMarkup:
     """Inline-кнопки +/− для ввода КБЖУ и веса съеденного продукта."""
     if field == "calories":
         delta_rows = [
@@ -1234,7 +1289,10 @@ def _build_custom_product_value_keyboard(field: str, *, unit: str) -> InlineKeyb
         ]
         for delta_row in delta_rows
     ]
-    rows.append([InlineKeyboardButton(text="✅ Сохранить", callback_data=f"custom_vsave:{field}")])
+    save_callback = f"custom_vsave:{field}"
+    if field == "amount" and _is_valid_meal_save_token(save_token):
+        save_callback = f"{save_callback}:{save_token}"
+    rows.append([InlineKeyboardButton(text="✅ Сохранить", callback_data=save_callback)])
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"custom_vback:{field}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1286,8 +1344,16 @@ CUSTOM_PRODUCT_FIELDS = {
 async def _show_custom_product_value_editor(message: Message, state: FSMContext, field: str, value: float = 0) -> None:
     """Показывает редактор значения для шага создания своего продукта."""
     config = CUSTOM_PRODUCT_FIELDS[field]
+    data = await state.get_data()
+    save_token = data.get("custom_product_save_token")
+    if not _is_valid_meal_save_token(save_token):
+        save_token = _new_meal_save_token()
     await state.set_state(config["state"])
-    await state.update_data(custom_product_current_field=field, custom_product_draft_value=float(value))
+    await state.update_data(
+        custom_product_current_field=field,
+        custom_product_draft_value=float(value),
+        custom_product_save_token=save_token,
+    )
     await message.answer(
         _render_custom_product_value_editor_text(
             step=config["step"],
@@ -1296,7 +1362,11 @@ async def _show_custom_product_value_editor(message: Message, state: FSMContext,
             unit=config["unit"],
             note=config["note"],
         ),
-        reply_markup=_build_custom_product_value_keyboard(field, unit=config["unit"]),
+        reply_markup=_build_custom_product_value_keyboard(
+            field,
+            unit=config["unit"],
+            save_token=save_token,
+        ),
         parse_mode="HTML",
     )
 
@@ -1366,7 +1436,11 @@ async def custom_product_value_change(callback: CallbackQuery, state: FSMContext
             unit=config["unit"],
             note=config["note"],
         ),
-        reply_markup=_build_custom_product_value_keyboard(field, unit=config["unit"]),
+        reply_markup=_build_custom_product_value_keyboard(
+            field,
+            unit=config["unit"],
+            save_token=data.get("custom_product_save_token"),
+        ),
         parse_mode="HTML",
     )
 
@@ -1374,7 +1448,8 @@ async def custom_product_value_change(callback: CallbackQuery, state: FSMContext
 @router.callback_query(lambda c: c.data.startswith("custom_vback:"))
 async def custom_product_value_back(callback: CallbackQuery, state: FSMContext):
     """Возвращает на предыдущий шаг создания продукта из inline-редактора."""
-    _, field = callback.data.split(":", maxsplit=1)
+    parts = callback.data.split(":", maxsplit=2)
+    _, field = parts[:2]
     if field not in CUSTOM_PRODUCT_FIELDS:
         await callback.answer("Неизвестное поле", show_alert=True)
         return
@@ -1386,11 +1461,21 @@ async def custom_product_value_back(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(lambda c: c.data.startswith("custom_vsave:"))
 async def custom_product_value_save(callback: CallbackQuery, state: FSMContext):
     """Фиксирует введённое значение и только после этого переводит к следующему шагу."""
-    _, field = callback.data.split(":", maxsplit=1)
+    parts = callback.data.split(":", maxsplit=2)
+    _, field = parts[:2]
     if field not in CUSTOM_PRODUCT_FIELDS:
         await callback.answer("Неизвестное поле", show_alert=True)
         return
     data = await state.get_data()
+    if field == "amount":
+        callback_token = parts[2] if len(parts) == 3 else None
+        current_token = data.get("custom_product_save_token")
+        if (
+            not _is_valid_meal_save_token(callback_token)
+            or callback_token != current_token
+        ):
+            await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+            return
     value = float(data.get("custom_product_draft_value") or 0)
     if field == "amount" and value <= 0:
         await callback.answer("Вес должен быть больше 0 г", show_alert=True)
@@ -2547,11 +2632,21 @@ def _build_my_product_confirm_keyboard(
     page: int,
     product_index: int | None = None,
     *,
+    save_token: str,
     include_delete: bool = False,
 ) -> InlineKeyboardMarkup:
     product_idx = "" if product_index is None else str(product_index)
+    callback_token = save_token[:MEAL_SAVE_CALLBACK_TOKEN_LENGTH]
     rows = [
-        [InlineKeyboardButton(text="✅ Добавить", callback_data=f"my_product_confirm:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
+        [
+            InlineKeyboardButton(
+                text="✅ Добавить",
+                callback_data=(
+                    f"mpc:{meal_type}:{page}:{source_meal_id}:"
+                    f"{product_idx}:{callback_token}"
+                ),
+            )
+        ],
         [InlineKeyboardButton(text="✏️ Изменить вес", callback_data=f"my_product_edit_weight:{meal_type}:{page}:{source_meal_id}:{product_idx}")],
     ]
     if include_delete:
@@ -2565,6 +2660,20 @@ def _build_my_product_confirm_keyboard(
         )
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_product_back:{meal_type}:{page}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _ensure_my_product_save_token(
+    state: FSMContext,
+    data: dict | None = None,
+    *,
+    renew: bool = False,
+) -> str:
+    current_data = data if data is not None else await state.get_data()
+    save_token = current_data.get("my_product_save_token")
+    if renew or not _is_valid_meal_save_token(save_token):
+        save_token = _new_meal_save_token()
+        await state.update_data(my_product_save_token=save_token)
+    return save_token
 
 
 def _render_my_product_weight_editor_text(item: MyProductItem, draft_amount_g: int | None = None) -> str:
@@ -2860,6 +2969,7 @@ async def my_product_pick(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("❌ Не удалось найти продукт в истории.")
         return
     my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    save_token = await _ensure_my_product_save_token(state, renew=True)
     await state.update_data(
         my_product_source_meal_id=source_meal_id,
         my_product_source_product_idx=product_index,
@@ -2870,7 +2980,13 @@ async def my_product_pick(callback: CallbackQuery, state: FSMContext):
     )
     await callback.message.answer(
         _render_my_product_confirm_text(meal_type, my_product_item, amount_g=my_product_item.amount_g),
-        reply_markup=_build_my_product_confirm_keyboard(source_meal_id, meal_type, page, product_index),
+        reply_markup=_build_my_product_confirm_keyboard(
+            source_meal_id,
+            meal_type,
+            page,
+            product_index,
+            save_token=save_token,
+        ),
         parse_mode="HTML",
     )
 
@@ -3039,6 +3155,7 @@ async def my_product_weight_save_draft(callback: CallbackQuery, state: FSMContex
     my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
     new_amount = int(data.get("my_product_weight_draft_g") or my_product_item.amount_g or 100)
     adjusted = _build_adjusted_my_product_item(my_product_item, new_amount)
+    save_token = await _ensure_my_product_save_token(state, data)
 
     await state.set_state(MealEntryStates.choosing_meal_type)
     await state.update_data(
@@ -3053,6 +3170,7 @@ async def my_product_weight_save_draft(callback: CallbackQuery, state: FSMContex
             meal_type,
             int(data.get("my_products_page") or 1),
             product_index,
+            save_token=save_token,
             include_delete=data.get("my_product_pick_origin") == "custom" or data.get("in_my_product_menu"),
         ),
         parse_mode="HTML",
@@ -3080,6 +3198,7 @@ async def my_product_weight_back(callback: CallbackQuery, state: FSMContext):
     custom_amount = data.get("my_product_custom_amount_g")
     display_item = _build_adjusted_my_product_item(my_product_item, int(custom_amount)) if custom_amount else my_product_item
     display_amount = int(custom_amount or my_product_item.amount_g or 100)
+    save_token = await _ensure_my_product_save_token(state, data)
 
     await state.set_state(MealEntryStates.choosing_meal_type)
     await state.update_data(my_product_weight_edit_mode=False, my_product_weight_draft_g=None)
@@ -3090,20 +3209,33 @@ async def my_product_weight_back(callback: CallbackQuery, state: FSMContext):
             meal_type,
             int(data.get("my_products_page") or 1),
             product_index,
+            save_token=save_token,
             include_delete=data.get("my_product_pick_origin") == "custom" or data.get("in_my_product_menu"),
         ),
         parse_mode="HTML",
     )
 
 
-@router.callback_query(lambda c: c.data.startswith("my_product_confirm:"))
+@router.callback_query(lambda c: c.data.startswith("mpc:"))
 async def my_product_confirm(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
     user_id = str(callback.from_user.id)
     data = await state.get_data()
     parts = callback.data.split(":")
-    _, meal_type_raw, _page_str, source_meal_id_str, *product_idx_parts = parts
-    product_index = _parse_my_product_index(product_idx_parts[0] if product_idx_parts else data.get("my_product_source_product_idx"))
+    if len(parts) != 6:
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+    _, meal_type_raw, _page_str, source_meal_id_str, product_idx_raw, callback_token = parts
+    save_token = data.get("my_product_save_token")
+    if (
+        not _is_valid_meal_save_token(save_token)
+        or callback_token != save_token[:MEAL_SAVE_CALLBACK_TOKEN_LENGTH]
+    ):
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+    await callback.answer()
+    product_index = _parse_my_product_index(
+        product_idx_raw or data.get("my_product_source_product_idx")
+    )
     source_meal_id = int(source_meal_id_str)
     source_meal = MealRepository.get_meal_by_id(source_meal_id, user_id)
     if not source_meal:
@@ -3119,7 +3251,8 @@ async def my_product_confirm(callback: CallbackQuery, state: FSMContext):
     custom_amount = data.get("my_product_custom_amount_g")
     old_amount = float(my_product_item.amount_g or 100)
     ratio = float(custom_amount) / old_amount if custom_amount else 1.0
-    new_meal = MealRepository.save_meal(
+    save_result = MealRepository.save_meal_idempotent(
+        save_token=save_token,
         user_id=user_id,
         raw_query=my_product_item.title,
         description=my_product_item.title,
@@ -3132,18 +3265,36 @@ async def my_product_confirm(callback: CallbackQuery, state: FSMContext):
         api_details=source_meal.api_details,
         meal_type=meal_type,
     )
+    if save_result.status is MealSaveStatus.FAILED or save_result.meal is None:
+        await callback.message.answer(
+            "Не удалось добавить продукт. Черновик сохранён — попробуй ещё раз."
+        )
+        return
+
+    new_meal = save_result.meal
     if not hasattr(callback.message.bot, "last_meal_ids"):
         callback.message.bot.last_meal_ids = {}
     callback.message.bot.last_meal_ids[user_id] = new_meal.id
+    await state.update_data(my_product_save_token=None)
     await _keep_meal_entry_open_after_save(
         callback.message,
         state,
         user_id=user_id,
         entry_date=entry_date,
         meal_type=meal_type,
-        intro_lines=["✅ Добавил продукт."],
+        intro_lines=[
+            "✅ Приём пищи уже сохранён."
+            if save_result.status is MealSaveStatus.ALREADY_SAVED
+            else "✅ Добавил продукт."
+        ],
         parse_mode="HTML",
     )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_product_confirm:"))
+async def reject_legacy_my_product_confirm(callback: CallbackQuery):
+    """Rejects old unbound Add callbacks instead of applying current FSM data."""
+    await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
 
 
 @router.message(lambda m: (m.text or "").strip() in MEALS_BUTTON_ALIASES)
@@ -3313,7 +3464,12 @@ async def custom_product_create_from_reply(message: Message, state: FSMContext):
         return
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     await state.set_state(MealEntryStates.custom_product_name)
-    await state.update_data(meal_type=meal_type, custom_product={}, in_my_product_menu=False)
+    await state.update_data(
+        meal_type=meal_type,
+        custom_product={},
+        custom_product_save_token=_new_meal_save_token(),
+        in_my_product_menu=False,
+    )
     await message.answer(
         _format_custom_product_name_step(),
         reply_markup=_build_custom_product_reply_keyboard(),
@@ -3443,7 +3599,12 @@ async def custom_product_back(callback: CallbackQuery, state: FSMContext):
     _, meal_type = callback.data.split(":", maxsplit=1)
     data = await state.get_data()
     await state.set_state(MealEntryStates.choosing_meal_type)
-    await state.update_data(meal_type=meal_type, pending_add_method=None, in_my_product_menu=False)
+    await state.update_data(
+        meal_type=meal_type,
+        pending_add_method=None,
+        custom_product_save_token=None,
+        in_my_product_menu=False,
+    )
     if data.get("meal_entry_open"):
         await _restore_current_meal_entry_screen(callback.message, state, data, user_id=str(callback.from_user.id))
         return
@@ -3456,7 +3617,12 @@ async def custom_product_create(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     _, meal_type = callback.data.split(":", maxsplit=1)
     await state.set_state(MealEntryStates.custom_product_name)
-    await state.update_data(meal_type=meal_type, custom_product={}, in_my_product_menu=False)
+    await state.update_data(
+        meal_type=meal_type,
+        custom_product={},
+        custom_product_save_token=_new_meal_save_token(),
+        in_my_product_menu=False,
+    )
     await callback.message.answer(
         _format_custom_product_name_step(),
         reply_markup=_build_custom_product_reply_keyboard(),
@@ -3506,6 +3672,7 @@ async def custom_product_pick(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("❌ Не удалось найти свой продукт.")
         return
     my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
+    save_token = await _ensure_my_product_save_token(state, renew=True)
     await state.update_data(
         my_product_source_meal_id=source_meal_id,
         my_product_source_product_idx=product_index,
@@ -3522,6 +3689,7 @@ async def custom_product_pick(callback: CallbackQuery, state: FSMContext):
             meal_type,
             int(page_str),
             product_index,
+            save_token=save_token,
             include_delete=True,
         ),
         parse_mode="HTML",
@@ -3618,7 +3786,12 @@ async def handle_custom_product_name(message: Message, state: FSMContext):
         return
     if text in BACK_BUTTON_TEXTS or text == "❌ Отмена":
         await state.set_state(MealEntryStates.choosing_meal_type)
-        await state.update_data(custom_product={}, pending_add_method=None, in_my_product_menu=False)
+        await state.update_data(
+            custom_product={},
+            custom_product_save_token=None,
+            pending_add_method=None,
+            in_my_product_menu=False,
+        )
         await _show_input_methods(message, state, user_id=str(message.from_user.id))
         return
     if len(text) < 2:
@@ -3645,7 +3818,12 @@ async def _handle_custom_product_macro(
         return
     if text == "❌ Отмена":
         await state.set_state(MealEntryStates.choosing_meal_type)
-        await state.update_data(custom_product={}, pending_add_method=None, in_my_product_menu=False)
+        await state.update_data(
+            custom_product={},
+            custom_product_save_token=None,
+            pending_add_method=None,
+            in_my_product_menu=False,
+        )
         await _show_input_methods(message, state, user_id=str(message.from_user.id))
         return
     value = _parse_non_negative_number(text)
@@ -3715,10 +3893,19 @@ async def handle_custom_product_amount(message: Message, state: FSMContext):
     )
 
 
-async def _save_custom_product(message: Message, state: FSMContext, *, user_id: str | None = None) -> None:
+async def _save_custom_product(
+    message: Message,
+    state: FSMContext,
+    *,
+    user_id: str | None = None,
+) -> MealSaveResult:
     """Сохраняет свой продукт и добавляет съеденную порцию в приём пищи."""
     data = await state.get_data()
     product = dict(data.get("custom_product") or {})
+    save_token = data.get("custom_product_save_token")
+    if not product or not _is_valid_meal_save_token(save_token):
+        await message.answer(STALE_MEAL_SAVE_TEXT)
+        return _failed_meal_save_result("stale_draft")
     name = str(product.get("name") or "Продукт").strip()
     amount_g = max(1.0, float(product.get("amount") or 100))
     ratio = amount_g / 100.0
@@ -3758,7 +3945,8 @@ async def _save_custom_product(message: Message, state: FSMContext, *, user_id: 
         ensure_ascii=False,
     )
     resolved_user_id = user_id or str(message.from_user.id)
-    saved_meal = MealRepository.save_meal(
+    save_result = MealRepository.save_meal_idempotent(
+        save_token=save_token,
         user_id=resolved_user_id,
         raw_query=name,
         description=name,
@@ -3771,9 +3959,23 @@ async def _save_custom_product(message: Message, state: FSMContext, *, user_id: 
         meal_type=meal_type,
         is_manually_corrected=True,
     )
+    if save_result.status is MealSaveStatus.FAILED or save_result.meal is None:
+        await message.answer(
+            "Не удалось сохранить продукт. Черновик сохранён — попробуй ещё раз."
+        )
+        return save_result
+
+    saved_meal = save_result.meal
     if not hasattr(message.bot, "last_meal_ids"):
         message.bot.last_meal_ids = {}
     message.bot.last_meal_ids[resolved_user_id] = saved_meal.id
+
+    await state.update_data(
+        custom_product=None,
+        custom_product_save_token=None,
+        custom_product_draft_value=None,
+        custom_product_current_field=None,
+    )
 
     await _keep_meal_entry_open_after_save(
         message,
@@ -3782,7 +3984,11 @@ async def _save_custom_product(message: Message, state: FSMContext, *, user_id: 
         entry_date=entry_date,
         meal_type=meal_type,
         intro_lines=[
-            "✅ <b>Свой продукт создан и добавлен.</b>",
+            (
+                "✅ <b>Приём пищи уже сохранён.</b>"
+                if save_result.status is MealSaveStatus.ALREADY_SAVED
+                else "✅ <b>Свой продукт создан и добавлен.</b>"
+            ),
             "",
             f"<b>Продукт:</b> {html.escape(name)}",
             f"<b>Порция:</b> {amount_g:g} г",
@@ -3802,6 +4008,7 @@ async def _save_custom_product(message: Message, state: FSMContext, *, user_id: 
         ],
         parse_mode="HTML",
     )
+    return save_result
 
 
 async def _handle_provider_food_input(
@@ -4118,11 +4325,20 @@ async def back_to_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
     )
 
 
-async def _save_ai_meal_draft(message: Message, state: FSMContext, *, user_id: str) -> None:
+async def _save_ai_meal_draft(
+    message: Message,
+    state: FSMContext,
+    *,
+    user_id: str,
+) -> MealSaveResult:
     """Сохраняет подтверждённый текстовый AI-черновик без привязки к типу Telegram-события."""
     data = await state.get_data()
     pending = data.get("ai_pending_meal") or {}
     items = pending.get("items") or []
+    save_token = pending.get("save_token")
+    if not items or not _is_valid_meal_save_token(save_token):
+        await message.answer(STALE_MEAL_SAVE_TEXT)
+        return _failed_meal_save_result("stale_draft")
     total = _collect_ai_draft_totals(items)
     raw_query = pending.get("raw_query") or "[AI-анализ]"
     meal_type = normalize_meal_type(pending.get("meal_type") or data.get("meal_type"), fallback=MealType.SNACK.value)
@@ -4133,7 +4349,8 @@ async def _save_ai_meal_draft(message: Message, state: FSMContext, *, user_id: s
         entry_date = date.today()
 
     _, api_details = _build_meal_update_payload(items)
-    saved_meal = MealRepository.save_meal(
+    save_result = MealRepository.save_meal_idempotent(
+        save_token=save_token,
         user_id=user_id,
         raw_query=raw_query,
         calories=total["calories"],
@@ -4146,6 +4363,13 @@ async def _save_ai_meal_draft(message: Message, state: FSMContext, *, user_id: s
         meal_type=meal_type,
         is_manually_corrected=bool(any(bool(p.get("is_manually_corrected")) for p in items)),
     )
+    if save_result.status is MealSaveStatus.FAILED or save_result.meal is None:
+        await message.answer(
+            "Не удалось сохранить приём пищи. Черновик сохранён — попробуй ещё раз."
+        )
+        return save_result
+
+    saved_meal = save_result.meal
     if not hasattr(message.bot, "last_meal_ids"):
         message.bot.last_meal_ids = {}
     message.bot.last_meal_ids[user_id] = saved_meal.id
@@ -4157,16 +4381,20 @@ async def _save_ai_meal_draft(message: Message, state: FSMContext, *, user_id: s
         user_id=user_id,
         entry_date=entry_date,
         meal_type=meal_type,
-        intro_lines=["✅ <b>Продукт сохранён.</b>"],
+        intro_lines=[
+            "✅ <b>Приём пищи уже сохранён.</b>"
+            if save_result.status is MealSaveStatus.ALREADY_SAVED
+            else "✅ <b>Продукт сохранён.</b>"
+        ],
         parse_mode="HTML",
     )
+    return save_result
 
 
-@router.callback_query(MealEntryStates.confirming_ai_meal, F.data == "save_ai_meal_draft")
-async def save_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
-    """Сохраняет подтверждённый черновик текстового AI-анализа в выбранный приём пищи."""
-    await callback.answer()
-    await _save_ai_meal_draft(callback.message, state, user_id=str(callback.from_user.id))
+@router.callback_query(F.data == "save_ai_meal_draft")
+async def reject_legacy_ai_meal_save_callback(callback: CallbackQuery):
+    """Rejects pre-token Save buttons instead of applying them to a newer FSM draft."""
+    await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
 
 
 @router.callback_query(MealEntryStates.confirming_ai_meal, F.data == "edit_ai_meal_draft")
@@ -4353,6 +4581,7 @@ async def _handle_food_photo_analysis(
         )
         return
 
+    save_token = _new_meal_save_token()
     await state.set_state(MealEntryStates.confirming_photo_analysis)
     await state.update_data(
         photo_analysis_items=items,
@@ -4360,8 +4589,9 @@ async def _handle_food_photo_analysis(
         photo_analysis_provider=final_provider,
         entry_date=entry_date.isoformat(),
         meal_type=meal_type,
+        photo_save_token=save_token,
     )
-    await _send_photo_analysis_confirmation(message, items)
+    await _send_photo_analysis_confirmation(message, items, save_token)
 
 
 @router.message(MealEntryStates.waiting_for_photo, F.photo)
@@ -4509,8 +4739,17 @@ async def _cancel_photo_analysis_confirmation(message: Message, state: FSMContex
     await message.answer("❌ Анализ блюда отменён.", reply_markup=main_menu)
 
 
-async def _save_photo_analysis_confirmation(message: Message, state: FSMContext, user_id: str, data: dict):
+async def _save_photo_analysis_confirmation(
+    message: Message,
+    state: FSMContext,
+    user_id: str,
+    data: dict,
+) -> MealSaveResult:
     items = data.get("photo_analysis_items") or []
+    save_token = data.get("photo_save_token")
+    if not items or not _is_valid_meal_save_token(save_token):
+        await message.answer(STALE_MEAL_SAVE_TEXT)
+        return _failed_meal_save_result("stale_draft")
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
     try:
@@ -4534,7 +4773,8 @@ async def _save_photo_analysis_confirmation(message: Message, state: FSMContext,
             }
         )
 
-    saved_meal = MealRepository.save_meal(
+    save_result = MealRepository.save_meal_idempotent(
+        save_token=save_token,
         user_id=user_id,
         raw_query=raw_query,
         calories=totals_for_db["calories"],
@@ -4545,6 +4785,13 @@ async def _save_photo_analysis_confirmation(message: Message, state: FSMContext,
         products_json=json.dumps(saved_items),
         meal_type=meal_type,
     )
+    if save_result.status is MealSaveStatus.FAILED or save_result.meal is None:
+        await message.answer(
+            "Не удалось сохранить приём пищи. Черновик сохранён — попробуй ещё раз."
+        )
+        return save_result
+
+    saved_meal = save_result.meal
 
     if not hasattr(message.bot, "last_meal_ids"):
         message.bot.last_meal_ids = {}
@@ -4557,6 +4804,7 @@ async def _save_photo_analysis_confirmation(message: Message, state: FSMContext,
         photo_analysis_editing_idx=None,
         photo_total_weight_draft_items=None,
         photo_total_weight_original_items=None,
+        photo_save_token=None,
     )
     await _clear_photo_comment_fields(state)
     await _keep_meal_entry_open_after_save(
@@ -4565,7 +4813,13 @@ async def _save_photo_analysis_confirmation(message: Message, state: FSMContext,
         user_id=user_id,
         entry_date=entry_date,
         meal_type=meal_type,
+        intro_lines=(
+            ["✅ Приём пищи уже сохранён."]
+            if save_result.status is MealSaveStatus.ALREADY_SAVED
+            else None
+        ),
     )
+    return save_result
 
 
 @router.callback_query(lambda c: c.data.startswith("edit_photo_food_item:") or c.data.startswith("photo_edit:"))
@@ -4674,7 +4928,10 @@ async def photo_analysis_delete_product(callback: CallbackQuery, state: FSMConte
     await _edit_or_send_photo_analysis_message(
         callback.message,
         _format_photo_analysis_confirmation_text(updated_items),
-        reply_markup=_build_photo_analysis_confirm_menu(updated_items),
+        reply_markup=_build_photo_analysis_confirm_menu(
+            updated_items,
+            data.get("photo_save_token"),
+        ),
         parse_mode="HTML",
     )
 
@@ -4691,7 +4948,10 @@ async def photo_analysis_weight_done(callback: CallbackQuery, state: FSMContext)
     await _edit_or_send_photo_analysis_message(
         callback.message,
         _format_photo_analysis_confirmation_text(items),
-        reply_markup=_build_photo_analysis_confirm_menu(items),
+        reply_markup=_build_photo_analysis_confirm_menu(
+            items,
+            data.get("photo_save_token"),
+        ),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -4814,7 +5074,10 @@ async def photo_analysis_total_weight_save(callback: CallbackQuery, state: FSMCo
     )
     await callback.message.edit_text(
         _format_photo_analysis_confirmation_text(draft_items),
-        reply_markup=_build_photo_analysis_confirm_menu(draft_items),
+        reply_markup=_build_photo_analysis_confirm_menu(
+            draft_items,
+            data.get("photo_save_token"),
+        ),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -4834,7 +5097,10 @@ async def photo_analysis_total_weight_back(callback: CallbackQuery, state: FSMCo
     )
     await callback.message.edit_text(
         _format_photo_analysis_confirmation_text(items),
-        reply_markup=_build_photo_analysis_confirm_menu(items),
+        reply_markup=_build_photo_analysis_confirm_menu(
+            items,
+            data.get("photo_save_token"),
+        ),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -4849,16 +5115,39 @@ async def photo_analysis_cancel(callback: CallbackQuery, state: FSMContext):
     await _cancel_photo_analysis_confirmation(callback.message, state, data)
 
 
-@router.callback_query(lambda c: c.data == "save_photo_food_analysis" or c.data == "photo_save")
+@router.callback_query(lambda c: c.data.startswith("save_photo_food_analysis:"))
 async def photo_analysis_save(callback: CallbackQuery, state: FSMContext):
     """Сохраняет анализ фото через inline-кнопку."""
     data = await state.get_data()
+    callback_token = callback.data.split(":", maxsplit=1)[1]
+    current_token = data.get("photo_save_token")
+    if (
+        not _is_valid_meal_save_token(callback_token)
+        or callback_token != current_token
+    ):
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
     if not data.get("photo_analysis_items"):
-        await callback.answer("Черновик анализа фото не найден", show_alert=True)
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
         return
     await callback.answer()
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await _save_photo_analysis_confirmation(callback.message, state, str(callback.from_user.id), data)
+    save_result = await _save_photo_analysis_confirmation(
+        callback.message,
+        state,
+        str(callback.from_user.id),
+        data,
+    )
+    if save_result.status is not MealSaveStatus.FAILED:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+
+
+@router.callback_query(lambda c: c.data in {"save_photo_food_analysis", "photo_save"})
+async def reject_legacy_photo_meal_save_callback(callback: CallbackQuery):
+    """Rejects old unbound Save buttons after deployment."""
+    await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
 
 
 @router.message(MealEntryStates.confirming_photo_analysis)
@@ -4966,6 +5255,7 @@ async def _handle_label_photo_analysis(
         "kbju_per_100g": kbju_per_100g,
         "product_name": product_name,
         "entry_date": entry_date.isoformat(),
+        "label_save_token": _new_meal_save_token(),
     }
     if meal_source:
         update_payload["meal_source"] = meal_source
@@ -5120,6 +5410,11 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
         await message.answer("Скорректируй вес кнопками или нажми ✅ Сохранить / ⬅️ Назад.")
         return
 
+    save_token = data.get("label_save_token")
+    if not _is_valid_meal_save_token(save_token):
+        await message.answer(STALE_MEAL_SAVE_TEXT)
+        return
+
     user_id = str(message.from_user.id)
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
@@ -5168,7 +5463,8 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
         }
     ])
 
-    saved_meal = MealRepository.save_meal(
+    save_result = MealRepository.save_meal_idempotent(
+        save_token=save_token,
         user_id=user_id,
         raw_query=raw_query,
         calories=totals_for_db["calories"],
@@ -5179,10 +5475,22 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
         products_json=products_json,
         meal_type=meal_type,
     )
+    if save_result.status is MealSaveStatus.FAILED or save_result.meal is None:
+        await message.answer(
+            "Не удалось сохранить приём пищи. Данные этикетки сохранены — попробуй ещё раз."
+        )
+        return
+
+    saved_meal = save_result.meal
 
     if not hasattr(message.bot, "last_meal_ids"):
         message.bot.last_meal_ids = {}
     message.bot.last_meal_ids[user_id] = saved_meal.id
+
+    await state.update_data(
+        label_save_token=None,
+        selected_label_weight=None,
+    )
 
     await _keep_meal_entry_open_after_save(
         message,
@@ -5190,7 +5498,11 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
         user_id=user_id,
         entry_date=entry_date,
         meal_type=meal_type,
-        intro_lines=lines,
+        intro_lines=(
+            ["✅ Приём пищи уже сохранён."]
+            if save_result.status is MealSaveStatus.ALREADY_SAVED
+            else lines
+        ),
         parse_mode="HTML",
     )
 
@@ -6599,6 +6911,7 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
         product_index = _parse_my_product_index(data.get("my_product_source_product_idx"))
         my_product_item = _get_my_product_from_source_meal(source_meal, product_index)
         adjusted = _build_adjusted_my_product_item(my_product_item, new_weight)
+        save_token = await _ensure_my_product_save_token(state, data)
         await state.set_state(MealEntryStates.choosing_meal_type)
         await state.update_data(
             my_product_custom_amount_g=new_weight,
@@ -6612,6 +6925,7 @@ async def meal_weight_manual_input_value(message: Message, state: FSMContext):
                 meal_type,
                 int(data.get("my_products_page") or 1),
                 product_index,
+                save_token=save_token,
             ),
             parse_mode="HTML",
         )
@@ -7201,121 +7515,6 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
             reply_markup=_build_weight_products_keyboard(saved_products),
         )
         await callback.message.answer("✅ Продукт удалён")
-
-
-@router.message(MealEntryStates.editing_meal_composition)
-async def handle_meal_composition_edit(message: Message, state: FSMContext):
-    """Обрабатывает изменение состава продуктов через ИИ."""
-    user_id = str(message.from_user.id)
-    user_text = message.text.strip()
-    
-    # Проверяем, не является ли это кнопкой меню
-    menu_buttons = ["⬅️ Назад", "📊 Дневной отчёт", "➕ Внести ещё приём", "✏️ Редактировать"]
-    if user_text in menu_buttons or user_text in MAIN_MENU_BUTTON_ALIASES:
-        await state.clear()
-        if user_text == "⬅️ Назад":
-            from handlers.common import go_back
-            await go_back(message, state)
-        elif user_text in MAIN_MENU_BUTTON_ALIASES:
-            from handlers.common import go_main_menu
-            await go_main_menu(message, state)
-        else:
-            await message.answer("Редактирование отменено.")
-        return
-    
-    if not user_text:
-        await message.answer("Напиши, пожалуйста, новый состав продуктов 🙏")
-        return
-    
-    data = await state.get_data()
-    meal_id = data.get("meal_id")
-    target_date_str = data.get("target_date", date.today().isoformat())
-    
-    if not meal_id:
-        await message.answer("❌ Не удалось найти запись для обновления.")
-        await state.clear()
-        return
-    meal = MealRepository.get_meal_by_id(meal_id, user_id)
-    changed_meal_type = normalize_meal_type(getattr(meal, "meal_type", None)) if meal else None
-    
-    # Показываем сообщение об анализе
-    await message.answer("Считаю КБЖУ с помощью ИИ, секунду...")
-    
-    # Получаем КБЖУ через Gemini (как в "ввести прием пищи")
-    try:
-        kbju_data = await _run_gemini_task(gemini_service.estimate_kbju, user_text)
-    except Exception as e:
-        await _send_ai_error_message(message, e)
-        return
-    
-    if not kbju_data or "total" not in kbju_data:
-        await message.answer(
-            "⚠️ Не получилось определить КБЖУ.\n"
-            "Попробуй ещё раз или используй другой способ редактирования."
-        )
-        return
-    
-    items = kbju_data.get("items", [])
-    total = kbju_data.get("total", {})
-    
-    # Безопасное преобразование значений
-    def safe_float(value) -> float:
-        try:
-            if value is None:
-                return 0.0
-            return float(value)
-        except (TypeError, ValueError):
-            return 0.0
-    
-    totals_for_db = {
-        "calories": safe_float(total.get("kcal")),
-        "protein": safe_float(total.get("protein")),
-        "fat": safe_float(total.get("fat")),
-        "carbs": safe_float(total.get("carbs")),
-    }
-    
-    # Обновляем запись
-    success = MealRepository.update_meal(
-        meal_id=meal_id,
-        user_id=user_id,
-        description=user_text,
-        calories=totals_for_db["calories"],
-        protein=totals_for_db["protein"],
-        fat=totals_for_db["fat"],
-        carbs=totals_for_db["carbs"],
-        products_json=json.dumps(items),
-    )
-    
-    if not success:
-        await message.answer("❌ Не удалось обновить запись.")
-        await state.clear()
-        return
-    
-    await state.clear()
-    
-    # Показываем обновлённый день
-    if isinstance(target_date_str, str):
-        try:
-            target_date = date.fromisoformat(target_date_str)
-        except ValueError:
-            target_date = date.today()
-    else:
-        target_date = date.today()
-    
-    await message.answer("✅ Состав продуктов обновлён! КБЖУ пересчитано через ИИ.")
-    await _render_day_meals_messages(
-        message,
-        user_id,
-        target_date,
-        include_back=True,
-        changed_meal_type=changed_meal_type,
-    )
-
-
-@router.message(MealEntryStates.editing_meal)
-async def handle_meal_edit_input(message: Message, state: FSMContext):
-    """Поддерживает старое FSM-состояние через действующий Gemini-сценарий."""
-    await handle_meal_composition_edit(message, state)
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_del:"))

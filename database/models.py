@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Text,
     Boolean,
+    Index,
     UniqueConstraint,
     JSON,
 )
@@ -99,6 +100,8 @@ class Measurement(Base):
 class Meal(Base):
     """Модель приёма пищи."""
     __tablename__ = "meals"
+    __table_args__ = (Index("uq_meals_save_token", "save_token", unique=True),)
+
     id = Column(Integer, primary_key=True)
     user_id = Column(String, nullable=False)
     description = Column(String, nullable=True)
@@ -112,6 +115,7 @@ class Meal(Base):
     is_manually_corrected = Column(Boolean, default=False, nullable=False)
     meal_type = Column(String, nullable=False, default="snack", index=True)
     date = Column(Date, default=date.today)
+    save_token = Column(String(64), nullable=True)
 
 
 class MealCompletionComment(Base):

@@ -1,5 +1,5 @@
 """Репозитории для работы с базой данных."""
-from .meal_repository import MealRepository
+from .meal_repository import MealRepository, MealSaveResult, MealSaveStatus
 from .workout_repository import WorkoutRepository
 from .weight_repository import WeightRepository
 from .water_repository import QuickWaterMessageRepository, WaterRepository
@@ -19,6 +19,8 @@ from .evening_analysis_notification_repository import EveningAnalysisNotificatio
 
 __all__ = [
     "MealRepository",
+    "MealSaveResult",
+    "MealSaveStatus",
     "WorkoutRepository",
     "WeightRepository",
     "WaterRepository",

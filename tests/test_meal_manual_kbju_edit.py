@@ -247,7 +247,10 @@ def test_custom_product_amount_step_initial_value_is_zero():
     message.answer.assert_awaited_once()
     assert "Текущее значение: <b>0 г</b>" in message.answer.await_args.args[0]
     state.update_data.assert_any_await(custom_product={"carbs": 12}, custom_product_draft_value=None)
-    state.update_data.assert_any_await(custom_product_current_field="amount", custom_product_draft_value=0.0)
+    editor_update = state.update_data.await_args_list[-1].kwargs
+    assert editor_update["custom_product_current_field"] == "amount"
+    assert editor_update["custom_product_draft_value"] == 0.0
+    assert len(editor_update["custom_product_save_token"]) == 22
 
 
 def test_custom_product_value_editor_sends_single_inline_editor():
@@ -258,7 +261,11 @@ def test_custom_product_value_editor_sends_single_inline_editor():
     from handlers.meals import _show_custom_product_value_editor
 
     message = SimpleNamespace(answer=AsyncMock())
-    state = SimpleNamespace(set_state=AsyncMock(), update_data=AsyncMock())
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={}),
+        set_state=AsyncMock(),
+        update_data=AsyncMock(),
+    )
 
     asyncio.run(_show_custom_product_value_editor(message, state, "amount", 100))
 

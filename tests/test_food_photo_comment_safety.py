@@ -105,7 +105,7 @@ def test_sensitive_photo_comment_never_reaches_any_ai_provider_or_database(comme
     with patch.object(meals.gemini_service, "estimate_kbju_from_photo") as gemini, patch.object(
         meals.openai_label_service, "analyze_food_photo_openai"
     ) as openai, patch("handlers.meals._run_pending_food_photo_analysis", new_callable=AsyncMock) as run_pending, patch(
-        "handlers.meals.MealRepository.save_meal"
+        "handlers.meals.MealRepository.save_meal_idempotent"
     ) as save_meal:
         caplog.set_level(logging.INFO, logger="handlers.meals")
         asyncio.run(meals.handle_food_photo_comment(message, state))
@@ -135,7 +135,7 @@ def test_too_long_photo_comment_stops_before_filter_ai_draft_and_database(caplog
         meals.gemini_service, "estimate_kbju_from_photo"
     ) as gemini, patch.object(meals.openai_label_service, "analyze_food_photo_openai") as openai, patch(
         "handlers.meals._run_pending_food_photo_analysis", new_callable=AsyncMock
-    ) as run_pending, patch("handlers.meals.MealRepository.save_meal") as save_meal:
+    ) as run_pending, patch("handlers.meals.MealRepository.save_meal_idempotent") as save_meal:
         caplog.set_level(logging.INFO, logger="handlers.meals")
         asyncio.run(meals.handle_food_photo_comment(message, state))
 
@@ -177,7 +177,7 @@ def test_safe_photo_comment_creates_structured_preview_and_saves_without_raw_com
         "handlers.meals._run_food_photo_analysis_with_openai_fallback",
         new_callable=AsyncMock,
         return_value=meals.ProviderAnalysisResult(payload=provider_payload, provider="gemini"),
-    ) as analyze, patch("handlers.meals.MealRepository.save_meal") as save_meal:
+    ) as analyze, patch("handlers.meals.MealRepository.save_meal_idempotent") as save_meal:
         asyncio.run(meals.handle_food_photo_comment(message, state))
 
     analyze.assert_awaited_once()
@@ -195,8 +195,11 @@ def test_safe_photo_comment_creates_structured_preview_and_saves_without_raw_com
     state.data["food_photo_comment"] = comment
     state.data["photo_analysis_comment"] = comment
     with patch(
-        "handlers.meals.MealRepository.save_meal",
-        return_value=SimpleNamespace(id=777),
+        "handlers.meals.MealRepository.save_meal_idempotent",
+        return_value=meals.MealSaveResult(
+            meals.MealSaveStatus.SAVED,
+            SimpleNamespace(id=777),
+        ),
     ) as save_meal, patch(
         "handlers.meals._keep_meal_entry_open_after_save",
         new_callable=AsyncMock,
@@ -233,7 +236,7 @@ def test_invalid_photo_item_numbers_do_not_create_preview_or_database_record(fie
         "handlers.meals._run_food_photo_analysis_with_openai_fallback",
         new_callable=AsyncMock,
         return_value=meals.ProviderAnalysisResult(payload=_payload(items=[_item(**{field: value})]), provider="gemini"),
-    ), patch("handlers.meals.MealRepository.save_meal") as save_meal:
+    ), patch("handlers.meals.MealRepository.save_meal_idempotent") as save_meal:
         asyncio.run(meals.handle_food_photo_comment(message, state))
 
     save_meal.assert_not_called()
@@ -298,7 +301,7 @@ def test_prompt_injection_comment_with_empty_items_does_not_create_fake_food_or_
         "handlers.meals._run_food_photo_analysis_with_openai_fallback",
         new_callable=AsyncMock,
         return_value=meals.ProviderAnalysisResult(payload=invalid_payload, provider="gemini"),
-    ), patch("handlers.meals.MealRepository.save_meal") as save_meal:
+    ), patch("handlers.meals.MealRepository.save_meal_idempotent") as save_meal:
         asyncio.run(meals.handle_food_photo_comment(message, state))
 
     save_meal.assert_not_called()

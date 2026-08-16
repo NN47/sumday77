@@ -29,14 +29,12 @@ class MealEntryStates(StatesGroup):
     edit_kbju_manual_input = State()  # Ручной ввод значения в экране изменения поля
     editing_meal_kbju_single_input = State()  # Legacy: ручной ввод одного поля КБЖУ
     editing_meal_kbju_all_input = State()  # Ручной ввод всех полей КБЖУ
-    editing_meal_composition = State()  # Редактирование состава продуктов
     custom_product_name = State()  # Создание своего продукта: название
     custom_product_calories = State()  # Создание своего продукта: калории
     custom_product_protein = State()  # Создание своего продукта: белки
     custom_product_fat = State()  # Создание своего продукта: жиры
     custom_product_carbs = State()  # Создание своего продукта: углеводы
     custom_product_amount = State()  # Создание своего продукта: съеденный вес
-    editing_meal = State()  # Старое состояние (для обратной совместимости)
 
 
 class WorkoutStates(StatesGroup):

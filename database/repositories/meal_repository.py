@@ -1,18 +1,83 @@
 """Репозиторий для работы с приёмами пищи."""
 import logging
+from dataclasses import dataclass
 from datetime import date
+from enum import Enum
 from typing import Optional
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from database.session import get_db_session
 from database.models import Meal, KbjuSettings, MealCompletionComment
 from database.repositories.analytics_repository import AnalyticsRepository
+from utils.log_sanitizer import safe_exception_summary
 from utils.meal_types import normalize_meal_type, MealType
 
 logger = logging.getLogger(__name__)
 
 
+class MealSaveStatus(str, Enum):
+    """DB-level outcome of saving one pending meal operation."""
+
+    SAVED = "saved"
+    ALREADY_SAVED = "already_saved"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class MealSaveResult:
+    """Result returned by the idempotent pending-meal save path."""
+
+    status: MealSaveStatus
+    meal: Meal | None = None
+    error_type: str | None = None
+
+
 class MealRepository:
     """Репозиторий для работы с приёмами пищи."""
+
+    @staticmethod
+    def _build_meal(
+        *,
+        user_id: str,
+        raw_query: str,
+        calories: float,
+        protein: float,
+        fat: float,
+        carbs: float,
+        entry_date: date,
+        description: Optional[str],
+        products_json: Optional[str],
+        api_details: Optional[str],
+        meal_type: Optional[str],
+        is_manually_corrected: bool,
+        save_token: str | None,
+    ) -> Meal:
+        return Meal(
+            user_id=user_id,
+            raw_query=raw_query,
+            description=description or raw_query,
+            calories=calories,
+            protein=protein,
+            fat=fat,
+            carbs=carbs,
+            date=entry_date,
+            products_json=products_json or "[]",
+            api_details=api_details,
+            meal_type=normalize_meal_type(meal_type),
+            is_manually_corrected=is_manually_corrected,
+            save_token=save_token,
+        )
+
+    @staticmethod
+    def _track_saved_meal(user_id: str) -> None:
+        """Records secondary analytics without changing the committed Meal outcome."""
+        try:
+            AnalyticsRepository.track_event(user_id, "add_meal", section="kbju")
+        except Exception as exc:
+            logger.warning(
+                "Meal saved but analytics failed error_type=%s",
+                safe_exception_summary(exc),
+            )
     
     @staticmethod
     def save_meal(
@@ -31,26 +96,99 @@ class MealRepository:
     ) -> Meal:
         """Сохраняет приём пищи."""
         with get_db_session() as session:
-            meal = Meal(
+            meal = MealRepository._build_meal(
                 user_id=user_id,
                 raw_query=raw_query,
-                description=description or raw_query,
+                description=description,
                 calories=calories,
                 protein=protein,
                 fat=fat,
                 carbs=carbs,
-                date=entry_date,
-                products_json=products_json or "[]",
+                entry_date=entry_date,
+                products_json=products_json,
                 api_details=api_details,
                 meal_type=normalize_meal_type(meal_type),
                 is_manually_corrected=is_manually_corrected,
+                save_token=None,
             )
             session.add(meal)
             session.commit()
             session.refresh(meal)
             logger.info("Saved meal meal_id=%s", meal.id)
-            AnalyticsRepository.track_event(user_id, "add_meal", section="kbju")
-            return meal
+        MealRepository._track_saved_meal(user_id)
+        return meal
+
+    @staticmethod
+    def save_meal_idempotent(
+        *,
+        save_token: str,
+        user_id: str,
+        raw_query: str,
+        calories: float,
+        protein: float,
+        fat: float,
+        carbs: float,
+        entry_date: date,
+        description: Optional[str] = None,
+        products_json: Optional[str] = None,
+        api_details: Optional[str] = None,
+        meal_type: Optional[str] = MealType.SNACK.value,
+        is_manually_corrected: bool = False,
+    ) -> MealSaveResult:
+        """Saves one pending operation exactly once using a DB-unique opaque token."""
+        if not save_token or len(save_token) > 64:
+            return MealSaveResult(MealSaveStatus.FAILED, error_type="invalid_save_token")
+
+        meal = MealRepository._build_meal(
+            user_id=user_id,
+            raw_query=raw_query,
+            description=description,
+            calories=calories,
+            protein=protein,
+            fat=fat,
+            carbs=carbs,
+            entry_date=entry_date,
+            products_json=products_json,
+            api_details=api_details,
+            meal_type=meal_type,
+            is_manually_corrected=is_manually_corrected,
+            save_token=save_token,
+        )
+
+        try:
+            with get_db_session() as session:
+                session.add(meal)
+                try:
+                    session.commit()
+                    session.refresh(meal)
+                except IntegrityError:
+                    session.rollback()
+                    existing = (
+                        session.query(Meal)
+                        .filter(
+                            Meal.save_token == save_token,
+                            Meal.user_id == user_id,
+                        )
+                        .first()
+                    )
+                    if existing is not None:
+                        logger.info("Duplicate meal save prevented")
+                        return MealSaveResult(MealSaveStatus.ALREADY_SAVED, meal=existing)
+                    logger.error("Meal save failed error_type=IntegrityError")
+                    return MealSaveResult(MealSaveStatus.FAILED, error_type="IntegrityError")
+        except Exception as exc:
+            logger.error(
+                "Meal save failed error_type=%s",
+                safe_exception_summary(exc),
+            )
+            return MealSaveResult(
+                MealSaveStatus.FAILED,
+                error_type=safe_exception_summary(exc),
+            )
+
+        logger.info("Saved meal meal_id=%s", meal.id)
+        MealRepository._track_saved_meal(user_id)
+        return MealSaveResult(MealSaveStatus.SAVED, meal=meal)
     
     @staticmethod
     def get_meals_for_date(user_id: str, entry_date: date) -> list[Meal]:
