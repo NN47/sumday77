@@ -7,6 +7,7 @@ os.environ.setdefault("API_TOKEN", "test-token")
 
 from handlers import supplements
 from utils.supplement_keyboards import (
+    days_menu,
     supplement_creation_cancel_menu,
     supplement_catalog_categories_inline_menu,
     supplement_test_time_inline_menu,
@@ -176,6 +177,33 @@ def test_create_time_inline_menu_marks_selected_time_and_shows_save():
     assert any(button.text == "💾 Сохранить время" for button in buttons)
 
 
+def test_selected_time_prompt_no_longer_offers_unavailable_skip_action():
+    text = supplements.build_supplement_time_step_text("Магний", ["09:00"])
+
+    assert "💾 Сохранить время" in text
+    assert "⏭️ Пропустить" not in text
+
+
+def test_creation_days_menu_contains_all_actions_including_skip():
+    keyboard = days_menu(["Пн"], show_cancel=True, show_skip=True)
+    button_texts = [button.text for row in keyboard.keyboard for button in row]
+
+    assert "✅ Пн" in button_texts
+    assert "Вт" in button_texts
+    assert "Выбрать все" in button_texts
+    assert "💾 Сохранить" in button_texts
+    assert "⏭️ Пропустить" in button_texts
+    assert "⬅️ Назад" in button_texts
+    assert "❌ Отменить" in button_texts
+
+
+def test_edit_days_menu_does_not_offer_creation_skip_action():
+    keyboard = days_menu(["Пн"])
+    button_texts = [button.text for row in keyboard.keyboard for button in row]
+
+    assert "⏭️ Пропустить" not in button_texts
+
+
 def test_edit_time_inline_menu_contains_hours_and_save_action():
     keyboard = supplement_edit_time_inline_menu(["09:00"])
     buttons = [button for row in keyboard.inline_keyboard for button in row]
@@ -287,6 +315,111 @@ def test_inline_time_save_moves_to_days_step():
     state.set_state.assert_awaited_with(supplements.SupplementStates.selecting_days)
     callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
     callback.message.answer.assert_awaited_once()
+    _, kwargs = callback.message.answer.await_args
+    button_texts = [
+        button.text for row in kwargs["reply_markup"].keyboard for button in row
+    ]
+    assert "⏭️ Пропустить" in button_texts
+
+
+def test_skip_days_clears_selection_and_moves_to_duration_step():
+    message = _build_message("⏭️ Пропустить")
+    state = _DummyState(
+        {
+            "supplement_id": None,
+            "name": "Магний",
+            "times": ["09:00"],
+            "days": ["Пн", "Ср"],
+        },
+        supplements.SupplementStates.selecting_days.state,
+    )
+
+    with patch("handlers.supplements.push_menu_stack") as push_menu_stack:
+        asyncio.run(supplements.toggle_day(message, state))
+
+    assert state._data["days"] == []
+    assert state._data["times"] == ["09:00"]
+    assert state._state == supplements.SupplementStates.choosing_duration.state
+    message.answer.assert_awaited_once()
+    text, kwargs = message.answer.await_args
+    assert "Дни пропущены" in text[0]
+    button_texts = [
+        button.text for row in kwargs["reply_markup"].keyboard for button in row
+    ]
+    assert "Постоянно" in button_texts
+    assert "⏭️ Пропустить" in button_texts
+    assert "⬅️ Назад" in button_texts
+    assert "❌ Отменить" in button_texts
+    pushed_keyboard = push_menu_stack.call_args.args[1]
+    assert [
+        button.text for row in pushed_keyboard.keyboard for button in row
+    ] == button_texts
+
+
+def test_creation_continues_through_duration_and_notifications_after_days_skip():
+    message = _build_message("⏭️ Пропустить")
+    state = _DummyState(
+        {
+            "supplement_id": None,
+            "identifier": "magnesium",
+            "name": "Магний",
+            "times": ["09:00"],
+            "days": [],
+        },
+        supplements.SupplementStates.choosing_duration.state,
+    )
+
+    with patch("handlers.supplements.push_menu_stack"):
+        asyncio.run(supplements.handle_duration_or_notifications(message, state))
+
+    assert state._data["duration"] == "постоянно"
+    assert state._data["days"] == []
+    assert state._data["is_test_creation"] is True
+    assert state._state == supplements.SupplementStates.choosing_duration.state
+    assert "Шаг 5" in message.answer.await_args.args[0]
+    notification_buttons = [
+        button.text
+        for row in message.answer.await_args.kwargs["reply_markup"].keyboard
+        for button in row
+    ]
+    assert "⏭️ Пропустить" in notification_buttons
+
+    message.answer.reset_mock()
+    with patch(
+        "handlers.supplements.save_supplement_from_test", new=AsyncMock()
+    ) as save_supplement:
+        asyncio.run(supplements.handle_duration_or_notifications(message, state))
+
+    assert state._data["notifications_enabled"] is False
+    save_supplement.assert_awaited_once_with(message, state)
+
+
+def test_back_from_duration_restores_selected_days_with_skip_action():
+    message = _build_message("⬅️ Назад")
+    state = _DummyState(
+        {
+            "supplement_id": None,
+            "name": "Магний",
+            "times": ["09:00"],
+            "days": ["Пн", "Ср"],
+        },
+        supplements.SupplementStates.choosing_duration.state,
+    )
+
+    with patch("handlers.supplements.push_menu_stack"):
+        asyncio.run(supplements.handle_duration_or_notifications(message, state))
+
+    assert state._state == supplements.SupplementStates.selecting_days.state
+    button_texts = [
+        button.text
+        for row in message.answer.await_args.kwargs["reply_markup"].keyboard
+        for button in row
+    ]
+    assert "✅ Пн" in button_texts
+    assert "✅ Ср" in button_texts
+    assert "⏭️ Пропустить" in button_texts
+    assert "⬅️ Назад" in button_texts
+    assert "❌ Отменить" in button_texts
 
 
 def test_inline_time_callback_resumes_from_unselected_days_step():

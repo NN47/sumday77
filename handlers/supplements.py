@@ -160,11 +160,11 @@ def build_supplement_time_step_text(name: str, times: list[str] | None = None) -
     ]
     if current_times:
         lines.extend(["", f"Текущие времена: {', '.join(current_times)}"])
-    lines.extend([
-        "",
-        "Можно добавить несколько времён по одному.",
-        "Когда закончишь — нажми «💾 Сохранить время». Если время не нужно — «⏭️ Пропустить».",
-    ])
+    lines.extend(["", "Можно добавить несколько времён по одному."])
+    if current_times:
+        lines.append("Когда закончишь — нажми «💾 Сохранить время».")
+    else:
+        lines.append("Если время не нужно — нажми «⏭️ Пропустить».")
     return "\n".join(lines)
 
 
@@ -194,13 +194,16 @@ def build_supplement_edit_time_text(name: str, times: list[str] | None = None) -
 
 async def go_to_supplement_days_step(message: Message, state: FSMContext, prefix: str) -> None:
     """Переводит создание добавки к выбору дней."""
+    data = await state.get_data()
+    days = data.get("days", [])
     await state.set_state(SupplementStates.selecting_days)
-    push_menu_stack(message.bot, days_menu([], show_cancel=True))
+    keyboard = days_menu(days, show_cancel=True, show_skip=True)
+    push_menu_stack(message.bot, keyboard)
     await message.answer(
         f"<b>{html.escape(prefix)}</b>\n\n"
         "📅 <b>Шаг 3:</b> Выбери дни приёма добавки\n\n"
         "Можешь выбрать несколько дней или нажми «⏭️ Пропустить».",
-        reply_markup=days_menu([], show_cancel=True),
+        reply_markup=keyboard,
         parse_mode="HTML",
     )
 
@@ -1727,8 +1730,7 @@ async def toggle_day(message: Message, state: FSMContext):
                 await state.update_data(days=[], times=times)
                 # Переходим к следующему шагу - длительность
                 await state.set_state(SupplementStates.choosing_duration)
-                from utils.supplement_keyboards import supplement_test_skip_menu, duration_menu
-                push_menu_stack(message.bot, supplement_test_skip_menu())
+                push_menu_stack(message.bot, duration_menu())
                 await message.answer(
                     "<b>⏭️ Дни пропущены</b>\n\n"
                     "⏳ <b>Шаг 4:</b> Выбери длительность приёма добавки\n\n"
@@ -1764,9 +1766,11 @@ async def toggle_day(message: Message, state: FSMContext):
             if message.text == "Выбрать все":
                 await state.update_data(days=["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"])
                 data = await state.get_data()
-                from utils.supplement_keyboards import days_menu
-                push_menu_stack(message.bot, days_menu(data.get("days", []), show_cancel=True))
-                await message.answer("✅ Все дни выбраны", reply_markup=days_menu(data.get("days", []), show_cancel=True))
+                keyboard = days_menu(
+                    data.get("days", []), show_cancel=True, show_skip=True
+                )
+                push_menu_stack(message.bot, keyboard)
+                await message.answer("✅ Все дни выбраны", reply_markup=keyboard)
                 return
             
             # Проверяем "💾 Сохранить" - переход к следующему шагу
@@ -1777,7 +1781,6 @@ async def toggle_day(message: Message, state: FSMContext):
                 await state.update_data(days=days, times=times)
                 # Переходим к следующему шагу - длительность
                 await state.set_state(SupplementStates.choosing_duration)
-                from utils.supplement_keyboards import duration_menu
                 push_menu_stack(message.bot, duration_menu())
                 days_text = ", ".join(days) if days else "не выбрано"
                 await message.answer(
@@ -1793,11 +1796,13 @@ async def toggle_day(message: Message, state: FSMContext):
             day = message.text.replace("✅ ", "").strip()
             if day not in ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]:
                 # Если это не день, показываем подсказку
-                from utils.supplement_keyboards import days_menu
                 current_days = data.get("days", [])
                 await message.answer(
-                    "Пожалуйста, выбери дни недели из меню или нажми «💾 Сохранить», чтобы продолжить.",
-                    reply_markup=days_menu(current_days, show_cancel=True),
+                    "Пожалуйста, выбери дни недели из меню, нажми «💾 Сохранить» "
+                    "или «⏭️ Пропустить».",
+                    reply_markup=days_menu(
+                        current_days, show_cancel=True, show_skip=True
+                    ),
                 )
                 return
             
@@ -1808,10 +1813,12 @@ async def toggle_day(message: Message, state: FSMContext):
                 days.append(day)
             
             await state.update_data(days=days)
-            from utils.supplement_keyboards import days_menu
-            push_menu_stack(message.bot, days_menu(days, show_cancel=True))
+            keyboard = days_menu(days, show_cancel=True, show_skip=True)
+            push_menu_stack(message.bot, keyboard)
             days_text = ", ".join(days) if days else "не выбрано"
-            await message.answer(f"✅ Дни обновлены: {days_text}", reply_markup=days_menu(days, show_cancel=True))
+            await message.answer(
+                f"✅ Дни обновлены: {days_text}", reply_markup=keyboard
+            )
             return
         
         # Если это редактирование существующей добавки - старая логика
@@ -1833,7 +1840,6 @@ async def toggle_day(message: Message, state: FSMContext):
         if message.text == "Выбрать все":
             await state.update_data(days=["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"])
             data = await state.get_data()
-            from utils.supplement_keyboards import days_menu
             push_menu_stack(message.bot, days_menu(data.get("days", [])))
             await message.answer("Все дни выбраны", reply_markup=days_menu(data.get("days", [])))
             return
@@ -1841,7 +1847,6 @@ async def toggle_day(message: Message, state: FSMContext):
         day = message.text.replace("✅ ", "").strip()
         if day not in ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]:
             # Если это не день, показываем подсказку
-            from utils.supplement_keyboards import days_menu
             current_days = data.get("days", [])
             await message.answer(
                 "Пожалуйста, выбери дни недели из меню или нажми «💾 Сохранить», чтобы вернуться к редактированию.",
@@ -1857,7 +1862,6 @@ async def toggle_day(message: Message, state: FSMContext):
             days.append(day)
         
         await state.update_data(days=days)
-        from utils.supplement_keyboards import days_menu
         push_menu_stack(message.bot, days_menu(days))
         await message.answer("Дни обновлены", reply_markup=days_menu(days))
     except Exception as e:
@@ -1943,7 +1947,6 @@ async def handle_duration_or_notifications(message: Message, state: FSMContext):
             # Снимаем флаг is_test_creation, чтобы вернуться к выбору длительности
             await state.update_data(is_test_creation=False)
             await state.set_state(SupplementStates.choosing_duration)
-            from utils.supplement_keyboards import duration_menu
             push_menu_stack(message.bot, duration_menu())
             duration_text = duration.capitalize() if duration != "постоянно" else "Постоянно"
             await message.answer(
@@ -2040,14 +2043,14 @@ async def handle_duration_or_notifications(message: Message, state: FSMContext):
             data = await state.get_data()
             days = data.get("days", [])
             await state.set_state(SupplementStates.selecting_days)
-            from utils.supplement_keyboards import days_menu
-            push_menu_stack(message.bot, days_menu(days, show_cancel=True))
+            keyboard = days_menu(days, show_cancel=True, show_skip=True)
+            push_menu_stack(message.bot, keyboard)
             days_text = ", ".join(days) if days else "не выбрано"
             await message.answer(
                 f"⏪ Возвращаемся к шагу 3\n\n"
                 f"📅 Текущие дни: {days_text}\n\n"
                 f"Выбери дни приёма добавки или нажми «⏭️ Пропустить».",
-                reply_markup=days_menu(days, show_cancel=True),
+                reply_markup=keyboard,
             )
         else:
             await state.clear()
@@ -2125,7 +2128,6 @@ async def handle_duration_or_notifications(message: Message, state: FSMContext):
         return
     
     # Если это неизвестное сообщение в режиме выбора длительности
-    from utils.supplement_keyboards import duration_menu
     await message.answer(
         "Пожалуйста, выбери длительность приёма из меню:\n"
         "• Постоянно\n"

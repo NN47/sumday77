@@ -210,7 +210,11 @@ def time_edit_menu(times: list[str]) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 
-def days_menu(selected: list[str], show_cancel: bool = False) -> ReplyKeyboardMarkup:
+def days_menu(
+    selected: list[str],
+    show_cancel: bool = False,
+    show_skip: bool = False,
+) -> ReplyKeyboardMarkup:
     """Меню выбора дней."""
     week_days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     rows = []
@@ -218,6 +222,8 @@ def days_menu(selected: list[str], show_cancel: bool = False) -> ReplyKeyboardMa
         prefix = "✅ " if day in selected else ""
         rows.append([KeyboardButton(text=f"{prefix}{day}")])
     rows.append([KeyboardButton(text="Выбрать все"), KeyboardButton(text="💾 Сохранить")])
+    if show_skip:
+        rows.append([KeyboardButton(text="⏭️ Пропустить")])
     if show_cancel:
         rows.append([KeyboardButton(text="⬅️ Назад"), KeyboardButton(text="❌ Отменить")])
     else:
