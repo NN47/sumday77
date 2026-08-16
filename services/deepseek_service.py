@@ -156,8 +156,8 @@ class DeepSeekService:
                 raw_metadata={"input_chars": len(text)},
             )
             if self._is_temporary_error(exc):
-                raise DeepSeekServiceTemporaryError("DeepSeek request temporarily unavailable") from exc
-            raise DeepSeekServiceError("DeepSeek request failed") from exc
+                raise DeepSeekServiceTemporaryError("DeepSeek request temporarily unavailable") from None
+            raise DeepSeekServiceError("DeepSeek request failed") from None
 
     def analyze_activity_prompt(
         self,

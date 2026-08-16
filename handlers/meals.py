@@ -93,6 +93,12 @@ NO_FOOD_RECOGNIZED_TEXT = (
     "Укажите, что вы съели и примерное количество.\n\n"
     "Например: <code>карпаччо 150 г, хлеб 30 г</code>"
 )
+MAX_MEAL_TEXT_LENGTH = 2_000
+MAX_AI_MEAL_QUERY_SUMMARY_LENGTH = 500
+MEAL_TEXT_TOO_LONG_TEXT = (
+    "⚠️ Сообщение слишком длинное.\n\n"
+    "Укажите только продукты, блюда и примерное количество."
+)
 
 
 MEAL_COMPLETION_COMMENT_SYSTEM_PROMPT = """Ты — спортивный друг пользователя, который хорошо разбирается в питании и помогает в Telegram-боте Sumday77.
@@ -316,6 +322,12 @@ def _collect_ai_draft_totals(items: list[dict]) -> dict:
         "fat": totals["fat_total_g"],
         "carbs": totals["carbohydrates_total_g"],
     }
+
+
+def _build_ai_meal_query_summary(items: list[dict]) -> str:
+    """Builds a bounded summary from validated product names, never raw input text."""
+    summary = ", ".join(str(item.get("name") or "").strip() for item in items)
+    return summary[:MAX_AI_MEAL_QUERY_SUMMARY_LENGTH] or "[AI-анализ]"
 
 
 async def _send_ai_meal_preview(message: Message, state: FSMContext) -> None:
@@ -3817,6 +3829,13 @@ async def _handle_provider_food_input(
     if not user_text:
         await message.answer("Напиши, пожалуйста, что ты съел(а) 🙏")
         return
+    if len(user_text) > MAX_MEAL_TEXT_LENGTH:
+        logger.info(
+            "Meal text input rejected reason=too_long input_chars=%s",
+            len(user_text),
+        )
+        await message.answer(MEAL_TEXT_TOO_LONG_TEXT)
+        return
 
     sensitive_check = check_sensitive_meal_text(user_text)
     if sensitive_check.is_sensitive:
@@ -3864,7 +3883,6 @@ async def _handle_provider_food_input(
         return
 
     items = _normalize_ai_items_for_edit(kbju_data.get("items", []))
-    total = kbju_data.get("total", {})
     if not items:
         logger.info("Meal text analysis returned no_food")
         await message.answer(NO_FOOD_RECOGNIZED_TEXT, parse_mode="HTML")
@@ -3887,7 +3905,7 @@ async def _handle_provider_food_input(
     # сохраняем распознавание только во временный FSM-черновик до подтверждения.
     await state.update_data(
         ai_pending_meal={
-            "raw_query": user_text,
+            "raw_query": _build_ai_meal_query_summary(items),
             "items": items,
             "total": _collect_ai_draft_totals(items),
             "meal_type": meal_type,
