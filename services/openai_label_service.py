@@ -10,6 +10,10 @@ from openai import APITimeoutError, OpenAI, OpenAIError
 
 from config import OPENAI_API_KEY
 from services.ai_usage_logger import calculate_ai_cost, log_ai_usage
+from services.photo_food_validator import (
+    PHOTO_COMMENT_SECURITY_INSTRUCTIONS,
+    validate_photo_food_payload,
+)
 from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
@@ -39,7 +43,8 @@ JSON должен быть такого вида:
 """.strip()
 
 
-OPENAI_FOOD_PHOTO_PROMPT = """
+OPENAI_FOOD_PHOTO_PROMPT = (
+    """
 Проанализируй фото блюда.
 Определи, какие продукты/ингредиенты видны на изображении.
 Оцени примерную массу блюда и КБЖУ.
@@ -74,8 +79,11 @@ OPENAI_FOOD_PHOTO_PROMPT = """
 - если точный вес неизвестен, оцени примерную порцию по фото;
 - все значения КБЖУ должны быть примерной оценкой за estimated_weight_g, не на 100 г;
 - значения должны быть числами, не строками;
-- если значение невозможно оценить, верни null.
+- если числовые поля элемента невозможно оценить, не включай такой элемент в items; не возвращай null в items.
 """.strip()
+    + "\n\n"
+    + PHOTO_COMMENT_SECURITY_INSTRUCTIONS
+)
 
 
 class OpenAILabelServiceError(Exception):
@@ -280,7 +288,7 @@ class OpenAILabelService:
                 error_message="timeout",
                 raw_metadata={"image_bytes": len(image_bytes), "input_chars": len(prompt)},
             )
-            raise OpenAILabelServiceTimeoutError("OpenAI API request timed out") from exc
+            raise OpenAILabelServiceTimeoutError("OpenAI API request timed out") from None
         except OpenAIError as exc:
             latency_ms = int((time.perf_counter() - started) * 1000)
             logger.error("OpenAI food photo analysis failed error_type=%s", safe_exception_summary(exc), exc_info=True)
@@ -294,7 +302,7 @@ class OpenAILabelService:
                 error_message=safe_exception_summary(exc),
                 raw_metadata={"image_bytes": len(image_bytes), "input_chars": len(prompt)},
             )
-            raise OpenAILabelServiceAPIError("OpenAI API request failed") from exc
+            raise OpenAILabelServiceAPIError("OpenAI API request failed") from None
 
         latency_ms = int((time.perf_counter() - started) * 1000)
         usage = getattr(response, "usage", None)
@@ -442,50 +450,14 @@ class OpenAILabelService:
 
     @classmethod
     def _normalize_food_photo_payload(cls, payload: dict) -> Optional[dict]:
-        if not isinstance(payload, dict):
+        normalized = validate_photo_food_payload(payload)
+        if not normalized:
             return None
-
-        def safe_float(value) -> float:
-            parsed = cls._to_float(value)
-            return parsed if parsed is not None else 0.0
-
-        items = payload.get("items") if isinstance(payload.get("items"), list) else []
-        normalized_items = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            name = item.get("name") or item.get("title") or item.get("dish") or "продукт"
-            if not isinstance(name, str):
-                name = str(name)
-            normalized_items.append(
-                {
-                    "name": name.strip() or "продукт",
-                    "grams": safe_float(item.get("estimated_weight_g") or item.get("grams") or item.get("weight_g")),
-                    "kcal": safe_float(item.get("calories") or item.get("kcal")),
-                    "protein": safe_float(item.get("protein") or item.get("protein_g")),
-                    "fat": safe_float(item.get("fat") or item.get("fat_g")),
-                    "carbs": safe_float(item.get("carbs") or item.get("carbohydrates") or item.get("carbohydrates_g")),
-                }
-            )
-
-        total = {
-            "kcal": safe_float(payload.get("calories") or payload.get("kcal")),
-            "protein": safe_float(payload.get("protein") or payload.get("protein_g")),
-            "fat": safe_float(payload.get("fat") or payload.get("fat_g")),
-            "carbs": safe_float(payload.get("carbs") or payload.get("carbohydrates") or payload.get("carbohydrates_g")),
+        return {
+            **normalized,
+            "source": "openai",
+            "confidence": payload.get("confidence"),
         }
-
-        if not any(total.values()) and normalized_items:
-            total = {
-                "kcal": sum(i["kcal"] for i in normalized_items),
-                "protein": sum(i["protein"] for i in normalized_items),
-                "fat": sum(i["fat"] for i in normalized_items),
-                "carbs": sum(i["carbs"] for i in normalized_items),
-            }
-
-        if not normalized_items and not any(total.values()):
-            return None
-        return {"items": normalized_items, "total": total, "source": "openai", "confidence": payload.get("confidence")}
 
 
 openai_label_service = OpenAILabelService()

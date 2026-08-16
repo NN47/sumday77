@@ -54,6 +54,7 @@ from services.deepseek_service import (
 )
 from services.ai_food_parser import FoodAnalysisStatus, parse_kbju_json
 from services.ai_usage_logger import log_ai_usage
+from services.photo_food_validator import validate_photo_food_payload
 from utils.validators import parse_date
 from utils.log_sanitizer import safe_exception_summary
 from utils.sensitive_meal_text import check_sensitive_meal_text
@@ -98,6 +99,10 @@ MAX_AI_MEAL_QUERY_SUMMARY_LENGTH = 500
 MEAL_TEXT_TOO_LONG_TEXT = (
     "⚠️ Сообщение слишком длинное.\n\n"
     "Укажите только продукты, блюда и примерное количество."
+)
+PHOTO_COMMENT_TOO_LONG_TEXT = (
+    "⚠️ Сообщение слишком длинное.\n\n"
+    "Укажите только краткое уточнение о продуктах или блюде на фото."
 )
 
 
@@ -581,7 +586,7 @@ async def _edit_or_send_photo_analysis_message(
         await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 
-def _normalize_photo_analysis_items(items: list | None, total: dict | None) -> list[dict]:
+def _normalize_photo_analysis_items(items: list | None) -> list[dict]:
     """Нормализует продукты из ответа vision-модели к единому виду для черновика."""
     normalized: list[dict] = []
     for item in items or []:
@@ -600,18 +605,6 @@ def _normalize_photo_analysis_items(items: list | None, total: dict | None) -> l
             }
         )
 
-    if not normalized and total:
-        normalized.append(
-            {
-                "name": "Блюдо по фото",
-                "grams": _safe_float(total.get("grams") or total.get("weight") or total.get("amount_g")),
-                "kcal": _safe_float(total.get("kcal") or total.get("calories")),
-                "protein": _safe_float(total.get("protein")),
-                "fat": _safe_float(total.get("fat")),
-                "carbs": _safe_float(total.get("carbs")),
-                "source": "food_photo",
-            }
-        )
     return normalized
 
 
@@ -2204,7 +2197,7 @@ async def _run_label_analysis_with_openai_fallback(analyzer, image_data: bytes, 
 
 def _has_food_photo_result(payload: Optional[dict]) -> bool:
     """Проверяет, что AI вернул пригодный результат анализа еды по фото."""
-    return bool(payload and isinstance(payload, dict) and isinstance(payload.get("total"), dict))
+    return validate_photo_food_payload(payload) is not None
 
 
 async def _run_food_photo_analysis_with_openai_fallback(
@@ -4250,6 +4243,20 @@ async def kbju_add_via_label_openai(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=kbju_add_method_back_menu, parse_mode="HTML")
 
 
+async def _clear_photo_comment_fields(state: FSMContext) -> None:
+    """Remove legacy raw photo-comment fields while preserving the rest of FSM data."""
+    data = await state.get_data()
+    cleaned_data = {
+        key: value
+        for key, value in data.items()
+        if key not in {"food_photo_comment", "photo_analysis_comment"}
+    }
+    if len(cleaned_data) == len(data):
+        return
+
+    await state.set_data(cleaned_data)
+
+
 async def _handle_food_photo_analysis(
     message: Message,
     state: FSMContext,
@@ -4263,6 +4270,7 @@ async def _handle_food_photo_analysis(
     comment: str | None = None,
 ):
     """Общая логика обработки фото еды для Gemini и OpenAI."""
+    await _clear_photo_comment_fields(state)
     user_id = str(message.from_user.id)
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
@@ -4329,14 +4337,15 @@ async def _handle_food_photo_analysis(
 
     logger.info("food_photo_analysis_completed provider=%s", final_provider)
 
-    if not kbju_data or "total" not in kbju_data:
+    validated_payload = validate_photo_food_payload(kbju_data)
+    if not validated_payload:
         await message.answer(
             "⚠️ Не получилось определить КБЖУ по фото.\n"
             "Попробуй сделать фото получше или используй другой способ."
         )
         return
 
-    items = _normalize_photo_analysis_items(kbju_data.get("items", []), kbju_data.get("total", {}))
+    items = _normalize_photo_analysis_items(validated_payload["items"])
     if not items:
         await message.answer(
             "⚠️ Не получилось определить продукты на фото.\n"
@@ -4348,7 +4357,6 @@ async def _handle_food_photo_analysis(
     await state.update_data(
         photo_analysis_items=items,
         photo_analysis_raw_query=raw_query,
-        photo_analysis_comment=comment,
         photo_analysis_provider=final_provider,
         entry_date=entry_date.isoformat(),
         meal_type=meal_type,
@@ -4360,7 +4368,8 @@ async def _handle_food_photo_analysis(
 async def handle_photo_input(message: Message, state: FSMContext):
     """Сохраняет фото еды и сразу ждёт уточнение перед анализом."""
     photo = message.photo[-1]
-    await state.update_data(food_photo_file_id=photo.file_id, food_photo_comment=None)
+    await _clear_photo_comment_fields(state)
+    await state.update_data(food_photo_file_id=photo.file_id)
     await state.set_state(MealEntryStates.waiting_for_food_photo_comment)
     await message.answer(
         "📷 Фото получено.\n\n"
@@ -4419,12 +4428,12 @@ async def cancel_pending_food_photo_analysis(callback: CallbackQuery, state: FSM
     await callback.message.edit_reply_markup(reply_markup=None)
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    await _clear_photo_comment_fields(state)
     await state.set_state(MealEntryStates.choosing_meal_type)
     await state.update_data(
         meal_type=meal_type,
         pending_add_method=None,
         food_photo_file_id=None,
-        food_photo_comment=None,
     )
     await _show_input_methods(callback.message, state, user_id=str(callback.from_user.id))
 
@@ -4433,14 +4442,30 @@ async def cancel_pending_food_photo_analysis(callback: CallbackQuery, state: FSM
 async def handle_food_photo_comment(message: Message, state: FSMContext):
     """Получает текстовое уточнение и запускает анализ фото еды."""
     text = (message.text or "").strip()
+    await _clear_photo_comment_fields(state)
     if text in BACK_BUTTON_TEXTS or text == "❌ Отмена":
         await _return_to_add_methods_from_method_input(message, state)
         return
     if not text:
         await message.answer("Пожалуйста, введите уточнение текстом или нажмите «❌ Отмена».")
         return
+    if len(text) > MAX_MEAL_TEXT_LENGTH:
+        logger.info(
+            "Photo food comment rejected reason=too_long input_chars=%s",
+            len(text),
+        )
+        await message.answer(PHOTO_COMMENT_TOO_LONG_TEXT)
+        return
 
-    await state.update_data(food_photo_comment=text)
+    sensitive_check = check_sensitive_meal_text(text)
+    if sensitive_check.is_sensitive:
+        logger.warning(
+            "Photo food comment rejected reason=%s",
+            sensitive_check.reason.value if sensitive_check.reason else "unknown",
+        )
+        await message.answer(SENSITIVE_MEAL_INPUT_REJECTED_TEXT, parse_mode="HTML")
+        return
+
     await _run_pending_food_photo_analysis(message, state, comment=text)
 
 
@@ -4533,6 +4558,7 @@ async def _save_photo_analysis_confirmation(message: Message, state: FSMContext,
         photo_total_weight_draft_items=None,
         photo_total_weight_original_items=None,
     )
+    await _clear_photo_comment_fields(state)
     await _keep_meal_entry_open_after_save(
         message,
         state,

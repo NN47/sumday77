@@ -21,9 +21,34 @@ from config import (
     GEMINI_TEMP_KEY_COOLDOWN_SECONDS,
 )
 from database.repositories import GeminiRepository
+from services.photo_food_validator import (
+    PHOTO_COMMENT_SECURITY_INSTRUCTIONS,
+    validate_photo_food_payload,
+)
 from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
+
+
+GEMINI_FOOD_PHOTO_PROMPT = (
+    """Ты нутрициолог. Оцени еду на фотографии.
+Верни строго валидный JSON без пояснений в формате:
+{
+  "items": [
+    {"name": "название", "grams": 123, "kcal": 123, "protein": 1.2, "fat": 3.4, "carbs": 5.6}
+  ],
+  "total": {"kcal": 123, "protein": 1.2, "fat": 3.4, "carbs": 5.6}
+}
+
+Правила:
+- для каждого продукта/ингредиента обязательно оцени примерную массу в граммах и заполни поле grams числом;
+- если точный вес неизвестен, оцени примерную порцию по фото;
+- КБЖУ для items указывай за оценённую массу продукта, не на 100 г;
+- total должен равняться сумме items;
+- числа возвращай числами, не строками.""".strip()
+    + "\n\n"
+    + PHOTO_COMMENT_SECURITY_INSTRUCTIONS
+)
 
 GeminiErrorType = Literal["temporary", "quota", "auth", "location", "unavailable", "unknown"]
 
@@ -570,21 +595,7 @@ class GeminiService:
         return {"items": normalized_items, "total": total}
 
     def estimate_kbju_from_photo(self, image_bytes: bytes, comment: str | None = None) -> Optional[dict]:
-        prompt = """Ты нутрициолог. Оцени еду на фотографии.
-Верни строго валидный JSON без пояснений в формате:
-{
-  "items": [
-    {"name": "название", "grams": 123, "kcal": 123, "protein": 1.2, "fat": 3.4, "carbs": 5.6}
-  ],
-  "total": {"kcal": 123, "protein": 1.2, "fat": 3.4, "carbs": 5.6}
-}
-
-Правила:
-- для каждого продукта/ингредиента обязательно оцени примерную массу в граммах и заполни поле grams числом;
-- если точный вес неизвестен, оцени примерную порцию по фото;
-- КБЖУ для items указывай за оценённую массу продукта, не на 100 г;
-- total должен равняться сумме items;
-- числа возвращай числами, не строками."""
+        prompt = GEMINI_FOOD_PHOTO_PROMPT
         if comment:
             prompt += (
                 "\n\nДополнительное уточнение пользователя к фото:\n"
@@ -618,7 +629,7 @@ class GeminiService:
                     parsed = json.loads(raw[start : end + 1])
                 else:
                     raise
-            return self._normalize_kbju_payload(parsed)
+            return validate_photo_food_payload(parsed)
         except GeminiServiceError:
             raise
         except Exception as e:
