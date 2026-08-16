@@ -281,9 +281,11 @@ def test_reopening_filled_meal_from_diary_shows_existing_products_before_new_add
     current_meal_text = callback.message.answer.await_args_list[1].args[0]
     assert "🍱 <b>Уже в этом приёме пищи</b>" in current_meal_text
     assert "📅 <b>Дата:</b> 08.04.2026" in current_meal_text
-    assert "🍎 <b>Перекус • 94 ккал</b>" in current_meal_text
-    assert "• <b>Яблоко</b> (180 г)" in current_meal_text
-    assert "<b>Итого перекус:</b>" in current_meal_text
+    assert "🍎 <b>Перекус — 94 ккал</b>" in current_meal_text
+    assert "Яблоко" in current_meal_text
+    assert "<i>Б 0.5 / Ж 0.3 / У 25.0</i>" in current_meal_text
+    assert "180 г" not in current_meal_text
+    assert "<b>Итого перекус:</b>" not in current_meal_text
     keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"]
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [["✏️ Редактировать", "📦 Мои продукты"]]
     assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
@@ -354,8 +356,9 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_switches_bottom_
     answer_text = message.answer.await_args_list[1].args[0]
     assert "🍱 <b>Уже в этом приёме пищи</b>" in answer_text
     assert "📅 <b>Дата:</b> 08.04.2026" in answer_text
-    assert "🍳 <b>Завтрак • 5 ккал</b>" in answer_text
-    assert "• <b>Чёрный кофе</b> (250 г)" in answer_text
+    assert "🍳 <b>Завтрак — 5 ккал</b>" in answer_text
+    assert "Чёрный кофе" in answer_text
+    assert "250 г" not in answer_text
     assert not answer_text.endswith("\n⸻")
     assert "➕ Добавь следующий продукт" not in answer_text
     assert "✅ Когда приём пищи заполнен" not in answer_text
@@ -737,6 +740,88 @@ def test_send_weight_products_list_removes_reply_keyboard_before_inline_list():
     assert list_call.args[0] == "<b>✏️ Выбери продукт для редактирования:</b>"
     button_rows = [[button.text for button in row] for row in list_call.kwargs["reply_markup"].inline_keyboard]
     assert button_rows == [["1️⃣ Курица — 200 г"], ["2️⃣ Рис — 150 г"], ["✅ Готово"]]
+
+
+def test_diary_edit_keeps_duplicate_records_and_text_button_numbering_in_sync():
+    target_date = date(2026, 8, 16)
+    callback = _build_callback(f"edit_meal:lunch:{target_date.isoformat()}")
+    state = _DummyState()
+    records = [
+        SimpleNamespace(
+            id=11,
+            products_json='[{"name":"Хлебцы","grams":10,"kcal":33,"protein":0.7,"fat":0.1,"carbs":7}]',
+            api_details=None,
+            calories=33,
+            protein=0.7,
+            fat=0.1,
+            carbs=7,
+        ),
+        SimpleNamespace(
+            id=12,
+            products_json='[{"name":"Хлебцы","grams":20,"kcal":66,"protein":1.3,"fat":0.2,"carbs":14}]',
+            api_details=None,
+            calories=66,
+            protein=1.3,
+            fat=0.2,
+            carbs=14,
+        ),
+    ]
+
+    with patch(
+        "handlers.meals.MealRepository.get_meals_for_type_for_date",
+        return_value=records,
+    ):
+        asyncio.run(meals.edit_meal_from_diary_block(callback, state))
+
+    assert [product["_source_meal_id"] for product in state._data["saved_products"]] == [11, 12]
+    detail_call = callback.message.answer.await_args_list[-1]
+    detail_text = detail_call.args[0]
+    assert "1️⃣ Хлебцы — 10 г" in detail_text
+    assert "2️⃣ Хлебцы — 20 г" in detail_text
+    assert "Нашёл несколько записей" not in detail_text
+    buttons = [row[0] for row in detail_call.kwargs["reply_markup"].inline_keyboard[:-1]]
+    assert [button.text for button in buttons] == ["1️⃣ Хлебцы — 10 г", "2️⃣ Хлебцы — 20 г"]
+    assert [button.callback_data for button in buttons] == ["meal_wsel:0", "meal_wsel:1"]
+
+
+def test_large_meal_edit_places_keyboard_only_after_last_safe_chunk():
+    message = _build_message()
+    products = [
+        {
+            "name": f"Продукт {index} " + ("с очень длинным названием " * 8),
+            "grams": index,
+            "kcal": index,
+            "protein": 1,
+            "fat": 1,
+            "carbs": 1,
+        }
+        for index in range(1, 81)
+    ]
+
+    asyncio.run(
+        meals._show_meal_edit_products_list(
+            message,
+            products,
+            meals.MealType.DINNER.value,
+        )
+    )
+
+    assert message.answer.await_count > 1
+    calls = message.answer.await_args_list
+    assert all(len(call.args[0].encode("utf-16-le")) // 2 <= 4000 for call in calls)
+    assert all(call.kwargs["reply_markup"] is None for call in calls[:-1])
+    assert calls[-1].kwargs["reply_markup"].inline_keyboard[-1][0].callback_data == "meal_wdone"
+    assert all(call.kwargs["parse_mode"] is None for call in calls)
+
+
+def test_long_product_name_is_shortened_only_in_button_callback_stays_stable():
+    long_name = "Очень длинное название продукта " * 10
+    keyboard = meals._build_weight_products_keyboard([{"name": long_name, "grams": 125}])
+    button = keyboard.inline_keyboard[0][0]
+
+    assert "… — 125 г" in button.text
+    assert len(button.text) < 64
+    assert button.callback_data == "meal_wsel:0"
 
 def test_meal_type_navigation_main_menu_alias():
     message = _build_message()
@@ -1553,7 +1638,7 @@ def test_product_weight_recalculation_does_not_change_unit_or_package_data() -> 
     assert product["package_units"] == 10
 
 
-def test_edit_last_meal_single_label_product_opens_product_actions_menu():
+def test_edit_last_meal_single_label_product_opens_detailed_product_list():
     meal_date = date.today()
     meal = SimpleNamespace(
         id=42,
@@ -1562,6 +1647,11 @@ def test_edit_last_meal_single_label_product_opens_product_actions_menu():
             '[{"name":"Eichbaum Radler Lemon","grams":350,"kcal":112,'
             '"protein":1.8,"fat":1.8,"carbs":27.3}]'
         ),
+        meal_type=meals.MealType.SNACK.value,
+        calories=112,
+        protein=1.8,
+        fat=1.8,
+        carbs=27.3,
     )
     message = _build_message()
     message.from_user = SimpleNamespace(id=12345)
@@ -1573,15 +1663,16 @@ def test_edit_last_meal_single_label_product_opens_product_actions_menu():
         asyncio.run(meals.edit_last_meal(message, state))
 
     state.set_state.assert_awaited_once_with(meals.MealEntryStates.editing_meal_weight)
-    assert state._data["editing_product_idx"] == 0
+    assert state._data["editing_product_idx"] is None
+    assert state._data["editing_meal_type"] == meals.MealType.SNACK.value
     answer_kwargs = message.answer.await_args.kwargs
     answer_text = message.answer.await_args.args[0]
-    assert "✏️ Редактирование продукта" in answer_text
-    assert "<b>Продукт:</b> Eichbaum Radler Lemon" in answer_text
-    assert "<b>Eichbaum Radler Lemon</b>" not in answer_text
-    assert "⚖️ <b>Вес:</b>" in answer_text
+    assert "✏️ Перекус — 112 ккал" in answer_text
+    assert "1️⃣ Eichbaum Radler Lemon — 350 г" in answer_text
+    assert "112 ккал · Б 1.8 / Ж 1.8 / У 27.3" in answer_text
+    assert "Выбери продукт для редактирования:" in answer_text
     button_texts = [button.text for row in answer_kwargs["reply_markup"].inline_keyboard for button in row]
-    assert button_texts == ["✏️ Изменить название", "⚖️ Изменить вес", "🧮 Изменить КБЖУ", "🗑 Удалить", "⬅️ Назад"]
+    assert button_texts == ["1️⃣ Eichbaum Radler Lemon — 350 г", "✅ Готово"]
 
 
 def test_meal_product_name_input_start_uses_inline_back_without_reply_keyboard():
@@ -1761,7 +1852,10 @@ def test_meal_weight_save_stays_in_product_editing_until_done():
     update_meal.assert_called_once()
     callback.answer.assert_awaited_once_with("✅ Вес продукта обновлён")
     callback.message.edit_text.assert_awaited_once()
-    assert callback.message.edit_text.await_args.args[0] == "<b>✏️ Выбери продукт для редактирования:</b>"
+    detail_text = callback.message.edit_text.await_args.args[0]
+    assert "✏️ Перекус — 180 ккал" in detail_text
+    assert "1️⃣ Творог — 150 г" in detail_text
+    assert "180 ккал · Б 24.0 / Ж 7.5 / У 4.5" in detail_text
     render_day.assert_not_awaited()
     state.clear.assert_not_awaited()
     assert state._data["saved_products"][0]["grams"] == 150
@@ -1993,8 +2087,9 @@ def test_back_from_ai_method_restores_open_meal_entry_screen():
     assert message.answer.await_count == 2
     restored_text = message.answer.await_args_list[0].args[0]
     assert "🍱 <b>Уже в этом приёме пищи</b>" in restored_text
-    assert "🍳 <b>Завтрак • 180 ккал</b>" in restored_text
-    assert "• <b>Творог</b> (150 г)" in restored_text
+    assert "🍳 <b>Завтрак — 180 ккал</b>" in restored_text
+    assert "Творог" in restored_text
+    assert "150 г" not in restored_text
     inline_keyboard = message.answer.await_args_list[0].kwargs["reply_markup"].inline_keyboard
     assert [[button.text for button in row] for row in inline_keyboard] == [["✏️ Редактировать", "📦 Мои продукты"]]
     assert message.answer.await_args_list[1].args[0] == "Можно добавить ещё продукт в этот приём пищи или завершить его."
@@ -2032,5 +2127,5 @@ def test_back_from_manual_products_restores_open_meal_entry_screen():
     assert state._data["in_my_product_menu"] is False
     restored_text = message.answer.await_args_list[0].args[0]
     assert "🍱 <b>Уже в этом приёме пищи</b>" in restored_text
-    assert "🍲 <b>Обед • 210 ккал</b>" in restored_text
+    assert "🍲 <b>Обед — 210 ккал</b>" in restored_text
     assert message.answer.await_args_list[1].args[0] == "Можно добавить ещё продукт в этот приём пищи или завершить его."

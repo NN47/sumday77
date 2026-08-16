@@ -15,6 +15,25 @@ from utils.log_sanitizer import safe_exception_summary
 logger = logging.getLogger(__name__)
 
 
+TELEGRAM_SAFE_TEXT_LIMIT = 4_000
+MEAL_SUMMARY_PRODUCTS_LIMIT = 900
+MEAL_SUMMARY_PRODUCT_NAME_LIMIT = 100
+
+
+_EMOJI_DIGITS = {
+    "0": "0️⃣",
+    "1": "1️⃣",
+    "2": "2️⃣",
+    "3": "3️⃣",
+    "4": "4️⃣",
+    "5": "5️⃣",
+    "6": "6️⃣",
+    "7": "7️⃣",
+    "8": "8️⃣",
+    "9": "9️⃣",
+}
+
+
 MEAL_UI = {
     "breakfast": {"emoji": "🍳", "title": "Завтрак", "totals_label": "завтрак"},
     "lunch": {"emoji": "🍲", "title": "Обед", "totals_label": "обед"},
@@ -51,7 +70,6 @@ def format_today_meals(
         if not meal_group:
             continue
         if non_empty_blocks > 0:
-            lines.append("⸻")
             lines.append("")
         lines.extend(format_meal_block(meal_type, meal_group))
         non_empty_blocks += 1
@@ -81,8 +99,38 @@ def _safe_product_name(value: object, fallback: str = "Продукт") -> str:
     return name
 
 
-def _extract_product_lines(meal: Meal) -> list[str]:
-    """Извлекает строки продуктов из meals.products_json без служебного шума."""
+def format_emoji_number(number: int) -> str:
+    """Форматирует порядковый номер только emoji-цифрами."""
+    if number == 10:
+        return "🔟"
+    return "".join(_EMOJI_DIGITS[digit] for digit in str(number))
+
+
+def extract_product_name(product: dict, fallback: str = "Продукт") -> str:
+    """Возвращает отображаемое название продукта из поддерживаемых форматов."""
+    return _safe_product_name(product.get("name_ru") or product.get("name"), fallback)
+
+
+def extract_product_weight(product: dict) -> float:
+    """Возвращает вес продукта из поддерживаемых форматов."""
+    return _safe_float(product.get("grams") or product.get("weight"))
+
+
+def extract_product_macros(product: dict) -> tuple[float, float, float, float]:
+    """Возвращает калории/белки/жиры/углеводы из поддерживаемых форматов."""
+    calories = _safe_float(product.get("kcal") or product.get("calories") or product.get("_calories"))
+    protein = _safe_float(product.get("protein") or product.get("protein_g") or product.get("_protein_g"))
+    fat = _safe_float(product.get("fat") or product.get("fat_total_g") or product.get("_fat_total_g"))
+    carbs = _safe_float(
+        product.get("carbs")
+        or product.get("carbohydrates_total_g")
+        or product.get("_carbohydrates_total_g")
+    )
+    return calories, protein, fat, carbs
+
+
+def _extract_products(meal: Meal) -> list[dict]:
+    """Извлекает продукты из meals.products_json, сохраняя исходный порядок."""
     raw_products = getattr(meal, "products_json", None)
     products: list[dict] = []
     if raw_products:
@@ -93,42 +141,144 @@ def _extract_product_lines(meal: Meal) -> list[str]:
         except Exception as e:
             logger.warning("Не смог распарсить products_json error_type=%s", safe_exception_summary(e))
 
-    if not products:
-        fallback_name = _safe_product_name(
-            getattr(meal, "description", None) or getattr(meal, "raw_query", None)
+    return products
+
+
+def _collect_product_names(items: list[Meal]) -> list[str]:
+    """Собирает уникальные названия продуктов в порядке записей дневника."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for meal in items:
+        products = _extract_products(meal)
+        meal_names = (
+            [extract_product_name(product) for product in products]
+            if products
+            else [
+                _safe_product_name(
+                    getattr(meal, "description", None) or getattr(meal, "raw_query", None)
+                )
+            ]
         )
-        return [
-            f"• <b>{html.escape(fallback_name)}</b>",
-            f"<b>{float(getattr(meal, 'calories', 0) or 0):.0f} ккал</b> "
-            f"<i>(Б {float(getattr(meal, 'protein', 0) or 0):.1f} / "
-            f"Ж {float(getattr(meal, 'fat', 0) or 0):.1f} / "
-            f"У {float(getattr(meal, 'carbs', 0) or 0):.1f})</i>",
+        for name in meal_names:
+            clean_name = " ".join(name.split())
+            dedupe_key = clean_name.casefold()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            names.append(clean_name)
+    return names
+
+
+def _format_compact_product_names(names: list[str]) -> str:
+    """Форматирует ограниченный, но понятный список названий для сводки."""
+    if not names:
+        return "Продукт"
+
+    visible: list[str] = []
+    for index, name in enumerate(names):
+        shortened = name
+        if len(shortened) > MEAL_SUMMARY_PRODUCT_NAME_LIMIT:
+            shortened = f"{shortened[:MEAL_SUMMARY_PRODUCT_NAME_LIMIT - 1].rstrip()}…"
+        escaped = html.escape(shortened)
+        candidate = ", ".join([*visible, escaped])
+        if len(candidate) <= MEAL_SUMMARY_PRODUCTS_LIMIT:
+            visible.append(escaped)
+            continue
+
+        remaining = len(names) - index
+        suffix = f"и ещё {remaining}"
+        if visible and len(", ".join([*visible, suffix])) <= MEAL_SUMMARY_PRODUCTS_LIMIT:
+            visible.append(suffix)
+        break
+
+    return ", ".join(visible) or f"и ещё {len(names)}"
+
+
+def _normalize_totals(totals: dict | None) -> dict[str, float]:
+    totals = totals or {}
+    return {
+        "calories": _safe_float(totals.get("calories", totals.get("kcal"))),
+        "protein": _safe_float(totals.get("protein", totals.get("protein_g"))),
+        "fat": _safe_float(totals.get("fat", totals.get("fat_total_g"))),
+        "carbs": _safe_float(totals.get("carbs", totals.get("carbohydrates_total_g"))),
+    }
+
+
+def _collect_product_totals(products: list[dict]) -> dict[str, float]:
+    totals = {"calories": 0.0, "protein": 0.0, "fat": 0.0, "carbs": 0.0}
+    for product in products:
+        calories, protein, fat, carbs = extract_product_macros(product)
+        totals["calories"] += calories
+        totals["protein"] += protein
+        totals["fat"] += fat
+        totals["carbs"] += carbs
+    return totals
+
+
+def format_meal_edit_details(
+    meal_type: str,
+    products: list[dict],
+    totals: dict | None = None,
+) -> str:
+    """Форматирует полную детализацию продуктов перед их редактированием."""
+    meal_ui = MEAL_UI.get(normalize_meal_type(meal_type), MEAL_UI["snack"])
+    normalized_totals = _normalize_totals(totals) if totals is not None else _collect_product_totals(products)
+    lines = [f"✏️ {meal_ui['title']} — {normalized_totals['calories']:.0f} ккал", ""]
+
+    for index, product in enumerate(products, start=1):
+        name = extract_product_name(product)
+        grams = extract_product_weight(product)
+        calories, protein, fat, carbs = extract_product_macros(product)
+        lines.extend(
+            [
+                f"{format_emoji_number(index)} {name} — {grams:.0f} г",
+                f"{calories:.0f} ккал · Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f}",
+            ]
+        )
+        if bool(product.get("is_manually_corrected")):
+            lines.append("✏️ КБЖУ скорректированы вручную")
+        lines.append("")
+
+    lines.extend(
+        [
+            "Итого:",
+            f"{normalized_totals['calories']:.0f} ккал · "
+            f"Б {normalized_totals['protein']:.1f} / "
+            f"Ж {normalized_totals['fat']:.1f} / "
+            f"У {normalized_totals['carbs']:.1f}",
+            "",
+            "Выбери продукт для редактирования:",
         ]
+    )
+    return "\n".join(lines)
 
-    lines: list[str] = []
-    for p in products:
-        name = _safe_product_name(p.get("name_ru") or p.get("name"))
-        cal = _safe_float(p.get("calories") or p.get("_calories") or p.get("kcal"))
-        prot = _safe_float(p.get("protein_g") or p.get("_protein_g") or p.get("protein"))
-        fat = _safe_float(p.get("fat_total_g") or p.get("_fat_total_g") or p.get("fat"))
-        carb = _safe_float(
-            p.get("carbohydrates_total_g") or p.get("_carbohydrates_total_g") or p.get("carbs")
-        )
-        grams = _safe_float(p.get("grams") or p.get("weight"))
-        if grams > 0:
-            lines.append(
-                f"• <b>{html.escape(name)}</b> ({grams:.0f} г)"
-            )
-            lines.append(f"<b>{cal:.0f} ккал</b> <i>(Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})</i>")
-        else:
-            lines.append(
-                f"• <b>{html.escape(name)}</b>"
-            )
-            lines.append(f"<b>{cal:.0f} ккал</b> <i>(Б {prot:.1f} / Ж {fat:.1f} / У {carb:.1f})</i>")
 
-        if bool(p.get("is_manually_corrected")):
-            lines.append("✏️ <i>КБЖУ скорректированы вручную</i>")
-    return lines
+def _telegram_text_units(text: str) -> int:
+    """Считает длину текста в UTF-16 code units, как Telegram Bot API."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def split_telegram_text(text: str, limit: int = TELEGRAM_SAFE_TEXT_LIMIT) -> list[str]:
+    """Без потерь разбивает plain-text сообщение на безопасные для Telegram части."""
+    if limit <= 0:
+        raise ValueError("limit must be positive")
+    if not text:
+        return [""]
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_units = 0
+    for character in text:
+        character_units = _telegram_text_units(character)
+        if current and current_units + character_units > limit:
+            chunks.append("".join(current))
+            current = []
+            current_units = 0
+        current.append(character)
+        current_units += character_units
+    if current:
+        chunks.append("".join(current))
+    return chunks
 
 
 def _collect_meal_totals(items: list[Meal]) -> dict[str, float]:
@@ -155,29 +305,12 @@ def format_meal_totals(meal_type: str, totals: dict[str, float]) -> list[str]:
 def format_meal_block(meal_type: str, items: list[Meal]) -> list[str]:
     meal_ui = MEAL_UI.get(meal_type, MEAL_UI["snack"])
     totals = _collect_meal_totals(items)
-    lines = [f"{meal_ui['emoji']} <b>{meal_ui['title']} • {totals['calories']:.0f} ккал</b>", ""]
-
-    first_product = True
-    for meal in items:
-        product_lines = _extract_product_lines(meal)
-        i = 0
-        while i < len(product_lines):
-            if not first_product:
-                lines.append("")
-            lines.append(product_lines[i])
-            if i + 1 < len(product_lines):
-                lines.append(product_lines[i + 1])
-            i += 2
-            while i < len(product_lines) and product_lines[i].startswith("✏️ "):
-                lines.append(product_lines[i])
-                i += 1
-            first_product = False
-
-    lines.append("")
-    lines.append("---")
-    lines.append("")
-    lines.extend(format_meal_totals(meal_type, totals))
-    return lines
+    product_names = _format_compact_product_names(_collect_product_names(items))
+    return [
+        f"{meal_ui['emoji']} <b>{meal_ui['title']} — {totals['calories']:.0f} ккал</b>",
+        product_names,
+        f"<i>Б {totals['protein']:.1f} / Ж {totals['fat']:.1f} / У {totals['carbs']:.1f}</i>",
+    ]
 
 
 def format_meal_message(

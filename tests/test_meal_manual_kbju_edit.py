@@ -17,7 +17,7 @@ from handlers.meals import (
     _advance_custom_product_after_save,
 )
 from utils.emoji_map import EMOJI_MAP
-from utils.meal_formatters import _extract_product_lines
+from utils.meal_formatters import format_meal_edit_details
 
 
 def test_parse_kbju_bulk_input_accepts_four_values():
@@ -58,14 +58,22 @@ def test_apply_product_manual_macros_updates_per_100g_and_flag():
     assert product["is_manually_corrected"] is True
 
 
-def test_extract_product_lines_contains_manual_correction_label():
-    meal = SimpleNamespace(
-        products_json='[{"name":"Курица","grams":150,"calories":200,"protein_g":30,"fat_total_g":5,"carbohydrates_total_g":1,"is_manually_corrected":true}]'
-    )
+def test_meal_edit_details_contains_manual_correction_label():
+    products = [
+        {
+            "name": "Курица",
+            "grams": 150,
+            "calories": 200,
+            "protein_g": 30,
+            "fat_total_g": 5,
+            "carbohydrates_total_g": 1,
+            "is_manually_corrected": True,
+        }
+    ]
 
-    lines = _extract_product_lines(meal)
+    text = format_meal_edit_details("lunch", products)
 
-    assert any("КБЖУ скорректированы вручную" in line for line in lines)
+    assert "КБЖУ скорректированы вручную" in text
 
 
 def test_kbju_editor_uses_shared_carbs_emoji():

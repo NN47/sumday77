@@ -66,6 +66,14 @@ from services.photo_food_validator import validate_photo_food_payload
 from utils.validators import parse_date
 from utils.log_sanitizer import safe_exception_summary
 from utils.sensitive_meal_text import check_sensitive_meal_text
+from utils.meal_formatters import (
+    extract_product_macros as extract_meal_product_macros,
+    extract_product_name as extract_meal_product_name,
+    extract_product_weight as extract_meal_product_weight,
+    format_emoji_number as format_meal_emoji_number,
+    format_meal_edit_details,
+    split_telegram_text,
+)
 from datetime import datetime
 from utils.meal_types import (
     MealType,
@@ -815,25 +823,9 @@ MY_PRODUCTS_SOURCE_BUTTON_TO_FILTER = {
 
 
 
-_EMOJI_DIGITS = {
-    "0": "0️⃣",
-    "1": "1️⃣",
-    "2": "2️⃣",
-    "3": "3️⃣",
-    "4": "4️⃣",
-    "5": "5️⃣",
-    "6": "6️⃣",
-    "7": "7️⃣",
-    "8": "8️⃣",
-    "9": "9️⃣",
-}
-
-
 def _format_emoji_number(number: int) -> str:
     """Форматирует порядковый номер только emoji-цифрами."""
-    if number == 10:
-        return "🔟"
-    return "".join(_EMOJI_DIGITS[digit] for digit in str(number))
+    return format_meal_emoji_number(number)
 
 
 @dataclass(frozen=True)
@@ -5895,8 +5887,8 @@ def _build_weight_products_keyboard(products: list[dict]) -> InlineKeyboardMarku
     """Клавиатура выбора продукта для редактирования."""
     rows: list[list[InlineKeyboardButton]] = []
     for idx, product in enumerate(products, start=1):
-        name = _truncate_product_name(product.get("name") or "продукт")
-        grams = float(product.get("grams") or 0)
+        name = _truncate_product_name(extract_meal_product_name(product, fallback="продукт"))
+        grams = extract_meal_product_weight(product)
         corrected_badge = " ✏️" if bool(product.get("is_manually_corrected")) else ""
         rows.append(
             [
@@ -5929,6 +5921,48 @@ async def _send_weight_products_list(
             reply_markup=ReplyKeyboardRemove(),
         )
     await message.answer(text, reply_markup=_build_weight_products_keyboard(products))
+
+
+async def _show_meal_edit_products_list(
+    message: Message,
+    products: list[dict],
+    meal_type: str,
+    *,
+    totals: dict | None = None,
+    remove_reply_keyboard: bool = False,
+    edit_existing: bool = False,
+) -> None:
+    """Показывает полную детализацию и клавиатуру того же упорядоченного списка."""
+    if remove_reply_keyboard:
+        await message.answer(
+            "⬇️ Убираю нижнюю клавиатуру на время редактирования",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+    chunks = split_telegram_text(format_meal_edit_details(meal_type, products, totals=totals))
+    keyboard = _build_weight_products_keyboard(products)
+
+    if edit_existing:
+        try:
+            await message.edit_text(
+                chunks[0],
+                reply_markup=keyboard if len(chunks) == 1 else None,
+                parse_mode=None,
+            )
+        except TelegramBadRequest:
+            await message.answer(
+                chunks[0],
+                reply_markup=keyboard if len(chunks) == 1 else None,
+                parse_mode=None,
+            )
+        chunks = chunks[1:]
+
+    for index, chunk in enumerate(chunks):
+        await message.answer(
+            chunk,
+            reply_markup=keyboard if index == len(chunks) - 1 else None,
+            parse_mode=None,
+        )
 
 
 def _format_product_macro_summary(
@@ -6036,11 +6070,7 @@ def _build_weight_delete_confirm_keyboard(product_idx: int) -> InlineKeyboardMar
 
 def _extract_product_macros(product: dict) -> tuple[float, float, float, float]:
     """Возвращает калории/белки/жиры/углеводы из любого поддерживаемого формата."""
-    calories = float(product.get("kcal") or product.get("calories") or product.get("_calories") or 0)
-    protein = float(product.get("protein") or product.get("protein_g") or product.get("_protein_g") or 0)
-    fat = float(product.get("fat") or product.get("fat_total_g") or product.get("_fat_total_g") or 0)
-    carbs = float(product.get("carbs") or product.get("carbohydrates_total_g") or product.get("_carbohydrates_total_g") or 0)
-    return calories, protein, fat, carbs
+    return extract_meal_product_macros(product)
 
 
 def _ensure_per_100g(product: dict) -> tuple[float, float, float, float]:
@@ -6343,13 +6373,7 @@ async def edit_last_meal(message: Message, state: FSMContext):
         await message.answer("❌ Не нашёл запись для изменения.")
         return
     
-    # Извлекаем продукты из products_json
-    products = []
-    if meal.products_json:
-        try:
-            products = json.loads(meal.products_json)
-        except Exception:
-            pass
+    products = _extract_products_for_edit(meal)
     
     if not products:
         await message.answer(
@@ -6358,7 +6382,13 @@ async def edit_last_meal(message: Message, state: FSMContext):
         )
         return
     
-    initial_product_idx = 0 if len(products) == 1 else None
+    meal_type = normalize_meal_type(getattr(meal, "meal_type", None), fallback=MealType.SNACK.value)
+    totals = {
+        "calories": float(getattr(meal, "calories", 0) or 0),
+        "protein": float(getattr(meal, "protein", 0) or 0),
+        "fat": float(getattr(meal, "fat", 0) or 0),
+        "carbs": float(getattr(meal, "carbs", 0) or 0),
+    }
 
     # Сохраняем данные в FSM для редактирования продукта
     await state.set_state(MealEntryStates.editing_meal_weight)
@@ -6368,24 +6398,16 @@ async def edit_last_meal(message: Message, state: FSMContext):
         saved_products=products,
         weight_drafts={},
         kbju_drafts={},
-        editing_product_idx=initial_product_idx,
+        editing_product_idx=None,
+        editing_meal_type=meal_type,
     )
 
-    if initial_product_idx is not None:
-        await message.answer(
-            "⬇️ Убираю нижнюю клавиатуру на время редактирования",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        await message.answer(
-            _render_product_actions_text(products[initial_product_idx]),
-            reply_markup=_build_product_actions_keyboard(initial_product_idx),
-        )
-        return
-
-    await _send_weight_products_list(
+    await _show_meal_edit_products_list(
         message,
-        "<b>✏️ Выбери продукт для редактирования:</b>",
         products,
+        meal_type,
+        totals=totals,
+        remove_reply_keyboard=True,
     )
 
 
@@ -6410,6 +6432,7 @@ async def _start_meal_edit_flow(
     *,
     return_to_meal_entry: bool = False,
     return_meal_type: str | None = None,
+    meal_type: str | None = None,
 ) -> None:
     """Общий сценарий запуска редактирования конкретной записи приёма пищи."""
     meal = MealRepository.get_meal_by_id(meal_id, user_id)
@@ -6418,14 +6441,23 @@ async def _start_meal_edit_flow(
         return
 
     products = _extract_products_for_edit(meal)
-    initial_product_idx = 0 if len(products) == 1 else None
-    
     if not products:
         await message.answer(
             "❌ Не удалось извлечь список продуктов из этой записи.\n"
             "Попробуй удалить и создать запись заново."
         )
         return
+
+    editing_meal_type = normalize_meal_type(
+        meal_type or getattr(meal, "meal_type", None),
+        fallback=MealType.SNACK.value,
+    )
+    totals = {
+        "calories": float(getattr(meal, "calories", 0) or 0),
+        "protein": float(getattr(meal, "protein", 0) or 0),
+        "fat": float(getattr(meal, "fat", 0) or 0),
+        "carbs": float(getattr(meal, "carbs", 0) or 0),
+    }
     
     # Сохраняем данные в FSM и открываем меню действий продукта
     await state.update_data(
@@ -6434,27 +6466,19 @@ async def _start_meal_edit_flow(
         saved_products=products,
         weight_drafts={},
         kbju_drafts={},
-        editing_product_idx=initial_product_idx,
+        editing_product_idx=None,
+        editing_meal_type=editing_meal_type,
         return_to_meal_entry=return_to_meal_entry,
         return_meal_type=return_meal_type,
     )
     await state.set_state(MealEntryStates.editing_meal_weight)
 
-    if initial_product_idx is not None:
-        await message.answer(
-            "⬇️ Убираю нижнюю клавиатуру на время редактирования",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        await message.answer(
-            _render_product_actions_text(products[initial_product_idx]),
-            reply_markup=_build_product_actions_keyboard(initial_product_idx),
-        )
-        return
-
-    await _send_weight_products_list(
+    await _show_meal_edit_products_list(
         message,
-        "<b>✏️ Выбери продукт для редактирования:</b>",
         products,
+        editing_meal_type,
+        totals=totals,
+        remove_reply_keyboard=True,
     )
 
 
@@ -6556,6 +6580,7 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
             target_date,
             return_to_meal_entry=return_to_meal_entry,
             return_meal_type=meal_type,
+            meal_type=meal_type,
         )
         return
 
@@ -6580,17 +6605,24 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
         editing_product_idx=None,
         grouped_meal_ids=[m.id for m in meals_for_type],
         grouped_meal_type=meal_type,
+        editing_meal_type=meal_type,
         return_to_meal_entry=return_to_meal_entry,
         return_meal_type=meal_type,
     )
     await state.set_state(MealEntryStates.editing_meal_weight)
 
-    meal_title = display_meal_type_with_bold_name(meal_type)
-    await _send_weight_products_list(
+    totals = {
+        "calories": sum(float(getattr(meal, "calories", 0) or 0) for meal in meals_for_type),
+        "protein": sum(float(getattr(meal, "protein", 0) or 0) for meal in meals_for_type),
+        "fat": sum(float(getattr(meal, "fat", 0) or 0) for meal in meals_for_type),
+        "carbs": sum(float(getattr(meal, "carbs", 0) or 0) for meal in meals_for_type),
+    }
+    await _show_meal_edit_products_list(
         callback.message,
-        f"⚖️ Нашёл несколько записей в приёме пищи «{meal_title}» за день — показываю объединённый список продуктов.\n"
-        "<b>Выбери продукт для редактирования:</b>",
         merged_products,
+        meal_type,
+        totals=totals,
+        remove_reply_keyboard=True,
     )
 
 
@@ -6704,10 +6736,14 @@ async def handle_edit_type_choice(message: Message, state: FSMContext):
         await state.set_state(MealEntryStates.editing_meal_weight)
         await state.update_data(weight_drafts={}, kbju_drafts={}, editing_product_idx=None)
 
-        await _send_weight_products_list(
+        await _show_meal_edit_products_list(
             message,
-            "<b>✏️ Выбери продукт для редактирования:</b>",
             saved_products,
+            normalize_meal_type(
+                data.get("editing_meal_type") or data.get("grouped_meal_type") or data.get("meal_type"),
+                fallback=MealType.SNACK.value,
+            ),
+            remove_reply_keyboard=True,
         )
     else:
         await message.answer("Пожалуйста, выбери вариант с кнопки.")
@@ -6845,16 +6881,23 @@ async def meal_weight_back_to_products(callback: CallbackQuery, state: FSMContex
     data = await state.get_data()
     saved_products = data.get("saved_products", [])
     await state.set_state(MealEntryStates.editing_meal_weight)
-    try:
+    if data.get("ai_text_draft_mode"):
         await callback.message.edit_text(
             "<b>✏️ Выбери продукт для редактирования:</b>",
             reply_markup=_build_weight_products_keyboard(saved_products),
         )
-    except TelegramBadRequest:
-        await callback.message.answer(
-            "<b>✏️ Выбери продукт для редактирования:</b>",
-            reply_markup=_build_weight_products_keyboard(saved_products),
-        )
+        return
+
+    meal_type = normalize_meal_type(
+        data.get("editing_meal_type") or data.get("grouped_meal_type") or data.get("meal_type"),
+        fallback=MealType.SNACK.value,
+    )
+    await _show_meal_edit_products_list(
+        callback.message,
+        saved_products,
+        meal_type,
+        edit_existing=True,
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_wsel:"))
@@ -7659,9 +7702,14 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
     drafts.pop(str(product_idx), None)
     await state.update_data(saved_products=saved_products, weight_drafts=drafts)
     await callback.answer("✅ Вес продукта обновлён")
-    await callback.message.edit_text(
-        "<b>✏️ Выбери продукт для редактирования:</b>",
-        reply_markup=_build_weight_products_keyboard(saved_products),
+    await _show_meal_edit_products_list(
+        callback.message,
+        saved_products,
+        normalize_meal_type(
+            data.get("editing_meal_type") or data.get("grouped_meal_type") or data.get("meal_type"),
+            fallback=MealType.SNACK.value,
+        ),
+        edit_existing=True,
     )
 
 
@@ -7757,9 +7805,14 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
             await callback.message.answer("Приём пищи теперь пуст. Запись удалена.")
         else:
             await state.update_data(saved_products=saved_products, weight_drafts=drafts)
-            await callback.message.edit_text(
-                "<b>✏️ Выбери продукт для редактирования:</b>",
-                reply_markup=_build_weight_products_keyboard(saved_products),
+            await _show_meal_edit_products_list(
+                callback.message,
+                saved_products,
+                normalize_meal_type(
+                    data.get("editing_meal_type") or data.get("grouped_meal_type") or data.get("meal_type"),
+                    fallback=MealType.SNACK.value,
+                ),
+                edit_existing=True,
             )
             await callback.message.answer("✅ Продукт удалён")
     else:
@@ -7785,9 +7838,14 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
             return
 
         await state.update_data(saved_products=saved_products, weight_drafts=drafts)
-        await callback.message.edit_text(
-            "<b>✏️ Выбери продукт для редактирования:</b>",
-            reply_markup=_build_weight_products_keyboard(saved_products),
+        await _show_meal_edit_products_list(
+            callback.message,
+            saved_products,
+            normalize_meal_type(
+                data.get("editing_meal_type") or data.get("grouped_meal_type") or data.get("meal_type"),
+                fallback=MealType.SNACK.value,
+            ),
+            edit_existing=True,
         )
         await callback.message.answer("✅ Продукт удалён")
 
