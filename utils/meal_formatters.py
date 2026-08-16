@@ -317,6 +317,51 @@ def _collect_product_totals(products: list[dict]) -> dict[str, float]:
     return totals
 
 
+def _format_product_detail_block(product: dict) -> str:
+    """Форматирует продукт в общем подробном HTML-стиле add/edit-сценариев."""
+    name = html.escape(extract_product_name(product))
+    grams = extract_product_weight(product)
+    calories, protein, fat, carbs = extract_product_macros(product)
+    title = f"• <b>{name}</b>"
+    if grams > 0:
+        title += f" ({grams:.0f} г)"
+
+    lines = [
+        title,
+        f"<b>{calories:.0f} ккал</b> "
+        f"<i>(Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f})</i>",
+    ]
+    if bool(product.get("is_manually_corrected")):
+        lines.append("✏️ <i>КБЖУ скорректированы вручную</i>")
+    return "\n".join(lines)
+
+
+def _collect_meal_detail_products(items: list[Meal]) -> list[dict]:
+    """Собирает полные продукты для подробного показа, не объединяя записи."""
+    products: list[dict] = []
+    for meal in items:
+        stored_products = _extract_products(meal)
+        if stored_products:
+            products.extend(stored_products)
+            continue
+
+        products.append(
+            {
+                "name": _safe_product_name(
+                    getattr(meal, "description", None) or getattr(meal, "raw_query", None)
+                ),
+                "calories": getattr(meal, "calories", 0),
+                "protein": getattr(meal, "protein", 0),
+                "fat": getattr(meal, "fat", 0),
+                "carbs": getattr(meal, "carbs", 0),
+                "is_manually_corrected": bool(
+                    getattr(meal, "is_manually_corrected", False)
+                ),
+            }
+        )
+    return products
+
+
 def format_meal_edit_details(
     meal_type: str,
     products: list[dict],
@@ -332,28 +377,16 @@ def _format_meal_edit_detail_blocks(
     totals: dict | None = None,
 ) -> list[str]:
     """Строит независимые HTML-блоки, которые можно безопасно разбивать по сообщениям."""
-    meal_ui = MEAL_UI.get(normalize_meal_type(meal_type), MEAL_UI["snack"])
+    normalized_meal_type = normalize_meal_type(meal_type)
+    meal_ui = MEAL_UI.get(normalized_meal_type, MEAL_UI["snack"])
     normalized_totals = _normalize_totals(totals) if totals is not None else _collect_product_totals(products)
     blocks = [f"<b>✏️ {meal_ui['title']} — выберите продукт для редактирования</b>"]
 
-    for index, product in enumerate(products, start=1):
-        name = html.escape(extract_product_name(product))
-        grams = extract_product_weight(product)
-        calories, protein, fat, carbs = extract_product_macros(product)
-        lines = [
-            f"{format_emoji_number(index)} <b>{name}</b> — {grams:.0f} г",
-            f"{calories:.0f} ккал · Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f}",
-        ]
-        if bool(product.get("is_manually_corrected")):
-            lines.append("✏️ КБЖУ скорректированы вручную")
-        blocks.append("\n".join(lines))
+    blocks.extend(_format_product_detail_block(product) for product in products)
 
-    blocks.append(
-        f"<b>Итого: {normalized_totals['calories']:.0f} ккал · "
-        f"Б {normalized_totals['protein']:.1f} · "
-        f"Ж {normalized_totals['fat']:.1f} · "
-        f"У {normalized_totals['carbs']:.1f}</b>"
-    )
+    blocks.append("---")
+    blocks.append("\n".join(format_meal_totals(normalized_meal_type, normalized_totals)))
+    blocks.append("<b>Выберите продукт для редактирования:</b>")
     return blocks
 
 
@@ -397,7 +430,7 @@ def format_meal_edit_chunks(
         if _telegram_text_units(block) <= limit:
             safe_blocks.append(block)
             continue
-        plain_block = html.unescape(re.sub(r"</?b>", "", block))
+        plain_block = html.unescape(re.sub(r"</?(?:b|i)>", "", block))
         safe_blocks.extend(_split_plain_text_for_html(plain_block, limit))
 
     chunks: list[str] = []
@@ -433,6 +466,21 @@ def format_meal_totals(meal_type: str, totals: dict[str, float]) -> list[str]:
         f"🥑 <b>Жиры:</b> {totals['fat']:.1f} г",
         f"🍚 <b>Углеводы:</b> {totals['carbs']:.1f} г",
     ]
+
+
+def format_meal_details(meal_type: str, items: list[Meal]) -> str:
+    """Форматирует полный состав текущего приёма пищи для add-сценария."""
+    normalized_meal_type = normalize_meal_type(meal_type)
+    meal_ui = MEAL_UI.get(normalized_meal_type, MEAL_UI["snack"])
+    totals = _collect_meal_totals(items)
+    blocks = [f"{meal_ui['emoji']} <b>{meal_ui['title']}</b>"]
+    blocks.extend(
+        _format_product_detail_block(product)
+        for product in _collect_meal_detail_products(items)
+    )
+    blocks.append("---")
+    blocks.append("\n".join(format_meal_totals(normalized_meal_type, totals)))
+    return "\n\n".join(blocks)
 
 
 def format_meal_block(meal_type: str, items: list[Meal]) -> list[str]:

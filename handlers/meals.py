@@ -71,6 +71,7 @@ from utils.meal_formatters import (
     extract_product_name as extract_meal_product_name,
     extract_product_weight as extract_meal_product_weight,
     format_emoji_number as format_meal_emoji_number,
+    format_meal_details,
     format_meal_edit_chunks,
 )
 from datetime import datetime
@@ -407,9 +408,7 @@ def _format_current_meal_after_save_message(meal_type: str, current_meal_items: 
         "",
     ]
     if current_meal_items:
-        from utils.meal_formatters import format_meal_message
-
-        lines.append(format_meal_message(meal_type, current_meal_items))
+        lines.append(format_meal_details(meal_type, current_meal_items))
     else:
         lines.append(f"Пока в {display_meal_type(meal_type).lower()} нет сохранённых продуктов.")
 
