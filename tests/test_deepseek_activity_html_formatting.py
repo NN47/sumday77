@@ -34,7 +34,7 @@ def test_detailed_deepseek_prompt_avoids_inaccurate_nutrition_recommendations() 
     assert "распределять воду равномерно в течение дня" in prompt
 
 
-def test_detailed_deepseek_analysis_is_sent_with_html_parse_mode() -> None:
+def test_detailed_deepseek_entrypoint_opens_preflight_without_calling_ai() -> None:
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=12345),
         answer=AsyncMock(),
@@ -42,28 +42,15 @@ def test_detailed_deepseek_analysis_is_sent_with_html_parse_mode() -> None:
     )
 
     with (
-        patch(
-            "handlers.activity.extended_activity_analysis_service.generate",
-            new=AsyncMock(return_value="<b>📊 Общая оценка — 9/10</b>\nТекст"),
-        ) as generate_mock,
-        patch("handlers.activity.EveningAnalysisNotificationRepository.mark_analysis_started"),
-        patch("handlers.activity.ActivityAnalysisRepository.create_entry") as create_entry,
-        patch("handlers.activity.AnalyticsRepository.track_event"),
-        patch("handlers.activity.push_menu_stack"),
+        patch("handlers.activity.ActivityAnalysisRepository.get_successful_ai_for_date", return_value=None),
+        patch("handlers.activity.show_daily_analysis_preflight", new=AsyncMock()) as show_preflight,
+        patch("handlers.activity.extended_activity_analysis_service.generate", new=AsyncMock()) as generate_mock,
     ):
         asyncio.run(analyze_activity_day_detailed_deepseek(message))
 
-    generate_mock.assert_awaited_once_with(
-        "12345",
-        type(generate_mock.await_args.args[1])(
-            start_date=date.today(),
-            end_date=date.today(),
-            label="за день",
-        ),
-    )
-    create_entry.assert_called_once()
-    final_call = message.answer.await_args_list[-1]
-    assert final_call.kwargs.get("parse_mode") == "HTML"
+    show_preflight.assert_awaited_once()
+    assert show_preflight.await_args.args[1] == "12345"
+    generate_mock.assert_not_awaited()
 
 
 def test_detailed_deepseek_prompt_encodes_supportive_sumday77_philosophy() -> None:
@@ -80,17 +67,28 @@ def test_detailed_deepseek_prompt_encodes_supportive_sumday77_philosophy() -> No
 def test_calendar_add_analysis_runs_detailed_for_selected_day() -> None:
     from handlers.activity import add_activity_analysis_from_calendar
 
+    target_date = date.today()
     callback = SimpleNamespace(
-        data="act_cal_add:2026-07-15",
+        data=f"act_cal_add:{target_date.isoformat()}",
         from_user=SimpleNamespace(id=12345),
         message=SimpleNamespace(),
         answer=AsyncMock(),
     )
     state = SimpleNamespace(clear=AsyncMock())
 
-    with patch("handlers.activity.run_detailed_activity_analysis", new=AsyncMock()) as run_detailed:
+    with (
+        patch("handlers.activity.quota_period_key", return_value=target_date),
+        patch("handlers.activity.ActivityAnalysisRepository.get_successful_ai_for_date", return_value=None),
+        patch("handlers.activity.show_daily_analysis_preflight", new=AsyncMock()) as show_preflight,
+    ):
         asyncio.run(add_activity_analysis_from_calendar(callback, state))
 
     callback.answer.assert_awaited_once()
     state.clear.assert_awaited_once()
-    run_detailed.assert_awaited_once_with(callback.message, "12345", date(2026, 7, 15))
+    show_preflight.assert_awaited_once_with(
+        callback.message,
+        "12345",
+        target_date,
+        origin="calendar",
+        prefer_edit=True,
+    )

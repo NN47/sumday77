@@ -8,6 +8,10 @@ from sqlalchemy.orm import sessionmaker
 from database.account_deletion import USER_LINKED_MODELS, delete_user_account
 from database.models import (
     AIUsageLog,
+    AIAttemptCounter,
+    AIQuotaActiveLock,
+    AIQuotaCounter,
+    AIQuotaOperation,
     ActivityAnalysisEntry,
     Base,
     CustomWorkoutExercise,
@@ -15,6 +19,7 @@ from database.models import (
     DishIngredient,
     ErrorLog,
     EveningAnalysisNotificationState,
+    DailyAnalysisPreparationSession,
     GeminiAccount,
     GeminiRequestLog,
     KbjuSettings,
@@ -31,6 +36,7 @@ from database.models import (
     SupportMessage,
     User,
     UserEvent,
+    UserPlanAssignment,
     WaterEntry,
     Weight,
     WellbeingEntry,
@@ -65,6 +71,51 @@ class AccountDeletionTests(unittest.TestCase):
 
     def _seed_user_data(self, session, user_id: str):
         session.add(User(user_id=user_id))
+        quota_date = date(2026, 1, 1)
+        session.add(UserPlanAssignment(user_id=user_id, plan_key="free"))
+        session.add(
+            AIQuotaCounter(
+                user_id=user_id,
+                plan_key="free",
+                feature_key="meal_text_ai",
+                period_key=quota_date,
+                limit_value=15,
+                used_count=1,
+            )
+        )
+        session.add(
+            AIAttemptCounter(
+                user_id=user_id,
+                group_key="meal_text",
+                period_key=quota_date,
+                attempt_limit=20,
+                attempt_count=1,
+            )
+        )
+        session.add(
+            AIQuotaOperation(
+                request_id=f"account-delete-{user_id}",
+                user_id=user_id,
+                plan_key="free",
+                feature_key="meal_text_ai",
+                period_key=quota_date,
+                status="consumed",
+                expires_at=datetime(2026, 1, 1, 12, 0),
+            )
+        )
+        session.add(
+            AIQuotaActiveLock(
+                user_id=user_id,
+                request_id=f"active-{user_id}",
+                expires_at=datetime(2026, 1, 1, 12, 0),
+            )
+        )
+        session.add(
+            DailyAnalysisPreparationSession(
+                user_id=user_id,
+                target_date=quota_date,
+            )
+        )
         session.add(EveningAnalysisNotificationState(user_id=user_id))
         session.add(Workout(user_id=user_id, exercise="Бег"))
         session.add(

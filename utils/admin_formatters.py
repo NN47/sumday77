@@ -522,3 +522,69 @@ def format_openai_ai(metrics: dict, *, key_configured: bool) -> str:
 
 def format_deepseek_ai(metrics: dict, *, key_configured: bool) -> str:
     return _format_ai_usage(metrics, title="🧠 DeepSeek / AI", key_configured=key_configured)
+
+
+def format_ai_quotas(metrics: dict) -> str:
+    """Форматирует квотные операции без пользовательского содержимого."""
+    feature_labels = {
+        "meal_text_ai": "📝 Текст еды",
+        "meal_photo_ai": "📷 Фото еды",
+        "nutrition_label_ai": "📋 Этикетки",
+        "daily_analysis": "🧠 Анализ дня",
+        "meal_completion_comment": "💬 Комментарии к приёмам",
+    }
+    operations = metrics.get("operations") or {}
+    attempted = sum(int(row.get("attempted") or 0) for row in (metrics.get("attempts") or {}).values())
+    successful = int(operations.get("success") or 0)
+    success_rate = successful / attempted * 100 if attempted else 0.0
+    lines = [
+        f"<b>🎛 AI-лимиты — {metrics.get('period_key', '—')}</b>",
+        "",
+        "<b>Тарифные операции:</b>",
+    ]
+    by_feature = metrics.get("by_feature") or {}
+    for key in feature_labels:
+        row = by_feature.get(key) or {}
+        lines.append(
+            f"• {feature_labels[key]}: успешно <b>{row.get('used', 0)}</b>, "
+            f"в резерве <b>{row.get('reserved', 0)}</b>, блокировок <b>{row.get('blocked', 0)}</b>, "
+            f"достигли лимита <b>{row.get('limit_hits', 0)}</b>"
+        )
+    lines.extend(
+        [
+            "",
+            "<b>Технические попытки:</b>",
+            f"• отправлено/зарезервировано: <b>{attempted}</b>",
+            f"• освобождено после ошибок/no_food: <b>{operations.get('released', 0)}</b>",
+            f"• зависшие резервы: <b>{operations.get('expired', 0)}</b>",
+            f"• ожидают завершения: <b>{operations.get('pending', 0)}</b>",
+            f"• успешность: <b>{success_rate:.1f}%</b>",
+            f"• fallback-переходов: <b>{metrics.get('fallbacks', 0)}</b>",
+        ]
+    )
+    global_row = metrics.get("global") or {}
+    global_remaining = max(0, int(global_row.get("limit") or 0) - int(global_row.get("attempted") or 0))
+    lines.extend(
+        [
+            "",
+            "<b>Глобальный аварийный бюджет:</b>",
+            f"• осталось <b>{global_remaining}</b> из <b>{global_row.get('limit', 0)}</b>",
+            f"• заблокировано: <b>{global_row.get('blocked', 0)}</b>",
+            "",
+            "<b>Расходы провайдеров (технический AI-usage):</b>",
+        ]
+    )
+    for provider, row in (metrics.get("provider_usage") or {}).items():
+        lines.append(
+            f"• {provider}: {row.get('requests_today', 0)} запросов, "
+            f"{_fmt_cost(row.get('estimated_cost_today'))}"
+        )
+    top_users = metrics.get("top_users") or []
+    lines.extend(["", "<b>Использование по пользователям:</b>"])
+    lines.extend(
+        f"• {item.get('user_id')}: успешно {item.get('used', 0)}, блокировок {item.get('blocked', 0)}"
+        for item in top_users
+    )
+    if not top_users:
+        lines.append("• —")
+    return "\n".join(lines)

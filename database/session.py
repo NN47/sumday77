@@ -147,11 +147,118 @@ def init_db():
         _add_users_column_if_missing("created_at", "TIMESTAMP", fill_now=True)
         _add_users_column_if_missing("last_seen_at", "TIMESTAMP", fill_now=True)
 
+        # AI tariffs and quota ledger. New tables are additive and do not touch
+        # existing diary data; explicit checkfirst keeps old deployments safe.
+        try:
+            for table_name in (
+                "user_plan_assignments",
+                "ai_quota_counters",
+                "ai_attempt_counters",
+                "ai_global_daily_counters",
+                "ai_quota_operations",
+                "ai_quota_active_locks",
+                "daily_analysis_preparation_sessions",
+            ):
+                Base.metadata.tables[table_name].create(bind=engine, checkfirst=True)
+        except Exception as e:
+            logger.error(
+                "Ошибка при создании таблиц AI-квот error_type=%s",
+                safe_exception_summary(e),
+            )
+            raise
+
+        # Metadata of newly generated daily analyses. Existing rows deliberately
+        # remain nullable and continue to open through the legacy fields.
+        try:
+            analysis_columns = {
+                col["name"] for col in inspector.get_columns("activity_analysis_entries")
+            }
+        except Exception as e:
+            logger.warning(
+                "Ошибка при чтении activity_analysis_entries error_type=%s",
+                safe_exception_summary(e),
+            )
+            analysis_columns = set()
+
+        def _add_analysis_column_if_missing(column_name: str, sql_type: str) -> None:
+            if column_name in analysis_columns:
+                return
+            try:
+                conn.execute(
+                    text(
+                        f"ALTER TABLE activity_analysis_entries "
+                        f"ADD COLUMN {column_name} {sql_type}"
+                    )
+                )
+                conn.commit()
+                logger.info("Добавлен столбец activity_analysis_entries.%s", column_name)
+            except Exception as e:
+                logger.warning(
+                    "Ошибка при добавлении activity_analysis_entries.%s error_type=%s",
+                    column_name,
+                    safe_exception_summary(e),
+                )
+
+        _add_analysis_column_if_missing("analyzed_at", "TIMESTAMP")
+        _add_analysis_column_if_missing("status", "VARCHAR(24) DEFAULT 'success'")
+        _add_analysis_column_if_missing("plan_key", "VARCHAR")
+        _add_analysis_column_if_missing("quota_request_id", "VARCHAR(160)")
+        _add_analysis_column_if_missing("data_snapshot_hash", "VARCHAR(64)")
+        try:
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_activity_analysis_entries_quota_request_id "
+                    "ON activity_analysis_entries (quota_request_id)"
+                )
+            )
+            conn.commit()
+        except Exception as e:
+            logger.warning(
+                "Ошибка при создании индекса анализа дня error_type=%s",
+                safe_exception_summary(e),
+            )
+
+        try:
+            operation_columns = {
+                col["name"] for col in inspect(conn).get_columns("ai_quota_operations")
+            }
+            if "provider_attempt_count" not in operation_columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE ai_quota_operations "
+                        "ADD COLUMN provider_attempt_count INTEGER DEFAULT 0 NOT NULL"
+                    )
+                )
+                conn.commit()
+        except Exception as e:
+            logger.warning(
+                "Ошибка при добавлении ai_quota_operations.provider_attempt_count error_type=%s",
+                safe_exception_summary(e),
+            )
+
 
 
         # meal_completion_comments table (created by metadata for new DBs)
         try:
             Base.metadata.tables["meal_completion_comments"].create(bind=engine, checkfirst=True)
+            comment_columns = {
+                col["name"] for col in inspect(conn).get_columns("meal_completion_comments")
+            }
+            if "quota_request_id" not in comment_columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE meal_completion_comments "
+                        "ADD COLUMN quota_request_id VARCHAR(160)"
+                    )
+                )
+                conn.commit()
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_meal_completion_comments_quota_request_id "
+                    "ON meal_completion_comments (quota_request_id)"
+                )
+            )
+            conn.commit()
         except Exception as e:
             logger.warning(
                 "Ошибка при создании meal_completion_comments error_type=%s",

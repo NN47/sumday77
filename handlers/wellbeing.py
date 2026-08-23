@@ -9,6 +9,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 
 from database.repositories.note_repository import NoteRepository
 from database.repositories.analytics_repository import AnalyticsRepository
+from services.daily_analysis_preflight_service import return_to_active_daily_preflight
 from states.user_states import WellbeingStates
 from utils.calendar_utils import build_notes_calendar_keyboard, show_calendar_back_button
 from utils.keyboards import (
@@ -239,6 +240,7 @@ async def persist_note(message: Message, state: FSMContext, user_id: str | None 
         f"Факторы:\n{factors_text}"
     )
     await message.answer(msg, reply_markup=notes_main_menu)
+    await return_to_active_daily_preflight(message, str(user_id), note_date)
 
 
 @router.callback_query(WellbeingStates.note_factors, lambda c: c.data == "save_note_factors")

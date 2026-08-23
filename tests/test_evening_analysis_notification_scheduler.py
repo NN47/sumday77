@@ -298,5 +298,5 @@ def test_evening_analysis_start_keyboard_contains_only_start_button():
     keyboard = build_evening_analysis_start_keyboard(date(2026, 4, 8))
 
     assert len(keyboard.inline_keyboard) == 1
-    assert keyboard.inline_keyboard[0][0].text == "✅ Запустить подробный AI-анализ"
+    assert keyboard.inline_keyboard[0][0].text == "🧠 Проверить данные и начать"
     assert keyboard.inline_keyboard[0][0].callback_data == "evening_analysis_start:2026-04-08"

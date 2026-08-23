@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -20,13 +21,34 @@ def _run_analysis(analysis: str, answer: AsyncMock | None = None):
         answer=answer or AsyncMock(),
         bot=SimpleNamespace(),
     )
+    target_date = date.today()
+    entry = SimpleNamespace(
+        id=77,
+        user_id="12345",
+        date=target_date,
+        analysis_text=analysis,
+        analyzed_at=None,
+        created_at=datetime(2026, 8, 23, 19, 47),
+        quota_request_id="daily-test-request",
+    )
     with (
         patch(
             "handlers.activity.extended_activity_analysis_service.generate",
             new=AsyncMock(return_value=analysis),
         ),
+        patch("handlers.activity.quota_period_key", return_value=target_date),
+        patch(
+            "handlers.activity.collect_daily_preflight",
+            return_value=SimpleNamespace(is_empty=False, snapshot_hash="a" * 64),
+        ),
+        patch("handlers.activity.ActivityAnalysisRepository.get_successful_ai_for_date", return_value=None),
         patch("handlers.activity.EveningAnalysisNotificationRepository.mark_analysis_started"),
-        patch("handlers.activity.ActivityAnalysisRepository.create_entry"),
+        patch("handlers.activity.ActivityAnalysisRepository.create_entry", return_value=77),
+        patch("handlers.activity.ActivityAnalysisRepository.get_entry_by_id", return_value=entry),
+        patch("handlers.activity.ai_quota_service.reserve", return_value=SimpleNamespace(plan_key="free")),
+        patch("handlers.activity.ai_quota_service.consume", return_value=True),
+        patch("handlers.activity.ai_quota_service.get_operation", return_value=SimpleNamespace(status="consumed")),
+        patch("handlers.activity.complete_daily_preflight"),
         patch("handlers.activity.AnalyticsRepository.track_event") as track_event,
         patch("handlers.activity.push_menu_stack"),
         patch("handlers.activity.log_app_error") as log_error,
@@ -70,20 +92,18 @@ def test_delivery_error_on_later_part_is_logged_and_user_is_not_left_waiting() -
 
     async def answer(text, **kwargs):
         calls.append((text, kwargs))
-        if text.startswith("FAIL"):
+        if "FAIL" in text:
             raise RuntimeError("telegram unavailable")
 
     analysis = "первая часть " * 300 + "\nFAIL вторая часть"
     result, _, track_event, log_error = _run_analysis(analysis, AsyncMock(side_effect=answer))
 
-    assert result is False
-    assert calls[-1][0].startswith("⚠️ Анализ был подготовлен")
-    track_event.assert_any_call("12345", "daily_analysis_failed", section="activity")
+    assert result is True
+    assert calls[-1][0].startswith("Анализ сохранён, но Telegram не смог доставить")
+    track_event.assert_any_call("12345", "daily_analysis_sent", section="activity")
     delivery_log = log_error.call_args_list[0].kwargs
     assert delivery_log["context"] == "detailed_analysis_delivery"
-    assert delivery_log["extra"]["stage"] == "send_result"
-    assert delivery_log["extra"]["parts_count"] == 2
-    assert delivery_log["extra"]["part_index"] == 2
+    assert delivery_log["extra"]["entry_id"] == 77
 
 
 def test_invalid_html_is_retried_without_parse_mode(caplog) -> None:
@@ -103,11 +123,10 @@ def test_invalid_html_is_retried_without_parse_mode(caplog) -> None:
     )
 
     assert result is True
-    assert calls[-1][0] == "Незакрытый заголовок & детали"
-    assert calls[-1][1]["parse_mode"] is None
+    assert calls[-1][0].startswith("Незакрытый заголовок & детали")
+    assert calls[-1][1].get("parse_mode") is None
     track_event.assert_any_call("12345", "daily_analysis_sent", section="activity")
     log_error.assert_not_called()
-    assert "code=telegram_parse_entities" in caplog.text
 
 
 def test_splitter_prefers_whitespace_to_cutting_a_word() -> None:

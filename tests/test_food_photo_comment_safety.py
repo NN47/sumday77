@@ -76,7 +76,7 @@ class _Bot:
     def __init__(self):
         self.last_meal_ids = {}
         self.get_file = AsyncMock(return_value=SimpleNamespace(file_path="food.jpg"))
-        self.download_file = AsyncMock(return_value=io.BytesIO(b"fake-image"))
+        self.download_file = AsyncMock(return_value=io.BytesIO(b"\xff\xd8\xfffake-image"))
 
 
 def _message(text: str):

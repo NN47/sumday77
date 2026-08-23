@@ -20,6 +20,7 @@ from utils.admin_formatters import (
     format_gemini,
     format_openai_ai,
     format_deepseek_ai,
+    format_ai_quotas,
 )
 
 router = Router()
@@ -38,6 +39,7 @@ def _admin_menu_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📉 Воронка", callback_data="admin:funnel")],
             [InlineKeyboardButton(text="🔁 Возвраты", callback_data="admin:retention")],
             [InlineKeyboardButton(text="🧠 Анализ дня", callback_data="admin:daily")],
+            [InlineKeyboardButton(text="🎛 AI-лимиты", callback_data="admin:quotas")],
             [InlineKeyboardButton(text="👤 Пользователи", callback_data="admin:users")],
             [InlineKeyboardButton(text="⚠️ Ошибки", callback_data="admin:errors")],
             [InlineKeyboardButton(text="Gemini / AI", callback_data="admin:gemini")],
@@ -124,6 +126,11 @@ async def admin_callbacks(callback: CallbackQuery):
             f"• Успешность: <b>{dashboard['daily_analysis_success_rate']:.1f}%</b>",
         ]
         await _edit_or_answer(callback.message, "\n".join(lines), _back_kb())
+        return
+
+    if action == "quotas":
+        text = format_ai_quotas(AdminStatsService.get_ai_quota_metrics())
+        await _edit_or_answer(callback.message, text, _back_kb())
         return
 
     if action == "errors":

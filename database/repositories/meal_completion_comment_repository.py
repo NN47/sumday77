@@ -35,6 +35,25 @@ class MealCompletionCommentRepository:
             )
 
     @staticmethod
+    def get_for_logical_meal(
+        user_id: str,
+        target_date: date,
+        meal_type: str,
+    ) -> Optional[MealCompletionComment]:
+        """Возвращает уже созданный комментарий к типу приёма пищи за дату."""
+        with get_db_session() as session:
+            return (
+                session.query(MealCompletionComment)
+                .filter(MealCompletionComment.user_id == str(user_id))
+                .filter(MealCompletionComment.date == target_date)
+                .filter(MealCompletionComment.meal_type == meal_type)
+                .filter(MealCompletionComment.status.in_(["success", "fallback"]))
+                .filter(MealCompletionComment.comment_text.is_not(None))
+                .order_by(MealCompletionComment.id.asc())
+                .first()
+            )
+
+    @staticmethod
     def save(
         user_id: str,
         meal_id: int,
@@ -49,6 +68,7 @@ class MealCompletionCommentRepository:
         total_tokens: int | None = None,
         estimated_cost_usd: float | None = None,
         error_message: str | None = None,
+        quota_request_id: str | None = None,
     ) -> MealCompletionComment:
         with get_db_session() as session:
             entry = (
@@ -68,6 +88,7 @@ class MealCompletionCommentRepository:
             entry.total_tokens = total_tokens
             entry.estimated_cost_usd = estimated_cost_usd
             entry.error_message = safe_error_code(error_message)
+            entry.quota_request_id = quota_request_id
             session.commit()
             session.refresh(entry)
             return entry

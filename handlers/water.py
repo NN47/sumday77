@@ -21,6 +21,7 @@ from utils.calendar_utils import (
 )
 from utils.progress_formatters import build_water_progress_bar
 from database.repositories import QuickWaterMessageRepository, WaterRepository, WeightRepository
+from services.daily_analysis_preflight_service import return_to_active_daily_preflight
 from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
@@ -404,6 +405,7 @@ async def process_water_amount(message: Message, state: FSMContext):
         f"💧 Всего за день: {daily_total:.0f} мл",
         reply_markup=water_menu,
     )
+    await return_to_active_daily_preflight(message, user_id, entry_date)
 
 
 def register_water_handlers(dp):

@@ -14,22 +14,14 @@ class EveningAnalysisNotificationRepository:
 
     @staticmethod
     def has_analysis_for_date(user_id: str, target_date: date) -> bool:
-        """Возвращает True, если сгенерированный анализ дня уже есть или отмечен запущенным."""
+        """Возвращает True только по фактически сохранённому AI-результату."""
         user_id = str(user_id)
         with get_db_session() as session:
-            state = (
-                session.query(EveningAnalysisNotificationState)
-                .filter(EveningAnalysisNotificationState.user_id == user_id)
-                .first()
-            )
-            if state and state.last_daily_analysis_date == target_date:
-                return True
-
             return (
                 session.query(ActivityAnalysisEntry.id)
                 .filter(ActivityAnalysisEntry.user_id == user_id)
                 .filter(ActivityAnalysisEntry.date == target_date)
-                .filter(ActivityAnalysisEntry.source == "generated")
+                .filter(ActivityAnalysisEntry.source != "manual")
                 .first()
                 is not None
             )
@@ -74,7 +66,7 @@ class EveningAnalysisNotificationRepository:
 
     @staticmethod
     def mark_analysis_started(user_id: str, target_date: date) -> None:
-        """Помечает ИИ-анализ дня запущенным за дату."""
+        """Помечает анализ завершённым; вызывается только после сохранения результата."""
         user_id = str(user_id)
         now = datetime.utcnow()
         try:
@@ -118,11 +110,11 @@ class EveningAnalysisNotificationRepository:
                 session.query(ActivityAnalysisEntry.id)
                 .filter(ActivityAnalysisEntry.user_id == user_id)
                 .filter(ActivityAnalysisEntry.date == target_date)
-                .filter(ActivityAnalysisEntry.source == "generated")
+                .filter(ActivityAnalysisEntry.source != "manual")
                 .first()
                 is not None
             )
-            if state.last_daily_analysis_date == target_date or generated_today_exists:
+            if generated_today_exists:
                 state.last_daily_analysis_date = target_date
                 state.reminder_due_at = None
                 state.updated_at = now

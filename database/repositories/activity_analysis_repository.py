@@ -1,8 +1,8 @@
 """Репозиторий для сохранённых ИИ-анализов деятельности."""
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from database.models import ActivityAnalysisEntry
 from database.session import get_db_session
@@ -12,7 +12,18 @@ class ActivityAnalysisRepository:
     """Репозиторий сохранённых ИИ-анализов деятельности."""
 
     @staticmethod
-    def create_entry(user_id: str, analysis_text: str, entry_date: date, source: str = "manual") -> int:
+    def create_entry(
+        user_id: str,
+        analysis_text: str,
+        entry_date: date,
+        source: str = "manual",
+        *,
+        analyzed_at: datetime | None = None,
+        plan_key: str | None = None,
+        quota_request_id: str | None = None,
+        data_snapshot_hash: str | None = None,
+        status: str = "success",
+    ) -> int:
         """Создаёт запись анализа."""
         with get_db_session() as session:
             entry = ActivityAnalysisEntry(
@@ -20,11 +31,38 @@ class ActivityAnalysisRepository:
                 analysis_text=analysis_text,
                 date=entry_date,
                 source=source,
+                status=status,
+                analyzed_at=analyzed_at,
+                plan_key=plan_key,
+                quota_request_id=quota_request_id,
+                data_snapshot_hash=data_snapshot_hash,
             )
             session.add(entry)
             session.commit()
             session.refresh(entry)
             return entry.id
+
+    @staticmethod
+    def get_successful_ai_for_date(
+        user_id: str,
+        target_date: date,
+    ) -> Optional[ActivityAnalysisEntry]:
+        """Возвращает единственный сохранённый AI-результат, включая старые записи."""
+        with get_db_session() as session:
+            return (
+                session.query(ActivityAnalysisEntry)
+                .filter(ActivityAnalysisEntry.user_id == str(user_id))
+                .filter(func.date(ActivityAnalysisEntry.date) == target_date.isoformat())
+                .filter(ActivityAnalysisEntry.source != "manual")
+                .filter(
+                    or_(
+                        ActivityAnalysisEntry.status == "success",
+                        ActivityAnalysisEntry.status.is_(None),
+                    )
+                )
+                .order_by(ActivityAnalysisEntry.created_at.desc())
+                .first()
+            )
 
     @staticmethod
     def get_entries_for_date(user_id: str, target_date: date) -> list[ActivityAnalysisEntry]:

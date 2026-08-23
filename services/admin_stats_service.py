@@ -162,3 +162,16 @@ class AdminStatsService:
     @staticmethod
     def get_ai_usage_metrics(provider: str) -> dict:
         return AIUsageRepository.get_provider_metrics(provider)
+
+    @staticmethod
+    def get_ai_quota_metrics() -> dict:
+        """Тарифные операции отдельно от технических расходов провайдеров."""
+        from services.ai_quota_service import ai_quota_service
+
+        metrics = ai_quota_service.get_admin_metrics()
+        metrics["fallbacks"] = int((metrics.get("operations") or {}).get("fallbacks") or 0)
+        metrics["provider_usage"] = {
+            provider: AIUsageRepository.get_provider_metrics(provider)
+            for provider in ("gemini", "openai", "deepseek")
+        }
+        return metrics

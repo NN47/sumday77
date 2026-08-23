@@ -1988,7 +1988,11 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
         caplog.set_level("INFO", logger="handlers.meals")
         asyncio.run(meals.handle_ai_food_input(message, state))
 
-    deepseek_analyze.assert_called_once_with("200 г курицы")
+    deepseek_analyze.assert_called_once_with(
+        "200 г курицы",
+        user_id="12345",
+        feature="meal_text_ai",
+    )
     gemini_task.assert_not_called()
     save_meal.assert_not_called()
     state.set_state.assert_awaited_with(meals.MealEntryStates.confirming_ai_meal)

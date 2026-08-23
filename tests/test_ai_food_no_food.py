@@ -73,7 +73,7 @@ def test_no_food_contract_stops_before_draft_or_database_save(text, caplog):
         caplog.set_level(logging.INFO, logger="handlers.meals")
         _run_text_analysis(message, state, analyzer)
 
-    analyzer.assert_called_once_with(text)
+    analyzer.assert_called_once_with(text, user_id="12345", feature="meal_text_ai")
     save_meal.assert_not_called()
     state.set_state.assert_not_awaited()
     assert state._data == {"meal_type": meals.MealType.LUNCH.value}
@@ -180,7 +180,7 @@ def test_ok_contract_keeps_existing_meal_preview_flow(text, response_items, expe
     with patch("handlers.meals.MealRepository.save_meal_idempotent") as save_meal:
         _run_text_analysis(message, state, analyzer)
 
-    analyzer.assert_called_once_with(text)
+    analyzer.assert_called_once_with(text, user_id="12345", feature="meal_text_ai")
     save_meal.assert_not_called()
     state.set_state.assert_awaited_with(meals.MealEntryStates.confirming_ai_meal)
     assert [item["name"] for item in state._data["ai_pending_meal"]["items"]] == expected_names

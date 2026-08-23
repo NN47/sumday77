@@ -58,11 +58,25 @@ def test_activity_analysis_calendar_marks_days_with_brain(monkeypatch):
 
 
 def test_activity_analysis_day_add_button_starts_detailed_analysis():
-    from datetime import date
     from utils.calendar_utils import build_activity_analysis_day_actions_keyboard
+    from services.ai_quota_service import quota_period_key
 
-    keyboard = build_activity_analysis_day_actions_keyboard([], date(2026, 7, 15))
+    target_date = quota_period_key()
+    keyboard = build_activity_analysis_day_actions_keyboard([], target_date)
     add_button = keyboard.inline_keyboard[0][0]
 
     assert add_button.text == "🧠 Подробный AI-анализ"
-    assert add_button.callback_data == "act_cal_add:2026-07-15"
+    assert add_button.callback_data == f"act_cal_add:{target_date.isoformat()}"
+
+
+def test_activity_analysis_historical_day_does_not_offer_new_free_generation():
+    from datetime import timedelta
+    from utils.calendar_utils import build_activity_analysis_day_actions_keyboard
+    from services.ai_quota_service import quota_period_key
+
+    keyboard = build_activity_analysis_day_actions_keyboard([], quota_period_key() - timedelta(days=1))
+    assert all(
+        button.text != "🧠 Подробный AI-анализ"
+        for row in keyboard.inline_keyboard
+        for button in row
+    )

@@ -522,14 +522,17 @@ def build_activity_analysis_day_actions_keyboard(entries: list, target_date: dat
             ]
         )
 
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="🧠 Подробный AI-анализ",
-                callback_data=f"act_cal_add:{target_date.isoformat()}",
-            ),
-        ]
-    )
+    from services.ai_quota_service import quota_period_key
+
+    if target_date == quota_period_key():
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🧠 Подробный AI-анализ",
+                    callback_data=f"act_cal_add:{target_date.isoformat()}",
+                ),
+            ]
+        )
     rows.append(
         [
             InlineKeyboardButton(

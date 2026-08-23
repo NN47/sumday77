@@ -47,6 +47,7 @@ from utils.workout_formatters import (
     format_activity_edit_button,
     is_steps_workout,
 )
+from services.daily_analysis_preflight_service import return_to_active_daily_preflight
 
 logger = logging.getLogger(__name__)
 
@@ -1190,6 +1191,7 @@ async def handle_workout_edit_count(message: Message, state: FSMContext):
         
         await state.clear()
         await _send_activity_main_screen(message, user_id, target_date, prefix="✅ Подход обновлён")
+        await return_to_active_daily_preflight(message, user_id, target_date)
     else:
         await message.answer("❌ Не удалось обновить тренировку. Попробуйте позже.")
         await state.clear()
@@ -1244,6 +1246,7 @@ async def handle_workout_edit_weight(message: Message, state: FSMContext):
     await state.clear()
     if success:
         await _send_activity_main_screen(message, user_id, target_date, prefix="✅ Подход обновлён")
+        await return_to_active_daily_preflight(message, user_id, target_date)
     else:
         await message.answer("❌ Не удалось обновить подход. Попробуйте позже.")
 
@@ -1462,6 +1465,7 @@ async def confirm_steps(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ Шаги сохранены!")
     await _send_activity_main_screen(message, user_id, target_date)
+    await return_to_active_daily_preflight(message, user_id, target_date)
 
 
 @router.message(WorkoutStates.entering_duration)
@@ -1515,11 +1519,12 @@ async def handle_duration_input(message: Message, state: FSMContext):
         )
         return
 
+    entry_date = _entry_date_from_state_data(data)
     WorkoutRepository.save_workout(
         user_id=user_id,
         exercise=exercise,
         count=minutes,
-        entry_date=_entry_date_from_state_data(data),
+        entry_date=entry_date,
         variant="Минуты",
         calories=calories,
         input_method=ActivityInputMethod.TIME.value,
@@ -1530,6 +1535,7 @@ async def handle_duration_input(message: Message, state: FSMContext):
         f"✅ Записал!\n💪 {exercise}\n⏱ {_format_minutes(minutes)} мин\n🔥 ~{calories:.0f}\n📅 сегодня",
         reply_markup=add_another_exercise_menu,
     )
+    await return_to_active_daily_preflight(message, user_id, entry_date)
 
 
 @router.message(WorkoutStates.entering_distance)
@@ -1580,6 +1586,7 @@ async def handle_distance_input(message: Message, state: FSMContext):
     await state.clear()
     date_label = "сегодня" if entry_date == date.today() else entry_date.strftime("%d.%m.%Y")
     await message.answer(f"✅ Записал!\n💪 {exercise}\n📏 {_format_minutes(distance_km)} км\n🔥 ~{calories:.0f} ккал\n📅 {date_label}", reply_markup=add_another_exercise_menu)
+    await return_to_active_daily_preflight(message, user_id, entry_date)
 
 
 @router.message(WorkoutStates.entering_jumps)
@@ -1629,6 +1636,7 @@ async def handle_jumps_input(message: Message, state: FSMContext):
     await state.clear()
     date_label = "сегодня" if entry_date == date.today() else entry_date.strftime("%d.%m.%Y")
     await message.answer(f"✅ Записал!\n💪 {exercise}\n🔢 {jumps:,} прыжков\n🔥 ~{calories:.0f} ккал\n📅 {date_label}".replace(",", " "), reply_markup=add_another_exercise_menu)
+    await return_to_active_daily_preflight(message, user_id, entry_date)
 
 
 @router.message(WorkoutStates.confirming_duration)
@@ -1689,6 +1697,7 @@ async def confirm_duration_workout(message: Message, state: FSMContext):
         f"✅ Записал!\n💪 {exercise}\n⏱ {_format_minutes(minutes)} мин\n🔥 ~{calories:.0f} ккал\n📅 {date_label}",
         reply_markup=add_another_exercise_menu,
     )
+    await return_to_active_daily_preflight(message, user_id, entry_date)
 
 
 @router.message(WorkoutStates.choosing_grip_type)
@@ -1949,6 +1958,7 @@ async def handle_count_input(message: Message, state: FSMContext):
         f"Хотите внести еще подход?",
         reply_markup=add_another_set_menu,
     )
+    await return_to_active_daily_preflight(message, user_id, entry_date)
 
 
 @router.message(lambda m: m.text == "✏️ Ввести вручную")

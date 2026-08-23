@@ -3,11 +3,12 @@ import asyncio
 import logging
 import re
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from collections import Counter
+from zoneinfo import ZoneInfo
 from aiogram import Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from utils.keyboards import (
     activity_analysis_menu,
@@ -40,10 +41,29 @@ from services.notification_scheduler import (
     EVENING_ANALYSIS_START_PREFIX,
     build_evening_analysis_start_keyboard,
 )
+from services.ai_quota_service import (
+    AIFeature,
+    AIAttemptLimitExceeded,
+    AIGlobalLimitExceeded,
+    AIOperationCooldown,
+    AIOperationInProgress,
+    AIQuotaAlreadyConsumed,
+    AIQuotaExceeded,
+    ai_quota_service,
+    build_quota_request_id,
+    quota_period_key,
+)
+from services.daily_analysis_preflight_service import (
+    PREFLIGHT_CALLBACK_PREFIX,
+    collect_daily_preflight,
+    complete_daily_preflight,
+    show_daily_analysis_preflight,
+)
 
 logger = logging.getLogger(__name__)
 
 router = Router()
+MSK_TZ = ZoneInfo("Europe/Moscow")
 
 AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT = (
     "AI-анализ временно недоступен\n\n"
@@ -71,35 +91,11 @@ async def run_daily_activity_analysis(
     target_date: date | None = None,
     provider: str = "gemini",
 ) -> bool:
-    """Запускает стандартный ИИ-анализ дня через выбранного провайдера и отправляет результат."""
-    analysis_date = target_date or date.today()
-    logger.info("day_analysis_requested provider=%s", provider)
-    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, analysis_date)
-    AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
-    AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
-    await message.answer("⏳ Подожди немного, бот анализирует твой день...")
-    try:
-        analysis = await generate_day_analysis(user_id, analysis_date, provider)
-        ActivityAnalysisRepository.create_entry(user_id, analysis, analysis_date, source="generated")
-        AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
-    except Exception as e:
-        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
-        if _is_day_analysis_temporarily_unavailable_error(e, provider):
-            push_menu_stack(message.bot, activity_analysis_menu)
-            await message.answer(AI_ANALYSIS_TEMPORARILY_UNAVAILABLE_TEXT, reply_markup=activity_analysis_menu)
-            return False
-        log_app_error(
-            source=provider,
-            error=e,
-            user_id=user_id,
-            context="daily_analysis",
-            extra={"handler": "run_daily_activity_analysis", "provider": provider},
-        )
-        await message.answer("⚠️ Не удалось сгенерировать анализ дня. Попробуй позже.")
-        return False
-    push_menu_stack(message.bot, activity_analysis_menu)
-    await message.answer(analysis, parse_mode="HTML", reply_markup=activity_analysis_menu)
-    return True
+    """Совместимая точка входа: любой старый сценарий сначала открывает preflight."""
+    analysis_date = target_date or quota_period_key()
+    logger.info("day_analysis_preflight_requested legacy_provider=%s", provider)
+    await show_daily_analysis_preflight(message, user_id, analysis_date, origin="legacy")
+    return False
 
 DAILY_ANALYSIS_REQUIRED_HEADERS = [
     "🏋️ Тренировки",
@@ -1157,12 +1153,16 @@ async def analyze_activity(message: Message):
     user_id = str(message.from_user.id)
     logger.info("Activity analysis opened")
     AnalyticsRepository.track_event(user_id, "open_activity", section="activity")
+    status = ai_quota_service.get_status(user_id, AIFeature.DAILY_ANALYSIS)
+    existing = ActivityAnalysisRepository.get_successful_ai_for_date(user_id, status.period_key)
+    daily_status = "готов" if existing or status.used else "доступен" if status.remaining else "лимит исчерпан"
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(
         "🧠 ИИ-анализ\n\n"
         "Доступные действия:\n"
         "• 🧠 Подробный AI-анализ — полный разбор дня по дневнику питания, активности, воде, весу и заметкам.\n"
-        "• 🗓 Календарь — история сохранённых анализов.",
+        "• 🗓 Календарь — история сохранённых анализов.\n\n"
+        f"Бесплатные AI-возможности до 02:00 МСК:\n🧠 Анализ дня: {daily_status}",
         reply_markup=activity_analysis_menu,
     )
 
@@ -1228,18 +1228,59 @@ async def select_activity_analysis_day(callback: CallbackQuery):
 
 @router.callback_query(lambda c: c.data.startswith("act_cal_add:"))
 async def add_activity_analysis_from_calendar(callback: CallbackQuery, state: FSMContext):
-    """Запускает подробный AI-анализ за выбранный в календаре день."""
+    """Открывает единый preflight либо существующий результат."""
     await callback.answer()
     target_date = date.fromisoformat(callback.data.split(":")[1])
     await state.clear()
 
     user_id = str(callback.from_user.id)
-    await run_detailed_activity_analysis(callback.message, user_id, target_date)
+    existing = ActivityAnalysisRepository.get_successful_ai_for_date(user_id, target_date)
+    if existing:
+        await _deliver_saved_daily_analysis(callback.message, existing)
+        return
+    if target_date != quota_period_key():
+        await callback.message.answer(
+            "В бесплатном тарифе новый анализ можно создать только для текущего лимитного дня. "
+            "Сохранённые старые результаты по-прежнему доступны для просмотра."
+        )
+        return
+    await show_daily_analysis_preflight(
+        callback.message,
+        user_id,
+        target_date,
+        origin="calendar",
+        prefer_edit=True,
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("act_cal_del:"))
 async def delete_activity_analysis(callback: CallbackQuery):
-    """Удаляет сохранённый анализ из календаря."""
+    """Предупреждает, что удаление AI-результата не возвращает квоту."""
+    await callback.answer()
+    parts = callback.data.split(":")
+    target_date = date.fromisoformat(parts[1])
+    entry_id = int(parts[2])
+    user_id = str(callback.from_user.id)
+    entry = ActivityAnalysisRepository.get_entry_by_id(entry_id, user_id)
+    if entry is None:
+        await callback.message.answer("❌ Анализ не найден")
+        return
+    warning = "Удалить этот анализ?"
+    if entry.source != "manual":
+        _adopt_saved_daily_analysis(entry)
+        warning += "\n\nУдаление AI-результата не вернёт использованный дневной лимит."
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"act_cal_del_ok:{target_date.isoformat()}:{entry_id}")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data=f"act_cal_day:{target_date.isoformat()}")],
+        ]
+    )
+    await callback.message.answer(warning, reply_markup=keyboard)
+
+
+@router.callback_query(lambda c: c.data.startswith("act_cal_del_ok:"))
+async def confirm_delete_activity_analysis(callback: CallbackQuery):
+    """Удаляет результат после явного подтверждения."""
     await callback.answer()
     parts = callback.data.split(":")
     target_date = date.fromisoformat(parts[1])
@@ -1273,7 +1314,13 @@ async def show_activity_analysis_day(message: Message, user_id: str, target_date
         full_analysis = (entry.analysis_text or "").strip()
         if not full_analysis:
             full_analysis = "—"
-        lines.append(f"{idx}. {source}\n{full_analysis}")
+        created_note = ""
+        if entry.source != "manual":
+            created_note = (
+                f"\nАнализ создан в {_daily_analysis_created_time(entry)}. "
+                "Более поздние записи в него не вошли."
+            )
+        lines.append(f"{idx}. {source}\n{full_analysis}{created_note}")
 
     text = "\n\n".join(lines)
     keyboard = build_activity_analysis_day_actions_keyboard(entries, target_date)
@@ -1307,12 +1354,19 @@ async def save_manual_activity_analysis(message: Message, state: FSMContext):
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith(f"{EVENING_ANALYSIS_START_PREFIX}:"))
-async def start_evening_activity_analysis(callback: CallbackQuery):
-    """Запускает анализ дня из вечернего уведомления."""
+async def start_evening_activity_analysis(callback: CallbackQuery, state: FSMContext):
+    """Открывает preflight из вечернего уведомления."""
     await callback.answer()
     user_id = str(callback.from_user.id)
     target_date = date.fromisoformat(callback.data.split(":", 1)[1])
-    await run_detailed_activity_analysis(callback.message, user_id, target_date)
+    await state.clear()
+    await show_daily_analysis_preflight(
+        callback.message,
+        user_id,
+        target_date,
+        origin="evening",
+        prefer_edit=True,
+    )
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith(f"{EVENING_ANALYSIS_REMIND_PREFIX}:"))
@@ -1339,14 +1393,187 @@ async def remind_evening_activity_analysis_later(callback: CallbackQuery):
     await callback.message.answer("⏰ Хорошо, напомню позже.")
 
 
+@router.callback_query(lambda c: c.data and c.data.startswith(f"{PREFLIGHT_CALLBACK_PREFIX}:"))
+async def handle_daily_analysis_preflight(callback: CallbackQuery, state: FSMContext):
+    """Единая навигация preflight; ни одно действие здесь не списывает квоту."""
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer("Кнопка устарела", show_alert=True)
+        return
+    _, action, raw_date = parts
+    try:
+        target_date = date.fromisoformat(raw_date)
+    except ValueError:
+        await callback.answer("Некорректная дата", show_alert=True)
+        return
+    user_id = str(callback.from_user.id)
+    await callback.answer()
+
+    if action == "confirm":
+        await run_detailed_activity_analysis(callback.message, user_id, target_date)
+        return
+    if action == "back":
+        complete_daily_preflight(user_id, target_date)
+        await state.clear()
+        push_menu_stack(callback.message.bot, activity_analysis_menu)
+        await callback.message.answer("🧠 ИИ-анализ", reply_markup=activity_analysis_menu)
+        return
+    if action == "food":
+        from handlers.meals import show_day_meals
+
+        await state.clear()
+        await show_day_meals(callback.message, user_id, target_date)
+        return
+    if action == "water":
+        from handlers.water import start_add_water
+
+        await state.clear()
+        await start_add_water(callback.message, state, entry_date=target_date)
+        return
+    if action == "steps":
+        from handlers.workouts import start_steps_flow
+
+        await state.clear()
+        await start_steps_flow(callback.message, state, user_id, target_date)
+        return
+    if action == "activity":
+        from handlers.workouts import _send_add_activity_screen
+        from states.user_states import WorkoutStates
+
+        await state.clear()
+        await state.update_data(entry_date=target_date.isoformat())
+        await state.set_state(WorkoutStates.choosing_exercise)
+        await _send_add_activity_screen(callback.message, state, user_id)
+        return
+    if action == "note":
+        from handlers.wellbeing import start_note_flow
+
+        await state.clear()
+        await start_note_flow(callback.message, state, target_date, user_id=user_id)
+        return
+
+    await callback.answer("Кнопка устарела", show_alert=True)
+
+
+def _daily_analysis_created_time(entry) -> str:
+    created = entry.analyzed_at or entry.created_at
+    if not created:
+        return "неизвестно"
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return created.astimezone(MSK_TZ).strftime("%H:%M")
+
+
+def _adopt_saved_daily_analysis(entry) -> None:
+    """Связывает старый успешный результат с новым постоянным журналом квот."""
+    request_id = getattr(entry, "quota_request_id", None) or build_quota_request_id(
+        "legacy_daily_analysis",
+        entry.user_id,
+        entry.date,
+        entry.id,
+    )
+    operation = ai_quota_service.get_operation(request_id)
+    if operation is not None:
+        # Repair the tiny crash window between durable result storage and quota commit.
+        ai_quota_service.consume(request_id, outcome="success", result_ref=str(entry.id))
+    elif entry.date == quota_period_key():
+        ai_quota_service.record_existing_success(
+            entry.user_id,
+            AIFeature.DAILY_ANALYSIS,
+            request_id,
+            result_ref=str(entry.id),
+        )
+
+
+async def _deliver_saved_daily_analysis(message: Message, entry) -> bool:
+    """Показывает сохранённый результат без повторного обращения к AI."""
+    _adopt_saved_daily_analysis(entry)
+    analysis = (entry.analysis_text or "—").strip()
+    chunks = split_telegram_message(analysis, limit=3750)
+    footer = (
+        f"\n\n<i>Анализ создан в {_daily_analysis_created_time(entry)}. "
+        "Более поздние записи в него не вошли.</i>"
+    )
+    for idx, chunk in enumerate(chunks):
+        rendered = chunk + (footer if idx == len(chunks) - 1 else "")
+        try:
+            await message.answer(rendered, parse_mode="HTML", reply_markup=activity_analysis_menu if idx == len(chunks) - 1 else None)
+        except TelegramBadRequest:
+            await message.answer(strip_telegram_html(rendered), reply_markup=activity_analysis_menu if idx == len(chunks) - 1 else None)
+    return True
+
+
+async def _daily_analysis_denied(message: Message, text: str) -> None:
+    await message.answer(
+        text,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"{PREFLIGHT_CALLBACK_PREFIX}:back:{quota_period_key().isoformat()}")]
+            ]
+        ),
+    )
+
+
 async def run_detailed_activity_analysis(
     message: Message,
     user_id: str,
     target_date: date | None = None,
 ) -> bool:
-    """Запускает подробный AI-анализ дня через DeepSeek на расширенном контексте."""
-    target_date = target_date or date.today()
-    EveningAnalysisNotificationRepository.mark_analysis_started(user_id, target_date)
+    """Резервирует квоту, сохраняет результат и только затем доставляет его."""
+    user_id = str(user_id)
+    target_date = target_date or quota_period_key()
+    existing = ActivityAnalysisRepository.get_successful_ai_for_date(user_id, target_date)
+    if existing:
+        complete_daily_preflight(user_id, target_date)
+        return await _deliver_saved_daily_analysis(message, existing)
+
+    if target_date != quota_period_key():
+        await _daily_analysis_denied(
+            message,
+            "В бесплатном тарифе новый анализ можно создать только для текущего лимитного дня. "
+            "Старые сохранённые анализы доступны в календаре.",
+        )
+        return False
+
+    preflight = collect_daily_preflight(user_id, target_date)
+    if preflight.is_empty:
+        await message.answer(
+            "За этот день дневник пока пуст. Сначала добавь питание, шаги или активность — "
+            "воду, вес и заметку можно внести дополнительно."
+        )
+        return False
+
+    request_id = build_quota_request_id("daily_analysis", user_id, target_date.isoformat())
+    try:
+        reservation = ai_quota_service.reserve(user_id, AIFeature.DAILY_ANALYSIS, request_id)
+    except AIQuotaAlreadyConsumed:
+        existing = ActivityAnalysisRepository.get_successful_ai_for_date(user_id, target_date)
+        if existing:
+            return await _deliver_saved_daily_analysis(message, existing)
+        await _daily_analysis_denied(
+            message,
+            "Подробный анализ этого лимитного дня уже был создан и не может быть сгенерирован повторно. "
+            "Удаление результата не возвращает лимит. Лимит обновится в 02:00 МСК.",
+        )
+        return False
+    except AIQuotaExceeded:
+        await _daily_analysis_denied(
+            message,
+            "Лимит бесплатного подробного AI-анализа на сегодня закончился. "
+            "Лимит обновится в 02:00 МСК.",
+        )
+        return False
+    except (AIAttemptLimitExceeded, AIGlobalLimitExceeded):
+        await _daily_analysis_denied(
+            message,
+            "AI-анализ временно недоступен из-за защитного ограничения. "
+            "Дневник, вода, активность и история продолжают работать.",
+        )
+        return False
+    except (AIOperationInProgress, AIOperationCooldown):
+        await message.answer("AI-операция уже выполняется или запросы отправлены слишком быстро. Попробуй немного позже.")
+        return False
+
     AnalyticsRepository.track_event(user_id, "request_daily_analysis", section="activity")
     AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
     await message.answer("🧠 Готовлю подробный AI-анализ дня...")
@@ -1355,124 +1582,103 @@ async def run_detailed_activity_analysis(
             user_id,
             AnalysisPeriod(start_date=target_date, end_date=target_date, label="за день"),
         )
-        ActivityAnalysisRepository.create_entry(user_id, analysis, target_date, source="detailed_deepseek")
-    except Exception as e:
+        if not (analysis or "").strip():
+            raise ValueError("empty_daily_analysis")
+        analyzed_at = datetime.utcnow()
+        entry_id = ActivityAnalysisRepository.create_entry(
+            user_id,
+            analysis,
+            target_date,
+            source="detailed_deepseek",
+            analyzed_at=analyzed_at,
+            plan_key=reservation.plan_key,
+            quota_request_id=request_id,
+            data_snapshot_hash=preflight.snapshot_hash,
+        )
+    except Exception as error:
+        ai_quota_service.release(request_id, outcome="technical_error")
         AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
         log_app_error(
             source="deepseek",
-            error=e,
+            error=error,
             user_id=user_id,
             context="detailed_daily_analysis",
             extra={"handler": "run_detailed_activity_analysis"},
         )
-        push_menu_stack(message.bot, activity_analysis_menu)
         await message.answer(
-            "⚠️ Не удалось подготовить подробный AI-анализ. Попробуй немного позже.",
+            "⚠️ Не удалось подготовить подробный AI-анализ. Лимит не списан, попробуй немного позже.",
             reply_markup=activity_analysis_menu,
         )
         return False
 
-    push_menu_stack(message.bot, activity_analysis_menu)
-    chunks = split_telegram_message(analysis, limit=3900)
-    logger.info(
-        "Detailed analysis delivery started feature=%s message_length=%s parts_count=%s",
-        "detailed_activity_analysis",
-        len(analysis),
-        len(chunks),
-    )
+    # From this point the user has a durable useful result. Never release quota,
+    # even if quota confirmation, reminder state or Telegram delivery fails.
     try:
-        for idx, chunk in enumerate(chunks, start=1):
-            reply_markup = activity_analysis_menu if idx == len(chunks) else None
-            try:
-                await message.answer(
-                    chunk,
-                    parse_mode="HTML",
-                    reply_markup=reply_markup,
-                )
-            except TelegramBadRequest as html_error:
-                logger.warning(
-                    "Detailed analysis HTML delivery failed; retrying plain text "
-                    "feature=%s message_length=%s parts_count=%s part_index=%s "
-                    "stage=%s error_type=%s code=%s",
-                    "detailed_activity_analysis",
-                    len(analysis),
-                    len(chunks),
-                    idx,
-                    "send_html_part",
-                    safe_exception_summary(html_error),
-                    _telegram_delivery_error_code(html_error),
-                )
-                await message.answer(
-                    strip_telegram_html(chunk),
-                    parse_mode=None,
-                    reply_markup=reply_markup,
-                )
+        ai_quota_service.consume(request_id, outcome="success", result_ref=str(entry_id))
+    except Exception as quota_commit_error:
+        log_app_error(
+            source="quota",
+            error=quota_commit_error,
+            user_id=user_id,
+            context="daily_analysis_quota_commit",
+            extra={"entry_id": entry_id},
+        )
+    try:
+        EveningAnalysisNotificationRepository.mark_analysis_started(user_id, target_date)
+    except Exception as notification_state_error:
+        log_app_error(
+            source="database",
+            error=notification_state_error,
+            user_id=user_id,
+            context="daily_analysis_notification_state",
+            extra={"entry_id": entry_id},
+        )
+    try:
+        complete_daily_preflight(user_id, target_date)
+    except Exception as preflight_state_error:
+        log_app_error(
+            source="database",
+            error=preflight_state_error,
+            user_id=user_id,
+            context="daily_analysis_preflight_complete",
+            extra={"entry_id": entry_id},
+        )
+
+    entry = ActivityAnalysisRepository.get_entry_by_id(entry_id, user_id)
+    if entry is None:  # pragma: no cover - защитный инвариант
+        return True
+    try:
+        await _deliver_saved_daily_analysis(message, entry)
     except Exception as delivery_error:
-        AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
+        # Result and quota are already durable; delivery failures must not regenerate it.
         log_app_error(
             source="telegram",
             error=delivery_error,
             user_id=user_id,
             context="detailed_analysis_delivery",
-            extra={
-                "feature": "detailed_activity_analysis",
-                "handler": "run_detailed_activity_analysis",
-                "message_length": len(analysis),
-                "parts_count": len(chunks),
-                "part_index": idx,
-                "stage": "send_result",
-                "code": _telegram_delivery_error_code(delivery_error),
-            },
-        )
-        logger.error(
-            "Detailed analysis delivery failed feature=%s message_length=%s "
-            "parts_count=%s part_index=%s stage=%s error_type=%s code=%s",
-            "detailed_activity_analysis",
-            len(analysis),
-            len(chunks),
-            idx,
-            "send_result",
-            safe_exception_summary(delivery_error),
-            _telegram_delivery_error_code(delivery_error),
+            extra={"handler": "run_detailed_activity_analysis", "entry_id": entry_id},
         )
         try:
             await message.answer(
-                "⚠️ Анализ был подготовлен, но не удалось отправить результат. Попробуйте ещё раз.",
-                reply_markup=activity_analysis_menu,
+                "Анализ сохранён, но Telegram не смог доставить результат. "
+                "Открой анализ ещё раз — повторной генерации не будет."
             )
-        except Exception as notification_error:
-            log_app_error(
-                source="telegram",
-                error=notification_error,
-                user_id=user_id,
-                context="detailed_analysis_delivery",
-                extra={
-                    "feature": "detailed_activity_analysis",
-                    "handler": "run_detailed_activity_analysis",
-                    "message_length": len(analysis),
-                    "parts_count": len(chunks),
-                    "part_index": idx,
-                    "stage": "send_delivery_error",
-                    "code": _telegram_delivery_error_code(notification_error),
-                },
-            )
-        return False
-
+        except Exception:
+            pass
     AnalyticsRepository.track_event(user_id, "daily_analysis_sent", section="activity")
-    logger.info(
-        "Detailed analysis delivery completed feature=%s message_length=%s parts_count=%s",
-        "detailed_activity_analysis",
-        len(analysis),
-        len(chunks),
-    )
     return True
 
 
 @router.message(lambda m: (m.text or "").strip() in ACTIVITY_ANALYSIS_DETAILED_DEEPSEEK_BUTTON_ALIASES)
 async def analyze_activity_day_detailed_deepseek(message: Message):
-    """Подробный AI-анализ дня через DeepSeek на расширенном контексте."""
+    """Открывает обязательную проверку данных текущего лимитного дня."""
     user_id = str(message.from_user.id)
-    await run_detailed_activity_analysis(message, user_id)
+    target_date = quota_period_key()
+    existing = ActivityAnalysisRepository.get_successful_ai_for_date(user_id, target_date)
+    if existing:
+        await _deliver_saved_daily_analysis(message, existing)
+        return
+    await show_daily_analysis_preflight(message, user_id, target_date, origin="menu")
 
 def register_activity_handlers(dp):
     """Регистрирует обработчики анализа деятельности."""

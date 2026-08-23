@@ -9,12 +9,17 @@ from sqlalchemy.orm import Session
 
 from database.models import (
     AIUsageLog,
+    AIAttemptCounter,
+    AIQuotaActiveLock,
+    AIQuotaCounter,
+    AIQuotaOperation,
     ActivityAnalysisEntry,
     CustomWorkoutExercise,
     Dish,
     DishIngredient,
     ErrorLog,
     EveningAnalysisNotificationState,
+    DailyAnalysisPreparationSession,
     KbjuSettings,
     Meal,
     MealCompletionComment,
@@ -29,6 +34,7 @@ from database.models import (
     SupportMessage,
     User,
     UserEvent,
+    UserPlanAssignment,
     WaterEntry,
     Weight,
     WellbeingEntry,
@@ -42,6 +48,12 @@ logger = logging.getLogger(__name__)
 # Все ORM-модели, в которых user_id однозначно связывает запись с пользователем.
 # Дочерние записи идут раньше логически связанных родительских сущностей.
 DELETE_ORDER = (
+    AIQuotaActiveLock,
+    AIQuotaOperation,
+    AIAttemptCounter,
+    AIQuotaCounter,
+    UserPlanAssignment,
+    DailyAnalysisPreparationSession,
     MealCompletionComment,
     SupplementNotificationState,
     SupplementEntry,

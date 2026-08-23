@@ -71,7 +71,22 @@ from services.deepseek_service import (
 )
 from services.ai_food_parser import FoodAnalysisStatus, parse_kbju_json
 from services.ai_usage_logger import log_ai_usage
+from services.ai_quota_service import (
+    AIFeature,
+    AIAttemptLimitExceeded,
+    AIGlobalLimitExceeded,
+    AIOperationCooldown,
+    AIOperationInProgress,
+    AIQuotaAlreadyConsumed,
+    AIQuotaExceeded,
+    QuotaReservation,
+    ai_quota_service,
+    build_quota_request_id,
+    format_free_ai_status_block,
+    validate_ai_image,
+)
 from services.photo_food_validator import validate_photo_food_payload
+from services.daily_analysis_preflight_service import return_to_active_daily_preflight
 from utils.validators import parse_date
 from utils.log_sanitizer import safe_exception_summary
 from utils.sensitive_meal_text import check_sensitive_meal_text
@@ -103,6 +118,93 @@ MEAL_SAVE_TOKEN_BYTES = 16
 MEAL_SAVE_TOKEN_LENGTH = 22
 MEAL_SAVE_CALLBACK_TOKEN_LENGTH = 12
 STALE_MEAL_SAVE_TEXT = "Этот приём пищи уже сохранён или запрос устарел."
+
+
+def _build_quota_alternatives_menu(
+    meal_type: str,
+    feature: AIFeature | None = None,
+) -> InlineKeyboardMarkup:
+    """Контекстные бесплатные способы продолжить без нового AI-запроса."""
+    normalized = normalize_meal_type(meal_type, fallback=MealType.SNACK.value)
+    rows = [
+            [
+                InlineKeyboardButton(
+                    text="📦 Мои продукты",
+                    callback_data=f"quota_alt:products:{normalized}",
+                )
+            ],
+    ]
+    if feature is not AIFeature.NUTRITION_LABEL:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🍽 Мои блюда",
+                    callback_data=f"quota_alt:dishes:{normalized}",
+                )
+            ]
+        )
+    rows.extend(
+        [
+            [
+                InlineKeyboardButton(
+                    text="✍️ Внести вручную",
+                    callback_data=f"quota_alt:manual:{normalized}",
+                )
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"quota_alt:back:{normalized}")],
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _quota_limit_text(feature: AIFeature) -> str:
+    titles = {
+        AIFeature.MEAL_TEXT: "текстового AI-анализа",
+        AIFeature.MEAL_PHOTO: "анализа еды по фото",
+        AIFeature.NUTRITION_LABEL: "анализа этикеток",
+    }
+    return (
+        f"Лимит бесплатного {titles.get(feature, 'AI-анализа')} на сегодня закончился.\n"
+        "Он обновится в 02:00 МСК.\n"
+        "Сейчас можно добавить продукт вручную или выбрать его из сохранённых."
+    )
+
+
+async def _reserve_meal_ai_quota(
+    message: Message,
+    *,
+    user_id: str,
+    feature: AIFeature,
+    request_id: str,
+    meal_type: str,
+) -> QuotaReservation | None:
+    """Единообразно резервирует AI-квоту и показывает контролируемый отказ."""
+    try:
+        return ai_quota_service.reserve(user_id, feature, request_id)
+    except AIQuotaExceeded:
+        await message.answer(
+            _quota_limit_text(feature),
+            reply_markup=_build_quota_alternatives_menu(meal_type, feature),
+        )
+    except AIAttemptLimitExceeded:
+        await message.answer(
+            "Слишком много неудачных AI-попыток за сегодня. Попробуй после 02:00 МСК "
+            "или используй ручное добавление.",
+            reply_markup=_build_quota_alternatives_menu(meal_type, feature),
+        )
+    except AIGlobalLimitExceeded:
+        await message.answer(
+            "AI-функции временно приостановлены из-за общего дневного предела. "
+            "Дневник и ручное добавление продолжают работать.",
+            reply_markup=_build_quota_alternatives_menu(meal_type, feature),
+        )
+    except AIOperationInProgress:
+        await message.answer("Предыдущий AI-запрос ещё обрабатывается. Дождись результата.")
+    except AIOperationCooldown:
+        await message.answer("Подожди несколько секунд перед следующим AI-запросом.")
+    except AIQuotaAlreadyConsumed:
+        await message.answer("Этот AI-запрос уже обработан. Новый лимит не списан.")
+    return None
 
 
 def _new_meal_save_token() -> str:
@@ -227,6 +329,19 @@ Sumday77 всегда на стороне пользователя. Никогд
 """
 
 MEAL_COMMENT_FALLBACK_TEXT = "✅ Приём пищи завершён."
+
+
+def _build_local_meal_completion_text(user_id: str, target_date: date) -> str:
+    """Недорогой итог, который не блокирует завершение при исчерпанной AI-квоте."""
+    totals = MealRepository.get_daily_totals(user_id, target_date)
+    settings = MealRepository.get_kbju_settings(user_id)
+    calories = float(totals.get("calories", 0) or 0)
+    if settings and float(settings.calories or 0) > 0:
+        return (
+            "✅ <b>Приём пищи завершён.</b>\n\n"
+            f"За день набрано {calories:.0f} из {float(settings.calories):.0f} ккал."
+        )
+    return "✅ <b>Приём пищи завершён.</b>"
 
 ADD_METHOD_TEXTS = {
     "ai": "📝 Ввести приём пищи текстом (AI-анализ)",
@@ -1803,7 +1918,12 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
         return
 
     existing = MealCompletionCommentRepository.get_by_meal(user_id, meal.id)
-    if existing and existing.status == "success" and existing.comment_text:
+    if existing and existing.status in {"success", "fallback"} and existing.comment_text:
+        if existing.status == "success" and existing.quota_request_id:
+            try:
+                ai_quota_service.consume(existing.quota_request_id, outcome="success", result_ref=f"meal_comment:{existing.id}")
+            except Exception:
+                logger.warning("Meal comment quota repair failed meal_id=%s", existing.meal_id)
         loading = await message.answer("🧠 Смотрю, что получилось...", reply_markup=ReplyKeyboardRemove())
         try:
             await message.bot.edit_message_text(
@@ -1817,6 +1937,24 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
             await message.answer(existing.comment_text, parse_mode="HTML", reply_markup=_meal_comment_keyboard(meal.id, target_date))
         return
 
+    logical_existing = MealCompletionCommentRepository.get_for_logical_meal(
+        user_id,
+        target_date,
+        meal.meal_type,
+    )
+    if logical_existing and logical_existing.comment_text:
+        if logical_existing.status == "success" and logical_existing.quota_request_id:
+            try:
+                ai_quota_service.consume(logical_existing.quota_request_id, outcome="success", result_ref=f"meal_comment:{logical_existing.id}")
+            except Exception:
+                logger.warning("Logical meal comment quota repair failed meal_id=%s", logical_existing.meal_id)
+        await message.answer(
+            logical_existing.comment_text,
+            parse_mode="HTML",
+            reply_markup=_meal_comment_keyboard(meal.id, target_date),
+        )
+        return
+
     if not hasattr(message.bot, "meal_comment_in_progress"):
         message.bot.meal_comment_in_progress = set()
     in_progress_key = (user_id, meal.id)
@@ -1826,12 +1964,37 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
     message.bot.meal_comment_in_progress.add(in_progress_key)
 
     loading = await message.answer("🧠 Смотрю, что получилось...", reply_markup=ReplyKeyboardRemove())
-    text = MEAL_COMMENT_FALLBACK_TEXT
+    text = _build_local_meal_completion_text(user_id, target_date)
     metadata = {}
-    status = "error"
+    status = "fallback"
     error_message = None
     prompt = ""
+    quota_request_id = build_quota_request_id(
+        "meal_comment",
+        user_id,
+        target_date.isoformat(),
+        meal.meal_type,
+    )
+    reservation = None
     try:
+        try:
+            reservation = ai_quota_service.reserve(
+                user_id,
+                AIFeature.MEAL_COMPLETION_COMMENT,
+                quota_request_id,
+            )
+        except (
+            AIQuotaExceeded,
+            AIAttemptLimitExceeded,
+            AIGlobalLimitExceeded,
+            AIOperationInProgress,
+            AIOperationCooldown,
+            AIQuotaAlreadyConsumed,
+        ):
+            reservation = None
+
+        if reservation is None:
+            raise RuntimeError("meal_comment_quota_unavailable")
         if len(meal_rows) > 1 and len(products) <= 1:
             raise ValueError(
                 f"Incomplete meal completion context: meal_rows={len(meal_rows)}, products={len(products)}"
@@ -1848,12 +2011,15 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
         text = _sanitize_meal_comment_html(raw_text)
         status = "success"
     except Exception as exc:  # не блокируем завершение приёма пищи
-        logger.warning(
-            "Meal completion comment failed meal_id=%s error_type=%s",
-            meal.id,
-            safe_exception_summary(exc),
-        )
-        error_message = safe_exception_summary(exc)
+        if reservation is not None and status != "success":
+            ai_quota_service.release(quota_request_id, outcome="comment_error")
+        if str(exc) != "meal_comment_quota_unavailable":
+            logger.warning(
+                "Meal completion comment failed meal_id=%s error_type=%s",
+                meal.id,
+                safe_exception_summary(exc),
+            )
+            error_message = safe_exception_summary(exc)
     finally:
         logger.info(
             "meal_completion_comment meal_id=%s meal_type=%s product_count=%s input_chars=%s status=%s",
@@ -1863,7 +2029,33 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
             len(prompt),
             status,
         )
-    MealCompletionCommentRepository.save(user_id, meal.id, target_date, meal.meal_type, comment_text=text if status == "success" else None, model=metadata.get("model") or DEEPSEEK_MODEL, status=status, input_tokens=metadata.get("input_tokens"), output_tokens=metadata.get("output_tokens"), total_tokens=metadata.get("total_tokens"), estimated_cost_usd=metadata.get("estimated_cost_usd"), error_message=error_message)
+    try:
+        saved_comment = MealCompletionCommentRepository.save(user_id, meal.id, target_date, meal.meal_type, comment_text=text, model=metadata.get("model") or DEEPSEEK_MODEL, status=status, input_tokens=metadata.get("input_tokens"), output_tokens=metadata.get("output_tokens"), total_tokens=metadata.get("total_tokens"), estimated_cost_usd=metadata.get("estimated_cost_usd"), error_message=error_message, quota_request_id=quota_request_id if status == "success" else None)
+    except Exception as save_error:
+        if reservation is not None:
+            ai_quota_service.release(quota_request_id, outcome="comment_storage_error")
+        message.bot.meal_comment_in_progress.discard(in_progress_key)
+        logger.warning(
+            "Meal completion comment storage failed meal_id=%s error_type=%s",
+            meal.id,
+            safe_exception_summary(save_error),
+        )
+        text = _build_local_meal_completion_text(user_id, target_date)
+        await message.answer(text, parse_mode="HTML", reply_markup=_meal_comment_keyboard(meal.id, target_date))
+        return
+    if status == "success":
+        try:
+            ai_quota_service.consume(
+                quota_request_id,
+                outcome="success",
+                result_ref=f"meal_comment:{saved_comment.id}",
+            )
+        except Exception as quota_commit_error:
+            logger.warning(
+                "Meal comment quota commit failed meal_id=%s error_type=%s",
+                meal.id,
+                safe_exception_summary(quota_commit_error),
+            )
     message.bot.meal_comment_in_progress.discard(in_progress_key)
     try:
         await message.bot.edit_message_text(chat_id=message.chat.id, message_id=loading.message_id, text=text, parse_mode="HTML", reply_markup=_meal_comment_keyboard(meal.id, target_date))
@@ -2299,6 +2491,7 @@ async def _run_image_analysis_with_openai_fallback(
     operation_type: str,
     success_validator=None,
     comment: str | None = None,
+    quota_request_id: str | None = None,
 ) -> ProviderAnalysisResult:
     """Запускает анализ изображения через Gemini, а при недоступности/пустом ответе — через OpenAI."""
     logger.info("Gemini attempt for %s", operation_type)
@@ -2320,6 +2513,8 @@ async def _run_image_analysis_with_openai_fallback(
         )
 
     logger.info("Fallback: переход на OpenAI для %s", operation_type)
+    if quota_request_id:
+        ai_quota_service.register_additional_provider_attempt(quota_request_id)
     try:
         openai_kwargs = {
             "user_id": user_id,
@@ -2351,7 +2546,13 @@ async def _run_image_analysis_with_openai_fallback(
     raise AllProvidersUnavailableError("All providers unavailable")
 
 
-async def _run_label_analysis_with_openai_fallback(analyzer, image_data: bytes, *, user_id: str | int | None = None):
+async def _run_label_analysis_with_openai_fallback(
+    analyzer,
+    image_data: bytes,
+    *,
+    user_id: str | int | None = None,
+    quota_request_id: str | None = None,
+):
     """Запускает анализ этикетки через Gemini, а при недоступности всех ключей — через OpenAI."""
     try:
         return await _run_gemini_task(analyzer, image_data)
@@ -2362,6 +2563,8 @@ async def _run_label_analysis_with_openai_fallback(analyzer, image_data: bytes, 
             exc_info=True,
         )
         logger.info("[Fallback] All Gemini keys failed. Switching to OpenAI.")
+        if quota_request_id:
+            ai_quota_service.register_additional_provider_attempt(quota_request_id)
         try:
             return await _analyze_label_with_openai(image_data, user_id=user_id)
         except Exception as openai_error:
@@ -2380,6 +2583,7 @@ async def _run_food_photo_analysis_with_openai_fallback(
     *,
     user_id: str | int | None = None,
     comment: str | None = None,
+    quota_request_id: str | None = None,
 ) -> ProviderAnalysisResult:
     """Запускает анализ еды по фото через Gemini с fallback на OpenAI."""
     try:
@@ -2392,6 +2596,7 @@ async def _run_food_photo_analysis_with_openai_fallback(
             operation_type="анализа еды по фото",
             success_validator=_has_food_photo_result,
             comment=comment,
+            quota_request_id=quota_request_id,
         )
         if result.provider == "gemini":
             logger.info("Анализ еды по фото завершён успешно через Gemini")
@@ -2498,7 +2703,8 @@ async def _show_input_methods(message: Message, state: FSMContext, *, user_id: s
     )
     text = (
         "Теперь выбери способ добавления приёма пищи.\n\n"
-        "💡 Для повторного добавления используй «📦 Мои продукты» или «🍽 Мои блюда»."
+        "💡 Для повторного добавления используй «📦 Мои продукты» или «🍽 Мои блюда».\n\n"
+        f"{format_free_ai_status_block(user_id or str(message.from_user.id))}"
     )
     push_menu_stack(message.bot, kbju_add_menu)
     await message.answer(text, reply_markup=_build_my_products_entry_keyboard(meal_type))
@@ -4322,6 +4528,45 @@ async def kbju_add_via_custom_product(message: Message, state: FSMContext):
     await _start_custom_product_creation(message, state, meal_type=meal_type)
 
 
+@router.callback_query(lambda c: c.data and c.data.startswith("quota_alt:"))
+async def handle_quota_alternative(callback: CallbackQuery, state: FSMContext):
+    """Открывает бесплатную альтернативу после исчерпания AI-квоты."""
+    try:
+        _, action, meal_type_raw = callback.data.split(":", maxsplit=2)
+    except ValueError:
+        await callback.answer("Действие устарело", show_alert=True)
+        return
+    meal_type = normalize_meal_type(meal_type_raw, fallback=MealType.SNACK.value)
+    user_id = str(callback.from_user.id)
+    await callback.answer()
+    await state.update_data(meal_type=meal_type, meal_entry_open=True)
+    if action == "products":
+        await _show_my_products_page(
+            callback.message,
+            state,
+            meal_type=meal_type,
+            page=1,
+            user_id=user_id,
+            back_callback_data="my_products_back_to_current_meal",
+        )
+        return
+    if action == "dishes":
+        shown = await _show_saved_dishes_page(
+            callback.message,
+            state,
+            user_id=user_id,
+            meal_type=meal_type,
+            page=1,
+        )
+        if not shown:
+            await callback.message.answer("Сохранённых блюд пока нет. Можно внести продукт вручную.")
+        return
+    if action == "manual":
+        await _start_custom_product_creation(callback.message, state, meal_type=meal_type)
+        return
+    await _show_input_methods(callback.message, state, user_id=user_id)
+
+
 @router.callback_query(lambda c: c.data.startswith("custom_product_back:"))
 async def custom_product_back(callback: CallbackQuery, state: FSMContext):
     """Возвращает из «Моего продукта» к способам добавления."""
@@ -4775,22 +5020,49 @@ async def _handle_provider_food_input(
         return
 
     user_id = str(message.from_user.id)
+    data = await state.get_data()
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    request_id = build_quota_request_id(
+        "meal_text",
+        user_id,
+        getattr(message, "message_id", None) or id(message),
+    )
+    reservation = await _reserve_meal_ai_quota(
+        message,
+        user_id=user_id,
+        feature=AIFeature.MEAL_TEXT,
+        request_id=request_id,
+        meal_type=meal_type,
+    )
+    if reservation is None:
+        return
     await message.answer("Обрабатываю…")
     try:
-        raw = await asyncio.to_thread(analyzer, user_text)
+        raw = await asyncio.to_thread(
+            analyzer,
+            user_text,
+            user_id=user_id,
+            feature=AIFeature.MEAL_TEXT.value,
+        )
         kbju_data = parse_kbju_json(raw)
     except DeepSeekServiceConfigError:
+        ai_quota_service.release(request_id, outcome="provider_config_error")
         logger.exception("%s: API key is not configured", provider_name)
         await message.answer("⚠️ DeepSeek временно недоступен: не настроен DEEPSEEK_API_KEY.")
         await message.answer("Можешь выбрать другой способ добавления или попробовать позже.")
         return
     except (DeepSeekServiceError, ValueError, json.JSONDecodeError):
+        ai_quota_service.release(request_id, outcome="provider_or_parse_error")
         logger.exception("%s: failed to process user text", provider_name)
         await message.answer(f"Не удалось обработать через {provider_name}: пустой ответ или ошибка API. Попробуй позже.")
         await message.answer("Можешь отправить текст ещё раз.")
         return
+    except Exception:
+        ai_quota_service.release(request_id, outcome="unexpected_error")
+        raise
 
     if not kbju_data:
+        ai_quota_service.release(request_id, outcome="invalid_result")
         logger.error("%s: parse error, empty or incompatible payload", provider_name)
         await message.answer(f"Не удалось обработать через {provider_name}. Попробуй позже.")
         await message.answer("Можешь отправить текст ещё раз.")
@@ -4798,10 +5070,12 @@ async def _handle_provider_food_input(
 
     analysis_status = kbju_data.get("status")
     if analysis_status == FoodAnalysisStatus.NO_FOOD.value:
+        ai_quota_service.release(request_id, outcome="no_food")
         logger.info("Meal text analysis returned no_food")
         await message.answer(NO_FOOD_RECOGNIZED_TEXT, parse_mode="HTML")
         return
     if analysis_status != FoodAnalysisStatus.OK.value or "total" not in kbju_data:
+        ai_quota_service.release(request_id, outcome="invalid_result")
         logger.error("%s: parse error, invalid food analysis status", provider_name)
         await message.answer(f"Не удалось обработать через {provider_name}. Попробуй позже.")
         await message.answer("Можешь отправить текст ещё раз.")
@@ -4809,17 +5083,18 @@ async def _handle_provider_food_input(
 
     items = _normalize_ai_items_for_edit(kbju_data.get("items", []))
     if not items:
+        ai_quota_service.release(request_id, outcome="no_food")
         logger.info("Meal text analysis returned no_food")
         await message.answer(NO_FOOD_RECOGNIZED_TEXT, parse_mode="HTML")
         return
+
+    ai_quota_service.consume(request_id, outcome="success", result_ref="meal_text_draft")
 
     analysis_title = (
         provider_title
         if provider_title == "📝 AI-анализ приёма пищи"
         else f"{provider_title}: оценка приёма пищи"
     )
-    data = await state.get_data()
-    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
     try:
         entry_date = date.fromisoformat(entry_date_str) if isinstance(entry_date_str, str) else date.today()
@@ -4836,6 +5111,7 @@ async def _handle_provider_food_input(
             "meal_type": meal_type,
             "entry_date": entry_date.isoformat(),
             "analysis_title": analysis_title,
+            "quota_request_id": request_id,
         }
     )
     await _send_ai_meal_preview(message, state)
@@ -4902,6 +5178,7 @@ async def _keep_meal_entry_open_after_save(
         "Можно добавить ещё продукт в этот приём пищи или завершить его.",
         reply_markup=kbju_add_menu,
     )
+    await return_to_active_daily_preflight(message, user_id, entry_date)
 
 @router.message(MealEntryStates.waiting_for_deepseek_food_input)
 async def handle_deepseek_food_input(message: Message, state: FSMContext):
@@ -5220,10 +5497,11 @@ async def _handle_food_photo_analysis(
     raw_query: str = "[Анализ по фото]",
     image_file_id: str | None = None,
     comment: str | None = None,
+    user_id: str | None = None,
 ):
     """Общая логика обработки фото еды для Gemini и OpenAI."""
     await _clear_photo_comment_fields(state)
-    user_id = str(message.from_user.id)
+    user_id = str(user_id or message.from_user.id)
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
@@ -5252,6 +5530,28 @@ async def _handle_food_photo_analysis(
     image_data = image_bytes.read()
 
     try:
+        validate_ai_image(image_data)
+    except ValueError as error:
+        code = str(error)
+        if code == "image_too_large":
+            await message.answer("Фото слишком большое. Максимальный размер — 10 МБ.")
+        else:
+            await message.answer("Поддерживаются фотографии JPEG, PNG и WebP.")
+        return
+
+    source_message_id = data.get("food_photo_message_id") or getattr(message, "message_id", None) or id(message)
+    request_id = build_quota_request_id("meal_photo", user_id, source_message_id)
+    reservation = await _reserve_meal_ai_quota(
+        message,
+        user_id=user_id,
+        feature=AIFeature.MEAL_PHOTO,
+        request_id=request_id,
+        meal_type=meal_type,
+    )
+    if reservation is None:
+        return
+
+    try:
         if provider == "openai":
             openai_kwargs = {"user_id": user_id, "feature": "food_photo_analysis"}
             if comment:
@@ -5268,6 +5568,7 @@ async def _handle_food_photo_analysis(
                 image_data,
                 user_id=user_id,
                 comment=comment,
+                quota_request_id=request_id,
             )
             kbju_data = analysis_result.payload
             final_provider = analysis_result.provider
@@ -5278,12 +5579,14 @@ async def _handle_food_photo_analysis(
                 kbju_data = await runner(analyzer, image_data)
             final_provider = provider
     except AllProvidersUnavailableError:
+        ai_quota_service.release(request_id, outcome="providers_unavailable")
         await message.answer(
             "⚠️ Не получилось определить КБЖУ по фото.\n"
             "Попробуй сделать фото получше или используй другой способ."
         )
         return
     except Exception as e:
+        ai_quota_service.release(request_id, outcome="provider_error")
         await error_sender(message, e)
         return
 
@@ -5291,6 +5594,7 @@ async def _handle_food_photo_analysis(
 
     validated_payload = validate_photo_food_payload(kbju_data)
     if not validated_payload:
+        ai_quota_service.release(request_id, outcome="no_food")
         await message.answer(
             "⚠️ Не получилось определить КБЖУ по фото.\n"
             "Попробуй сделать фото получше или используй другой способ."
@@ -5318,12 +5622,14 @@ async def _handle_food_photo_analysis(
         )
 
     if not candidates:
+        ai_quota_service.release(request_id, outcome="no_food")
         await message.answer(
             "⚠️ Не получилось определить продукты на фото.\n"
             "Попробуй сделать фото получше или используй другой способ."
         )
         return
 
+    ai_quota_service.consume(request_id, outcome="success", result_ref="meal_photo_draft")
     save_token = _new_meal_save_token()
     await state.set_state(MealEntryStates.confirming_photo_analysis)
     await state.update_data(
@@ -5335,6 +5641,7 @@ async def _handle_food_photo_analysis(
         entry_date=entry_date.isoformat(),
         meal_type=meal_type,
         photo_save_token=save_token,
+        photo_quota_request_id=request_id,
     )
     if len(candidates) > 1:
         await message.answer(
@@ -5430,7 +5737,10 @@ async def handle_photo_input(message: Message, state: FSMContext):
     """Сохраняет фото еды и сразу ждёт уточнение перед анализом."""
     photo = message.photo[-1]
     await _clear_photo_comment_fields(state)
-    await state.update_data(food_photo_file_id=photo.file_id)
+    await state.update_data(
+        food_photo_file_id=photo.file_id,
+        food_photo_message_id=getattr(message, "message_id", None),
+    )
     await state.set_state(MealEntryStates.waiting_for_food_photo_comment)
     await message.answer(
         "📷 Фото получено.\n\n"
@@ -5450,6 +5760,7 @@ async def _run_pending_food_photo_analysis(
     state: FSMContext,
     *,
     comment: str | None = None,
+    user_id: str | None = None,
 ) -> None:
     """Запускает анализ ранее полученного фото еды с опциональным уточнением."""
     data = await state.get_data()
@@ -5471,6 +5782,7 @@ async def _run_pending_food_photo_analysis(
         error_sender=_send_ai_error_message,
         image_file_id=str(file_id),
         comment=comment,
+        user_id=user_id,
     )
 
 
@@ -5479,7 +5791,11 @@ async def analyze_food_photo_without_comment(callback: CallbackQuery, state: FSM
     """Запускает анализ сохранённого фото без дополнительного контекста."""
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
-    await _run_pending_food_photo_analysis(callback.message, state)
+    await _run_pending_food_photo_analysis(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
+    )
 
 
 @router.callback_query(lambda c: c.data == "food_photo_cancel")
@@ -5522,7 +5838,12 @@ async def handle_food_photo_comment(message: Message, state: FSMContext):
         await message.answer(SENSITIVE_MEAL_INPUT_REJECTED_TEXT, parse_mode="HTML")
         return
 
-    await _run_pending_food_photo_analysis(message, state, comment=text)
+    await _run_pending_food_photo_analysis(
+        message,
+        state,
+        comment=text,
+        user_id=str(message.from_user.id),
+    )
 
 
 @router.message(MealEntryStates.waiting_for_photo)
@@ -6112,23 +6433,56 @@ async def _handle_label_photo_analysis(
     image_data = image_bytes.read()
 
     try:
+        validate_ai_image(image_data)
+    except ValueError as error:
+        code = str(error)
+        if code == "image_too_large":
+            await message.answer("Фото слишком большое. Максимальный размер — 10 МБ.")
+        else:
+            await message.answer("Поддерживаются фотографии JPEG, PNG и WebP.")
+        return
+
+    request_id = build_quota_request_id(
+        "nutrition_label",
+        user_id,
+        getattr(message, "message_id", None) or id(message),
+    )
+    reservation = await _reserve_meal_ai_quota(
+        message,
+        user_id=user_id,
+        feature=AIFeature.NUTRITION_LABEL,
+        request_id=request_id,
+        meal_type=meal_type,
+    )
+    if reservation is None:
+        return
+
+    try:
         if provider == "openai":
             label_data = await runner(analyzer, image_data, user_id=user_id, feature="label_analysis")
         elif provider == "gemini_fallback":
-            label_data = await runner(analyzer, image_data, user_id=user_id)
+            label_data = await runner(
+                analyzer,
+                image_data,
+                user_id=user_id,
+                quota_request_id=request_id,
+            )
         else:
             label_data = await runner(analyzer, image_data)
     except Exception as e:
+        ai_quota_service.release(request_id, outcome="provider_error")
         await error_sender(message, e)
         return
 
     if not label_data or "kbju_per_100g" not in label_data:
+        ai_quota_service.release(request_id, outcome="no_label_data")
         await message.answer(
             "⚠️ Не удалось найти КБЖУ на этикетке.\n"
             "Попробуй сделать фото более чётким или используй другой способ."
         )
         return
 
+    ai_quota_service.consume(request_id, outcome="success", result_ref="nutrition_label_draft")
     kbju_per_100g = label_data["kbju_per_100g"]
     package_weight = label_data.get("package_weight")
     found_weight = label_data.get("found_weight", False)
@@ -6156,6 +6510,7 @@ async def _handle_label_photo_analysis(
         "product_name": product_name,
         "entry_date": entry_date.isoformat(),
         "label_save_token": _new_meal_save_token(),
+        "label_quota_request_id": request_id,
         "unit_weight_g": unit_weight_g,
         "unit_name": unit_name,
         "package_units": package_units,
@@ -7785,6 +8140,9 @@ async def meal_product_name_input_value(message: Message, state: FSMContext):
         _render_product_actions_text(product),
         reply_markup=_build_product_actions_keyboard(product_idx),
     )
+    meal_date = getattr(meal, "date", None)
+    if meal_date is not None:
+        await return_to_active_daily_preflight(message, user_id, meal_date)
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_pact_weight:"))
@@ -8309,6 +8667,9 @@ async def _save_kbju_changes_for_product(
         reply_markup=_build_kbju_editor_keyboard(product_idx),
     )
     await callback.answer("✅ КБЖУ сохранены")
+    meal_date = getattr(meal, "date", None)
+    if meal_date is not None:
+        await return_to_active_daily_preflight(callback.message, user_id, meal_date)
     return True
 
 
@@ -8424,6 +8785,9 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
         ),
         edit_existing=True,
     )
+    meal_date = getattr(meal, "date", None)
+    if meal_date is not None:
+        await return_to_active_daily_preflight(callback.message, user_id, meal_date)
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_wdelask:"))
@@ -8596,6 +8960,7 @@ async def delete_meal(callback: CallbackQuery):
             include_back=True,
             changed_meal_type=changed_meal_type,
         )
+        await return_to_active_daily_preflight(callback.message, user_id, target_date)
     else:
         await callback.message.answer("❌ Не удалось удалить запись")
 

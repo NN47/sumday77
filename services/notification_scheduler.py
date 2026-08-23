@@ -42,19 +42,12 @@ SUPPLEMENT_REMIND_LATER_PREFIX = "sup_remind"
 SUPPLEMENT_REMINDER_DELAY = timedelta(minutes=30)
 EVENING_ANALYSIS_MAIN_TEXT = (
     "<b>🌙 Вечерний анализ дня</b>\n\n"
-    "Ты уже добавил все приёмы пищи за сегодня?\n\n"
-    "Если всё на месте — <b>запущу подробный AI-анализ дня</b>:\n"
-    "🍽 питание\n"
-    "🔥 калории\n"
-    "🥩 белок\n"
-    "🏃 активность\n"
-    "⚖️ вес и заметки\n\n"
-    "Готовы?"
+    "Перед подробным AI-анализом проверь питание, воду, шаги, активность и заметку дня. "
+    "Запуск модели начнётся только после твоего подтверждения на экране проверки."
 )
 EVENING_ANALYSIS_REMINDER_TEXT = (
     "⏰ Напоминаю про анализ дня\n\n"
-    "Ты уже добавил все приёмы пищи за сегодня?\n"
-    "Если дневник заполнен — можем запустить подробный AI-анализ дня."
+    "Можно проверить внесённые данные и затем запустить подробный AI-анализ."
 )
 
 
@@ -93,7 +86,7 @@ def build_evening_analysis_start_keyboard(target_date) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Запустить подробный AI-анализ",
+                    text="🧠 Проверить данные и начать",
                     callback_data=f"{EVENING_ANALYSIS_START_PREFIX}:{date_payload}",
                 )
             ],
@@ -108,7 +101,7 @@ def build_evening_analysis_keyboard(target_date) -> InlineKeyboardMarkup:
     keyboard.append(
         [
             InlineKeyboardButton(
-                text="⏰ Напомнить позже",
+                text="⏰ Напомнить через 30 минут",
                 callback_data=f"{EVENING_ANALYSIS_REMIND_PREFIX}:{date_payload}",
             )
         ]
@@ -255,14 +248,11 @@ class NotificationScheduler:
                     .filter(EveningAnalysisNotificationState.user_id == user_id)
                     .first()
                 )
-                if state and state.last_daily_analysis_date == target_date:
-                    return "analysis_done"
-
                 generated_today_exists = (
                     session.query(ActivityAnalysisEntry.id)
                     .filter(ActivityAnalysisEntry.user_id == user_id)
                     .filter(ActivityAnalysisEntry.date == target_date)
-                    .filter(ActivityAnalysisEntry.source == "generated")
+                    .filter(ActivityAnalysisEntry.source != "manual")
                     .first()
                     is not None
                 )
@@ -346,15 +336,11 @@ class NotificationScheduler:
                         session.add(state)
                         session.flush()
 
-                    if state.last_daily_analysis_date == local_today:
-                        state.reminder_due_at = None
-                        continue
-
                     generated_today_exists = (
                         session.query(ActivityAnalysisEntry.id)
                         .filter(ActivityAnalysisEntry.user_id == user.user_id)
                         .filter(ActivityAnalysisEntry.date == local_today)
-                        .filter(ActivityAnalysisEntry.source == "generated")
+                        .filter(ActivityAnalysisEntry.source != "manual")
                         .first()
                         is not None
                     )
@@ -362,6 +348,9 @@ class NotificationScheduler:
                         state.last_daily_analysis_date = local_today
                         state.reminder_due_at = None
                         continue
+                    if state.last_daily_analysis_date == local_today:
+                        # Repair state left by old builds that marked before success.
+                        state.last_daily_analysis_date = None
 
                     if state.reminder_due_at and state.reminder_due_at <= now_utc:
                         reminder_target_date = state.remind_later_date or local_today
@@ -373,11 +362,11 @@ class NotificationScheduler:
                                 session.query(ActivityAnalysisEntry.id)
                                 .filter(ActivityAnalysisEntry.user_id == user.user_id)
                                 .filter(ActivityAnalysisEntry.date == reminder_target_date)
-                                .filter(ActivityAnalysisEntry.source == "generated")
+                                .filter(ActivityAnalysisEntry.source != "manual")
                                 .first()
                                 is not None
                             )
-                            if state.last_daily_analysis_date == reminder_target_date or generated_reminder_date_exists:
+                            if generated_reminder_date_exists:
                                 state.last_daily_analysis_date = reminder_target_date
                                 state.reminder_due_at = None
                                 continue

@@ -239,6 +239,7 @@ class MealCompletionComment(Base):
     estimated_cost_usd = Column(Float, nullable=True)
     status = Column(String, nullable=False, default="success", index=True)
     error_message = Column(Text, nullable=True)
+    quota_request_id = Column(String(160), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
@@ -386,7 +387,26 @@ class ActivityAnalysisEntry(Base):
     analysis_text = Column(Text, nullable=False)
     date = Column(Date, default=date.today)
     source = Column(String, nullable=False, default="manual")
+    status = Column(String(24), nullable=False, default="success", index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    analyzed_at = Column(DateTime, nullable=True)
+    plan_key = Column(String, nullable=True)
+    quota_request_id = Column(String(160), nullable=True, index=True)
+    data_snapshot_hash = Column(String(64), nullable=True)
+
+
+class DailyAnalysisPreparationSession(Base):
+    """Устойчивая навигационная сессия preflight анализа дня."""
+
+    __tablename__ = "daily_analysis_preparation_sessions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, unique=True, nullable=False, index=True)
+    target_date = Column(Date, nullable=False, index=True)
+    origin = Column(String(32), nullable=False, default="menu")
+    active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class UserEvent(Base):
@@ -451,6 +471,119 @@ class AIUsageLog(Base):
     estimated_cost_usd = Column(Float, nullable=True)
     error_message = Column(Text, nullable=True)
     raw_metadata = Column(JSON, nullable=True)
+
+
+class UserPlanAssignment(Base):
+    """Тариф пользователя; отсутствие строки означает бесплатный тариф."""
+
+    __tablename__ = "user_plan_assignments"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    plan_key = Column(String(40), nullable=False, default="free", index=True)
+    status = Column(String(24), nullable=False, default="active", index=True)
+    starts_at = Column(DateTime, nullable=True)
+    ends_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AIQuotaCounter(Base):
+    """Атомарный счётчик пользовательской квоты за один лимитный день."""
+
+    __tablename__ = "ai_quota_counters"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "feature_key",
+            "period_key",
+            name="uq_ai_quota_counter_user_feature_period",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    plan_key = Column(String(40), nullable=False, index=True)
+    feature_key = Column(String(64), nullable=False, index=True)
+    period_key = Column(Date, nullable=False, index=True)
+    limit_value = Column(Integer, nullable=False)
+    used_count = Column(Integer, nullable=False, default=0)
+    reserved_count = Column(Integer, nullable=False, default=0)
+    blocked_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AIAttemptCounter(Base):
+    """Счётчик отправленных провайдеру попыток по антиспам-группе."""
+
+    __tablename__ = "ai_attempt_counters"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "group_key",
+            "period_key",
+            name="uq_ai_attempt_counter_user_group_period",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    group_key = Column(String(64), nullable=False, index=True)
+    period_key = Column(Date, nullable=False, index=True)
+    attempt_limit = Column(Integer, nullable=False)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    blocked_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AIGlobalDailyCounter(Base):
+    """Глобальный аварийный счётчик пользовательских AI-операций."""
+
+    __tablename__ = "ai_global_daily_counters"
+
+    id = Column(Integer, primary_key=True)
+    period_key = Column(Date, unique=True, nullable=False, index=True)
+    attempt_limit = Column(Integer, nullable=False)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    blocked_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AIQuotaOperation(Base):
+    """Идемпотентная квотная операция: reserve -> consumed/released/expired."""
+
+    __tablename__ = "ai_quota_operations"
+
+    id = Column(Integer, primary_key=True)
+    request_id = Column(String(160), unique=True, nullable=False, index=True)
+    user_id = Column(String, nullable=False, index=True)
+    plan_key = Column(String(40), nullable=False, index=True)
+    feature_key = Column(String(64), nullable=False, index=True)
+    period_key = Column(Date, nullable=False, index=True)
+    status = Column(String(24), nullable=False, default="reserved", index=True)
+    outcome = Column(String(64), nullable=True, index=True)
+    provider_started = Column(Boolean, nullable=False, default=False)
+    provider_attempt_count = Column(Integer, nullable=False, default=0)
+    result_ref = Column(String(160), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class AIQuotaActiveLock(Base):
+    """Межпроцессная блокировка: у пользователя только одна активная AI-операция."""
+
+    __tablename__ = "ai_quota_active_locks"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, unique=True, nullable=False, index=True)
+    request_id = Column(String(160), nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class GeminiAccount(Base):
