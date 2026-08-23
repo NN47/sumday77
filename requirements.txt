@@ -20,3 +20,6 @@ openai==2.54.0
 # OCR
 pytesseract
 Pillow
+
+# Local CPU-only sensitive text NER
+natasha==1.6.0

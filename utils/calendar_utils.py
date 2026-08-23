@@ -6,6 +6,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from config import MONTH_NAMES
 from utils.keyboards import calendar_back_menu, push_menu_stack
 from database.repositories import (
+    ActivityRepository,
     WorkoutRepository,
     MealRepository,
     SupplementRepository,
@@ -39,6 +40,33 @@ def get_month_workout_days(user_id: str, year: int, month: int) -> set[int]:
     
     workouts = WorkoutRepository.get_workouts_for_period(user_id, start_date, end_date)
     return {w.date.day for w in workouts if w.date.month == month}
+
+
+def get_month_activity_days(user_id: str, year: int, month: int) -> set[int]:
+    """Дни с любым видом активности из новой модели данных."""
+    start_date = date(year, month, 1)
+    last_day = calendar.monthrange(year, month)[1]
+    end_date = date(year, month, last_day)
+    timed = ActivityRepository.get_timed_activities_for_period(user_id, start_date, end_date)
+    workouts = ActivityRepository.get_workout_sessions_for_period(user_id, start_date, end_date)
+    steps = ActivityRepository.get_steps_for_period(user_id, start_date, end_date)
+    return {
+        *(item.entry_date.day for item in timed),
+        *(item.entry_date.day for item in workouts if item.status == "completed"),
+        *(item.entry_date.day for item in steps),
+    }
+
+
+def build_activity_calendar_keyboard(user_id: str, year: int, month: int) -> InlineKeyboardMarkup:
+    """Календарь нового раздела активности с независимым callback-префиксом."""
+    return build_calendar_keyboard(
+        user_id=user_id,
+        year=year,
+        month=month,
+        callback_prefix="actcal",
+        marker="💪",
+        get_days_func=get_month_activity_days,
+    )
 
 
 def get_month_meal_days(user_id: str, year: int, month: int) -> set[int]:

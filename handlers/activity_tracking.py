@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date
 import html
 import math
-import re
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -18,17 +17,18 @@ from aiogram.types import (
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 from sqlalchemy.exc import SQLAlchemyError
 
-from database.repositories import ActivityRepository, ActiveWorkoutExistsError, WeightRepository
+from database.repositories import ActivityRepository, WorkoutDraftExistsError, WeightRepository
 from services.activity_energy_service import (
     ActivityValidationError,
     DEFAULT_WEIGHT_KG,
     calculate_steps_energy,
     calculate_timed_activity_energy,
     calculate_workout_energy,
-    estimate_quick_workout_duration_seconds,
+    estimate_workout_duration_seconds,
     get_daily_activity_energy_summary,
 )
 from states.user_states import ActivityTrackingStates
@@ -36,11 +36,13 @@ from utils.activity_catalog import (
     EXERCISE_BY_CODE,
     EXERCISE_CATEGORIES,
     EXERCISE_CATEGORY_BY_CODE,
+    EXERCISES,
     INTENSITY_LABELS,
     TIMED_ACTIVITIES,
     TIMED_ACTIVITY_BY_CODE,
     TIMED_CATEGORIES,
     TIMED_CATEGORY_BY_CODE,
+    TIMED_ACTIVITY_SEARCH_ALIASES,
     WORKOUT_INTENSITY_LABELS,
     exercises_for_category,
     timed_activities_for_category,
@@ -53,6 +55,7 @@ from utils.keyboards import (
     push_menu_stack,
     training_menu,
 )
+from utils.calendar_utils import build_activity_calendar_keyboard, show_calendar_back_button
 
 
 router = Router(name="activity_tracking")
@@ -157,7 +160,22 @@ async def _edit_or_answer(message: Message, text: str, keyboard: InlineKeyboardM
     await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
 
-def format_activity_overview(user_id: str, target_date: date) -> tuple[str, InlineKeyboardMarkup]:
+async def _hide_section_reply_keyboard(message: Message) -> None:
+    """Скрывает меню раздела перед сценарием с inline-кнопками."""
+    placeholder = await message.answer(
+        "\u2063", reply_markup=ReplyKeyboardRemove(), disable_notification=True,
+    )
+    try:
+        await placeholder.delete()
+    except (TelegramBadRequest, AttributeError):
+        pass
+
+
+def format_activity_overview(
+    user_id: str, target_date: date, *, from_calendar: bool | None = None,
+) -> tuple[str, InlineKeyboardMarkup]:
+    if from_calendar is None:
+        from_calendar = target_date != date.today()
     timed = ActivityRepository.get_timed_activities_for_day(user_id, target_date)
     sessions = [
         item for item in ActivityRepository.get_workout_sessions_for_day(user_id, target_date)
@@ -173,7 +191,6 @@ def format_activity_overview(user_id: str, target_date: date) -> tuple[str, Inli
         steps_text = f"{steps.steps:,}".replace(",", " ")
         overlap_note = f", без повторного учёта {summary.overlapping_steps:,}".replace(",", " ") if summary.overlapping_steps else ""
         lines.append(f"🚶 Шаги — {steps_text} (~{summary.steps_gross_calories:.0f} ккал{overlap_note})")
-        buttons.append([InlineKeyboardButton(text=f"🚶 Шаги · {steps_text}", callback_data=f"act:steps_detail:{target_date.isoformat()}")])
     else:
         lines.append("🚶 Шаги — не добавлены")
 
@@ -185,21 +202,13 @@ def format_activity_overview(user_id: str, target_date: date) -> tuple[str, Inli
             f"{icon} {html.escape(entry.activity_name_snapshot)} — {_format_number(entry.duration_minutes)} мин, "
             f"{intensity} (~{entry.gross_calories:.0f} ккал)"
         )
-        buttons.append([InlineKeyboardButton(
-            text=f"{icon} {entry.activity_name_snapshot} · {_format_number(entry.duration_minutes)} мин",
-            callback_data=f"act:timed_detail:{entry.id}",
-        )])
 
     for session in sessions:
-        title = "Быстрое упражнение" if session.session_kind == "quick" else "Силовая тренировка"
+        title = "Силовая тренировка"
         lines.extend([
             f"🏋️ {title} — {_format_duration(session.duration_seconds or 0)}",
             f"   {session.exercise_count} упр. · {session.set_count} подх. · ~{session.gross_calories:.0f} ккал",
         ])
-        buttons.append([InlineKeyboardButton(
-            text=f"🏋️ {title} · {_format_duration(session.duration_seconds or 0)}",
-            callback_data=f"act:workout_detail:{session.id}",
-        )])
 
     if not timed and not sessions and steps is None:
         lines.extend(["", "Пока ничего не добавлено."])
@@ -208,13 +217,20 @@ def format_activity_overview(user_id: str, target_date: date) -> tuple[str, Inli
         f"🔥 <b>Всего потрачено: ~{summary.gross_calories:.0f} ккал</b>",
         f"🎯 <b>Учтено в дневной норме: +{summary.credited_calories:.0f} ккал</b>",
     ])
-    nav = [
-        InlineKeyboardButton(text="◀️", callback_data=f"act:day:{(target_date - timedelta(days=1)).isoformat()}"),
-        InlineKeyboardButton(text=target_date.strftime("%d.%m"), callback_data="act:noop"),
-    ]
-    if target_date < date.today():
-        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"act:day:{(target_date + timedelta(days=1)).isoformat()}"))
-    buttons.append(nav)
+    if timed or sessions:
+        buttons.append([InlineKeyboardButton(
+            text="✏️ Редактировать активность",
+            callback_data=f"act:edit_day:{target_date.isoformat()}",
+        )])
+    buttons.append([InlineKeyboardButton(
+        text="👣 Добавить шаги",
+        callback_data=f"act:steps_start:{target_date.isoformat()}",
+    )])
+    if from_calendar:
+        buttons.append([InlineKeyboardButton(
+            text="⬅️ Назад к календарю активности",
+            callback_data=f"actcal_back:{target_date.year}-{target_date.month:02d}",
+        )])
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -234,28 +250,120 @@ async def open_activity(message: Message, state: FSMContext) -> None:
     await show_activity_main(message, str(message.from_user.id))
 
 
-@router.callback_query(F.data == "act:noop")
-async def noop(callback: CallbackQuery) -> None:
+@router.callback_query(F.data == "act:main")
+async def return_to_activity_main(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
+    await state.clear()
+    await show_activity_main(callback.message, str(callback.from_user.id))
 
 
-@router.callback_query(F.data.startswith("act:day:"))
-async def open_activity_day(callback: CallbackQuery) -> None:
+@router.callback_query(F.data.startswith("act:steps_start:"))
+async def start_steps_from_report(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    target = _safe_date(callback.data.rsplit(":", 1)[-1])
+    await start_steps_flow(
+        callback.message, state, str(callback.from_user.id), target,
+    )
+
+
+@router.callback_query(F.data.startswith("act:edit_day:"))
+async def open_activity_edit_list(callback: CallbackQuery) -> None:
+    await callback.answer()
+    target = _safe_date(callback.data.rsplit(":", 1)[-1])
+    user_id = str(callback.from_user.id)
+    timed = ActivityRepository.get_timed_activities_for_day(user_id, target)
+    workouts = [
+        item for item in ActivityRepository.get_workout_sessions_for_day(user_id, target)
+        if item.status == "completed"
+    ]
+    rows: list[list[InlineKeyboardButton]] = []
+    for entry in timed:
+        rows.append([InlineKeyboardButton(
+            text=f"✏️ {entry.activity_name_snapshot} · {_format_number(entry.duration_minutes)} мин",
+            callback_data=f"act:timed_detail:{entry.id}",
+        )])
+    for session in workouts:
+        rows.append([InlineKeyboardButton(
+            text=f"✏️ Силовая тренировка · {_format_duration(session.duration_seconds or 0)}",
+            callback_data=f"act:workout_detail:{session.id}",
+        )])
+    rows.append([InlineKeyboardButton(
+        text="⬅️ К отчёту за день", callback_data=f"act:report:{target.isoformat()}",
+    )])
+    await _edit_or_answer(
+        callback.message,
+        "✏️ <b>Выбери активность для редактирования:</b>",
+        InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@router.callback_query(F.data.startswith("act:report:"))
+async def return_to_activity_report(callback: CallbackQuery) -> None:
     await callback.answer()
     target = _safe_date(callback.data.rsplit(":", 1)[-1])
     text, keyboard = format_activity_overview(str(callback.from_user.id), target)
     await _edit_or_answer(callback.message, text, keyboard)
 
 
+@router.message(F.text == "📅 Календарь активности")
+async def open_activity_calendar(message: Message) -> None:
+    today = date.today()
+    await show_calendar_back_button(message)
+    await message.answer(
+        "📆 Выбери день, чтобы посмотреть или изменить активность:",
+        reply_markup=build_activity_calendar_keyboard(
+            str(message.from_user.id), today.year, today.month,
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("actcal_nav:"))
+async def navigate_activity_calendar(callback: CallbackQuery) -> None:
+    await callback.answer()
+    year, month = map(int, callback.data.split(":", 1)[1].split("-"))
+    await _edit_or_answer(
+        callback.message,
+        "📆 Выбери день, чтобы посмотреть или изменить активность:",
+        build_activity_calendar_keyboard(str(callback.from_user.id), year, month),
+    )
+
+
+@router.callback_query(F.data.startswith("actcal_back:"))
+async def back_to_activity_calendar(callback: CallbackQuery) -> None:
+    await callback.answer()
+    year, month = map(int, callback.data.split(":", 1)[1].split("-"))
+    await _edit_or_answer(
+        callback.message,
+        "📆 Выбери день, чтобы посмотреть или изменить активность:",
+        build_activity_calendar_keyboard(str(callback.from_user.id), year, month),
+    )
+
+
+@router.callback_query(F.data.startswith("actcal_day:"))
+async def open_activity_calendar_day(callback: CallbackQuery) -> None:
+    await callback.answer()
+    target = _safe_date(callback.data.split(":", 1)[1])
+    text, keyboard = format_activity_overview(
+        str(callback.from_user.id), target, from_calendar=True,
+    )
+    await _edit_or_answer(callback.message, text, keyboard)
+
+
+@router.callback_query(F.data == "act:noop")
+async def noop(callback: CallbackQuery) -> None:
+    await callback.answer()
+
+
 def _timed_categories_keyboard() -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(
         text=f"{category.icon} {category.name}", callback_data=f"act:tcat:{category.code}:0"
     )] for category in TIMED_CATEGORIES]
-    rows.append([InlineKeyboardButton(text="✖️ Закрыть", callback_data="act:close")])
+    rows.insert(0, [InlineKeyboardButton(text="🔎 Поиск", callback_data="act:tsearch")])
+    rows.append([InlineKeyboardButton(text="⬅️ В раздел активности", callback_data="act:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@router.message(F.text == "⏱ Добавить по времени")
+@router.message(F.text == "⏱ Активность по времени")
 async def open_timed_categories(message: Message, state: FSMContext) -> None:
     await start_timed_activity_flow(message, state, str(message.from_user.id), date.today())
 
@@ -264,17 +372,19 @@ async def start_timed_activity_flow(
     message: Message, state: FSMContext, user_id: str, target_date: date | None = None,
 ) -> None:
     await state.clear()
+    await _hide_section_reply_keyboard(message)
     await state.update_data(entry_date=(target_date or date.today()).isoformat(), activity_user_id=str(user_id))
     try:
         recent_codes = ActivityRepository.get_recent_timed_activity_codes(str(user_id))
     except SQLAlchemyError:
         recent_codes = []
-    rows = []
+    category_rows = _timed_categories_keyboard().inline_keyboard
+    rows = [category_rows[0]]
     for code in recent_codes:
         item = TIMED_ACTIVITY_BY_CODE.get(code)
         if item:
             rows.append([InlineKeyboardButton(text=f"⭐ {item.name}", callback_data=f"act:tpick:{item.code}")])
-    rows.extend(_timed_categories_keyboard().inline_keyboard)
+    rows.extend(category_rows[1:])
     intro = "⏱ <b>Активность по времени</b>\n\nВыбери вид активности:"
     if recent_codes:
         intro += "\n\n⭐ Сначала показаны часто используемые."
@@ -312,9 +422,90 @@ async def open_timed_category(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == "act:timed_categories")
-async def reopen_timed_categories(callback: CallbackQuery) -> None:
+async def reopen_timed_categories(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
+    await state.set_state(None)
     await _edit_or_answer(callback.message, "⏱ <b>Активность по времени</b>\n\nВыбери категорию:", _timed_categories_keyboard())
+
+
+def _timed_search_key(value: str) -> str:
+    return " ".join((value or "").casefold().replace("ё", "е").replace("-", " ").split())
+
+
+def _timed_search_matches(query: str):
+    needle = _timed_search_key(query)
+    if not needle:
+        return []
+    matches = []
+    for activity in TIMED_ACTIVITIES:
+        values = (activity.name, *TIMED_ACTIVITY_SEARCH_ALIASES.get(activity.code, ()))
+        if any(needle in _timed_search_key(value) for value in values):
+            matches.append(activity)
+    return sorted(matches, key=lambda item: _timed_search_key(item.name))
+
+
+def _timed_search_keyboard(matches, page: int) -> InlineKeyboardMarkup:
+    pages = max(math.ceil(len(matches) / PAGE_SIZE), 1)
+    page = min(max(page, 0), pages - 1)
+    visible = matches[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+    rows = [[InlineKeyboardButton(
+        text=f"{item.emoji} {item.name}".strip(), callback_data=f"act:tpick:{item.code}",
+    )] for item in visible]
+    if pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀️", callback_data=f"act:tsearch_page:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data="act:noop"))
+        if page + 1 < pages:
+            nav.append(InlineKeyboardButton(text="▶️", callback_data=f"act:tsearch_page:{page + 1}"))
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="⬅️ К категориям", callback_data="act:timed_categories")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "act:tsearch")
+async def start_timed_search(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.set_state(ActivityTrackingStates.searching_timed_activity)
+    await _edit_or_answer(
+        callback.message,
+        "🔎 <b>Поиск активности</b>\n\nВведи название или его часть, например: <i>бокс</i>",
+        InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⬅️ К категориям", callback_data="act:timed_categories"),
+        ]]),
+    )
+
+
+@router.message(ActivityTrackingStates.searching_timed_activity)
+async def receive_timed_search(message: Message, state: FSMContext) -> None:
+    query = (message.text or "").strip()
+    matches = _timed_search_matches(query)
+    await state.update_data(timed_search_query=query)
+    if not matches:
+        await message.answer(
+            "Ничего не найдено. Введи другое название.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⬅️ К категориям", callback_data="act:timed_categories"),
+            ]]),
+        )
+        return
+    await message.answer(
+        f"🔎 Найдено: {len(matches)}. Выбери активность:",
+        reply_markup=_timed_search_keyboard(matches, 0),
+    )
+
+
+@router.callback_query(F.data.startswith("act:tsearch_page:"))
+async def paginate_timed_search(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    data = await state.get_data()
+    matches = _timed_search_matches(str(data.get("timed_search_query") or ""))
+    page = int(callback.data.rsplit(":", 1)[-1])
+    await _edit_or_answer(
+        callback.message,
+        f"🔎 Найдено: {len(matches)}. Выбери активность:",
+        _timed_search_keyboard(matches, page),
+    )
 
 
 def _intensity_keyboard(activity_code: str, *, edit_entry_id: int | None = None) -> InlineKeyboardMarkup:
@@ -377,6 +568,30 @@ async def pick_timed_intensity(callback: CallbackQuery, state: FSMContext) -> No
 
 @router.message(StateFilter(ActivityTrackingStates), F.text == "⬅️ Назад")
 async def cancel_activity_input(message: Message, state: FSMContext) -> None:
+    current_state = await state.get_state()
+    workout_input_states = {
+        ActivityTrackingStates.entering_set_repetitions.state,
+        ActivityTrackingStates.entering_set_load.state,
+        ActivityTrackingStates.entering_set_duration.state,
+        ActivityTrackingStates.entering_set_distance.state,
+    }
+    if current_state in workout_input_states:
+        data = await state.get_data()
+        session_id = int(data.get("session_id") or 0)
+        await state.clear()
+        if session_id:
+            ActivityRepository.remove_empty_session_exercises(session_id, str(message.from_user.id))
+        await show_workout_draft(message, str(message.from_user.id))
+        return
+    if current_state == ActivityTrackingStates.entering_timed_duration.state:
+        await state.set_state(None)
+        await _hide_section_reply_keyboard(message)
+        await message.answer(
+            "⏱ <b>Активность по времени</b>\n\nВыбери категорию:",
+            reply_markup=_timed_categories_keyboard(),
+            parse_mode="HTML",
+        )
+        return
     await state.clear()
     await show_activity_main(message, str(message.from_user.id))
 
@@ -560,7 +775,7 @@ async def show_steps_detail(callback: CallbackQuery) -> None:
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Изменить", callback_data=f"act:steps_edit:{target_date.isoformat()}")],
         [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"act:steps_delete_confirm:{target_date.isoformat()}")],
-        [InlineKeyboardButton(text="⬅️ К дню", callback_data=f"act:day:{target_date.isoformat()}")],
+        [InlineKeyboardButton(text="⬅️ К отчёту за день", callback_data=f"act:report:{target_date.isoformat()}")],
     ])
     await _edit_or_answer(callback.message, text, keyboard)
 
@@ -594,24 +809,6 @@ async def delete_steps(callback: CallbackQuery) -> None:
     await _edit_or_answer(callback.message, f"✅ Шаги удалены\n\n{text}", keyboard)
 
 
-@router.message(F.text == "📅 История")
-async def show_history(message: Message) -> None:
-    rows = []
-    for offset in range(14):
-        target = date.today() - timedelta(days=offset)
-        summary = get_daily_activity_energy_summary(str(message.from_user.id), target)
-        label = "Сегодня" if offset == 0 else target.strftime("%d.%m.%Y")
-        rows.append([InlineKeyboardButton(
-            text=f"{label} · ~{summary.gross_calories:.0f} ккал",
-            callback_data=f"act:day:{target.isoformat()}",
-        )])
-    await message.answer(
-        "📅 <b>История активности</b>\n\nВыбери день:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-        parse_mode="HTML",
-    )
-
-
 def _timed_detail_text(entry) -> str:
     config = TIMED_ACTIVITY_BY_CODE.get(entry.activity_code)
     icon = config.emoji if config and config.emoji else "⏱"
@@ -633,7 +830,7 @@ def _timed_detail_keyboard(entry) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="🔥 Изменить интенсивность", callback_data=f"act:tedit_int_menu:{entry.id}")])
     rows.extend([
         [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"act:tdelete_confirm:{entry.id}")],
-        [InlineKeyboardButton(text="⬅️ К дню", callback_data=f"act:day:{entry.entry_date.isoformat()}")],
+        [InlineKeyboardButton(text="⬅️ К отчёту за день", callback_data=f"act:report:{entry.entry_date.isoformat()}")],
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -760,11 +957,12 @@ async def delete_timed_entry(callback: CallbackQuery) -> None:
 
 
 def _exercise_categories_keyboard(mode: str = "workout") -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(
+    rows = [[InlineKeyboardButton(text="🔎 Поиск упражнения", callback_data="act:esearch")]]
+    rows.extend([[InlineKeyboardButton(
         text=f"{category.icon} {category.name}",
         callback_data=f"act:ecat:{mode}:{category.code}:0",
-    )] for category in EXERCISE_CATEGORIES]
-    rows.append([InlineKeyboardButton(text="⬅️ К тренировке", callback_data="act:workout_screen")])
+    )] for category in EXERCISE_CATEGORIES])
+    rows.append([InlineKeyboardButton(text="⬅️ К тренировке", callback_data="act:workout_draft")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -782,6 +980,35 @@ def _exercise_list_keyboard(mode: str, category_code: str, page: int) -> InlineK
         nav.append(InlineKeyboardButton(text="▶️", callback_data=f"act:ecat:{mode}:{category_code}:{page + 1}"))
     rows.append(nav)
     rows.append([InlineKeyboardButton(text="⬅️ Категории", callback_data=f"act:ecategories:{mode}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _exercise_search_matches(query: str):
+    normalized = _timed_search_key(query)
+    if not normalized:
+        return []
+    return sorted(
+        (item for item in EXERCISES if normalized in _timed_search_key(item.name)),
+        key=lambda item: (_timed_search_key(item.name).find(normalized), _timed_search_key(item.name)),
+    )
+
+
+def _exercise_search_keyboard(query: str, page: int) -> InlineKeyboardMarkup:
+    matches = _exercise_search_matches(query)
+    pages = max(math.ceil(len(matches) / PAGE_SIZE), 1)
+    page = min(max(page, 0), pages - 1)
+    visible = matches[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+    rows = [[InlineKeyboardButton(text=item.name, callback_data=f"act:epick:workout:{item.code}")] for item in visible]
+    if matches:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀️", callback_data=f"act:esearch_page:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data="act:noop"))
+        if page + 1 < pages:
+            nav.append(InlineKeyboardButton(text="▶️", callback_data=f"act:esearch_page:{page + 1}"))
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🔎 Новый поиск", callback_data="act:esearch")])
+    rows.append([InlineKeyboardButton(text="⬅️ Категории", callback_data="act:ecategories:workout")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -814,12 +1041,11 @@ def _format_set(item, load_mode: str = "none") -> str:
     return result
 
 
-def _active_workout_text(session, user_id: str) -> str:
+def _workout_draft_text(session, user_id: str) -> str:
     exercises, grouped, _ = _sets_by_exercise(session.id, user_id)
-    status = "⏸ На паузе" if session.status == "paused" else "▶️ Идёт"
     lines = [
         "🏋️ <b>Тренировка</b>",
-        f"{status} · {_format_duration(ActivityRepository.elapsed_seconds(session))}",
+        f"📅 {session.entry_date.strftime('%d.%m.%Y')}",
         "",
     ]
     if not exercises:
@@ -836,7 +1062,7 @@ def _active_workout_text(session, user_id: str) -> str:
     return "\n".join(lines)
 
 
-def _active_workout_keyboard(session, user_id: str) -> InlineKeyboardMarkup:
+def _workout_draft_keyboard(session, user_id: str) -> InlineKeyboardMarkup:
     exercises, grouped, sets = _sets_by_exercise(session.id, user_id)
     rows = [[InlineKeyboardButton(text="➕ Добавить упражнение", callback_data="act:ecategories:workout")]]
     for exercise in exercises:
@@ -851,80 +1077,66 @@ def _active_workout_keyboard(session, user_id: str) -> InlineKeyboardMarkup:
             )])
     if sets:
         rows.append([InlineKeyboardButton(text="🔁 Повторить последний подход", callback_data=f"act:repeat_set:{session.id}")])
-    if session.status == "paused":
-        rows.append([InlineKeyboardButton(text="▶️ Продолжить", callback_data=f"act:resume:{session.id}")])
-    else:
-        rows.append([InlineKeyboardButton(text="⏸ Пауза", callback_data=f"act:pause:{session.id}")])
     rows.extend([
-        [InlineKeyboardButton(text="✅ Завершить", callback_data=f"act:finish_prompt:{session.id}")],
+        [InlineKeyboardButton(text="✅ Завершить тренировку", callback_data=f"act:finish_prompt:{session.id}")],
         [InlineKeyboardButton(text="✖️ Отменить", callback_data=f"act:cancel_confirm:{session.id}")],
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def show_active_workout(message: Message, user_id: str, prefix: str | None = None) -> None:
-    session = ActivityRepository.get_active_workout(user_id)
+async def show_workout_draft(message: Message, user_id: str, prefix: str | None = None) -> None:
+    await _hide_section_reply_keyboard(message)
+    session = ActivityRepository.get_workout_draft(user_id)
     if session is None:
-        await message.answer("Активная тренировка не найдена.", reply_markup=training_menu)
+        await message.answer("Черновик тренировки не найден.")
         return
-    text = _active_workout_text(session, user_id)
+    ActivityRepository.remove_empty_session_exercises(session.id, user_id)
+    session = ActivityRepository.get_workout_draft(user_id)
+    text = _workout_draft_text(session, user_id)
     if prefix:
         text = f"{prefix}\n\n{text}"
-    await message.answer(text, reply_markup=_active_workout_keyboard(session, user_id), parse_mode="HTML")
+    await message.answer(text, reply_markup=_workout_draft_keyboard(session, user_id), parse_mode="HTML")
 
 
-@router.message(F.text == "🏋️ Начать тренировку")
+@router.message(F.text == "🏋️ Тренировка")
 async def start_workout(message: Message, state: FSMContext) -> None:
     await state.clear()
+    await _hide_section_reply_keyboard(message)
     user_id = str(message.from_user.id)
-    existing = ActivityRepository.get_active_workout(user_id)
+    existing = ActivityRepository.get_workout_draft(user_id)
     if existing is not None:
-        await show_active_workout(message, user_id, prefix="У тебя уже есть незавершённая тренировка.")
+        await show_workout_draft(message, user_id, prefix="Продолжаем незавершённую тренировку.")
         return
     weight, weight_source = _weight_snapshot(user_id)
-    ActivityRepository.create_workout_session(
-        user_id=user_id, entry_date=date.today(), weight_kg=weight,
-        weight_source=weight_source, session_kind="workout",
-        duration_source="timer", started_at=datetime.utcnow(),
-    )
-    await show_active_workout(message, user_id, prefix="✅ Таймер запущен")
-
-
-@router.callback_query(F.data == "act:workout_screen")
-async def reopen_active_workout(callback: CallbackQuery) -> None:
-    await callback.answer()
-    session = ActivityRepository.get_active_workout(str(callback.from_user.id))
-    if session is None:
-        await callback.answer("Активная тренировка не найдена", show_alert=True)
+    try:
+        ActivityRepository.create_workout_session(
+            user_id=user_id, entry_date=date.today(), weight_kg=weight,
+            weight_source=weight_source,
+        )
+    except WorkoutDraftExistsError:
+        await show_workout_draft(message, user_id)
         return
+    await state.update_data(exercise_mode="workout")
+    await message.answer(
+        "🏋️ <b>Тренировка</b>\n\nВыбери категорию упражнения:",
+        reply_markup=_exercise_categories_keyboard("workout"), parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "act:workout_draft")
+async def reopen_workout_draft(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.clear()
+    session = ActivityRepository.get_workout_draft(str(callback.from_user.id))
+    if session is None:
+        await callback.answer("Черновик тренировки не найден", show_alert=True)
+        return
+    ActivityRepository.remove_empty_session_exercises(session.id, str(callback.from_user.id))
+    session = ActivityRepository.get_workout_draft(str(callback.from_user.id))
     await _edit_or_answer(
         callback.message,
-        _active_workout_text(session, str(callback.from_user.id)),
-        _active_workout_keyboard(session, str(callback.from_user.id)),
-    )
-
-
-@router.callback_query(F.data.startswith("act:pause:"))
-async def pause_workout(callback: CallbackQuery) -> None:
-    await callback.answer()
-    session_id = int(callback.data.rsplit(":", 1)[-1])
-    ActivityRepository.pause_workout(session_id, str(callback.from_user.id))
-    session = ActivityRepository.get_active_workout(str(callback.from_user.id))
-    await _edit_or_answer(
-        callback.message, _active_workout_text(session, str(callback.from_user.id)),
-        _active_workout_keyboard(session, str(callback.from_user.id)),
-    )
-
-
-@router.callback_query(F.data.startswith("act:resume:"))
-async def resume_workout(callback: CallbackQuery) -> None:
-    await callback.answer()
-    session_id = int(callback.data.rsplit(":", 1)[-1])
-    ActivityRepository.resume_workout(session_id, str(callback.from_user.id))
-    session = ActivityRepository.get_active_workout(str(callback.from_user.id))
-    await _edit_or_answer(
-        callback.message, _active_workout_text(session, str(callback.from_user.id)),
-        _active_workout_keyboard(session, str(callback.from_user.id)),
+        _workout_draft_text(session, str(callback.from_user.id)),
+        _workout_draft_keyboard(session, str(callback.from_user.id)),
     )
 
 
@@ -936,16 +1148,17 @@ async def repeat_last_set(callback: CallbackQuery) -> None:
     if repeated is None:
         await callback.answer("Сначала добавь подход", show_alert=True)
         return
-    session = ActivityRepository.get_active_workout(str(callback.from_user.id))
+    session = ActivityRepository.get_workout_draft(str(callback.from_user.id))
     await _edit_or_answer(
-        callback.message, "✅ Подход повторён\n\n" + _active_workout_text(session, str(callback.from_user.id)),
-        _active_workout_keyboard(session, str(callback.from_user.id)),
+        callback.message, "✅ Подход повторён\n\n" + _workout_draft_text(session, str(callback.from_user.id)),
+        _workout_draft_keyboard(session, str(callback.from_user.id)),
     )
 
 
 @router.callback_query(F.data == "act:ecategories:workout")
 async def open_exercise_categories(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
+    await state.set_state(None)
     await state.update_data(exercise_mode="workout")
     await _edit_or_answer(callback.message, "🏋️ <b>Добавить упражнение</b>\n\nВыбери категорию:", _exercise_categories_keyboard("workout"))
 
@@ -954,8 +1167,62 @@ async def open_exercise_categories(callback: CallbackQuery, state: FSMContext) -
 async def open_exercise_categories_for_mode(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     mode = callback.data.rsplit(":", 1)[-1]
+    await state.set_state(None)
     await state.update_data(exercise_mode=mode)
     await _edit_or_answer(callback.message, "Выбери категорию упражнения:", _exercise_categories_keyboard(mode))
+
+
+@router.callback_query(F.data == "act:esearch")
+async def start_exercise_search(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.update_data(exercise_mode="workout", exercise_search_query=None)
+    await state.set_state(ActivityTrackingStates.searching_exercise)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Категории", callback_data="act:ecategories:workout")],
+    ])
+    await _edit_or_answer(
+        callback.message,
+        "🔎 <b>Поиск упражнения</b>\n\nВведи название, например: <i>отжимания</i> или <i>жим штанги</i>.",
+        keyboard,
+    )
+
+
+@router.message(ActivityTrackingStates.searching_exercise)
+async def receive_exercise_search(message: Message, state: FSMContext) -> None:
+    query = (message.text or "").strip()
+    if len(_timed_search_key(query)) < 2:
+        await message.answer("Введи хотя бы две буквы названия упражнения.")
+        return
+    await state.update_data(exercise_search_query=query)
+    matches = _exercise_search_matches(query)
+    if not matches:
+        await message.answer(
+            f"По запросу «{html.escape(query)}» ничего не найдено.",
+            reply_markup=_exercise_search_keyboard(query, 0),
+            parse_mode="HTML",
+        )
+        return
+    await message.answer(
+        f"🔎 <b>Результаты поиска:</b> {html.escape(query)}",
+        reply_markup=_exercise_search_keyboard(query, 0),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("act:esearch_page:"))
+async def paginate_exercise_search(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    data = await state.get_data()
+    query = str(data.get("exercise_search_query") or "")
+    if not query:
+        await callback.answer("Повтори поиск", show_alert=True)
+        return
+    page = int(callback.data.rsplit(":", 1)[-1])
+    await _edit_or_answer(
+        callback.message,
+        f"🔎 <b>Результаты поиска:</b> {html.escape(query)}",
+        _exercise_search_keyboard(query, page),
+    )
 
 
 @router.callback_query(F.data.startswith("act:ecat:"))
@@ -975,10 +1242,14 @@ async def open_exercise_category(callback: CallbackQuery) -> None:
 
 def _load_prompt(config) -> str:
     if config.load_input_mode == "per_item":
-        return "Введи вес одного снаряда в килограммах:"
+        return "Введи вес одного снаряда (одной гантели или гири) в килограммах:"
     if config.load_input_mode == "assistance":
         return "Введи вес помощи тренажёра в килограммах:"
-    return "Введи общий рабочий вес в килограммах, включая гриф:"
+    if config.category_code in {"machines", "cables"}:
+        return "Введи выбранный вес тренажёра или стека в килограммах:"
+    if config.category_code == "free_weights":
+        return "Введи общий рабочий вес в килограммах, включая гриф:"
+    return "Введи рабочий вес снаряда в килограммах:"
 
 
 async def _start_regular_set_input(message: Message, state: FSMContext, session, config) -> None:
@@ -990,7 +1261,14 @@ async def _start_regular_set_input(message: Message, state: FSMContext, session,
     await _prompt_regular_set_input(message, state, session, exercise.id, config)
 
 
-async def _prompt_regular_set_input(message: Message, state: FSMContext, session, exercise_id: int, config) -> None:
+async def _prompt_regular_set_input(
+    message: Message,
+    state: FSMContext,
+    session,
+    exercise_id: int,
+    config,
+    previous_set=None,
+) -> None:
     await state.update_data(
         session_id=session.id, session_exercise_id=exercise_id, exercise_code=config.code,
         pending_measurement=config.measurement_type, exercise_mode="workout",
@@ -999,6 +1277,20 @@ async def _prompt_regular_set_input(message: Message, state: FSMContext, session
     if config.load_input_mode == "optional":
         await _prompt_optional_load(message, config)
     elif config.measurement_type in {"repetitions_load", "load_duration_distance"}:
+        if previous_set is not None and previous_set.load_kg is not None:
+            await state.update_data(load_kg=previous_set.load_kg, load_kind=previous_set.load_kind or "working")
+            label = _format_number(previous_set.load_kg)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"Оставить {label} кг", callback_data="act:set_load_choice:reuse")],
+                [InlineKeyboardButton(text="⚖️ Изменить вес", callback_data="act:set_load_choice:change")],
+                [InlineKeyboardButton(text="⬅️ К тренировке", callback_data="act:workout_draft")],
+            ])
+            await message.answer(
+                f"🏋️ <b>{config.name}</b>\n\nПредыдущий рабочий вес — {label} кг.",
+                reply_markup=keyboard,
+                parse_mode="HTML",
+            )
+            return
         await state.update_data(load_kind="working")
         await state.set_state(ActivityTrackingStates.entering_set_load)
         await message.answer(f"🏋️ <b>{config.name}</b>\n\n{_load_prompt(config)}", reply_markup=_number_keyboard(("5", "10", "15", "20", "30", "40", "50", "60")), parse_mode="HTML")
@@ -1015,16 +1307,57 @@ async def add_set_to_existing_exercise(callback: CallbackQuery, state: FSMContex
     await callback.answer()
     user_id = str(callback.from_user.id)
     exercise_id = int(callback.data.rsplit(":", 1)[-1])
-    session = ActivityRepository.get_active_workout(user_id)
+    session = ActivityRepository.get_workout_draft(user_id)
     if session is None:
-        await callback.answer("Активная тренировка не найдена", show_alert=True)
+        await callback.answer("Черновик тренировки не найден", show_alert=True)
         return
     exercise = _exercise_for_set(session.id, exercise_id, user_id)
     config = EXERCISE_BY_CODE.get(exercise.exercise_code) if exercise else None
     if exercise is None or config is None:
         await callback.answer("Упражнение не найдено", show_alert=True)
         return
-    await _prompt_regular_set_input(callback.message, state, session, exercise.id, config)
+    exercise_sets = [
+        item for item in ActivityRepository.get_session_sets(session.id, user_id)
+        if item.session_exercise_id == exercise.id
+    ]
+    previous_set = exercise_sets[-1] if exercise_sets else None
+    await _prompt_regular_set_input(callback.message, state, session, exercise.id, config, previous_set)
+
+
+async def _continue_set_input_after_load(message: Message, state: FSMContext, pending_measurement: str | None) -> None:
+    if pending_measurement == "load_duration_distance":
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⏱ По времени", callback_data="act:functional_input:time")],
+            [InlineKeyboardButton(text="📏 По расстоянию", callback_data="act:functional_input:distance")],
+            [InlineKeyboardButton(text="⬅️ К тренировке", callback_data="act:workout_draft")],
+        ])
+        await message.answer("Как записать этот подход?", reply_markup=keyboard)
+        return
+    await state.set_state(ActivityTrackingStates.entering_set_repetitions)
+    await message.answer(
+        "Сколько повторений в подходе?",
+        reply_markup=_number_keyboard(("5", "8", "10", "12", "15", "20")),
+    )
+
+
+@router.callback_query(F.data.startswith("act:set_load_choice:"))
+async def choose_set_load(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    choice = callback.data.rsplit(":", 1)[-1]
+    data = await state.get_data()
+    config = EXERCISE_BY_CODE.get(str(data.get("exercise_code") or ""))
+    if config is None:
+        await callback.answer("Упражнение не найдено", show_alert=True)
+        return
+    if choice == "change":
+        await state.update_data(load_kg=None, load_kind="working")
+        await state.set_state(ActivityTrackingStates.entering_set_load)
+        await callback.message.answer(
+            _load_prompt(config),
+            reply_markup=_number_keyboard(("5", "10", "15", "20", "30", "40", "50", "60")),
+        )
+        return
+    await _continue_set_input_after_load(callback.message, state, data.get("pending_measurement"))
 
 
 async def _prompt_optional_load(message: Message, config) -> None:
@@ -1032,6 +1365,7 @@ async def _prompt_optional_load(message: Message, config) -> None:
         [InlineKeyboardButton(text="Без дополнительного веса", callback_data="act:optional_load:none")],
         [InlineKeyboardButton(text="➕ Дополнительный вес", callback_data="act:optional_load:additional")],
         [InlineKeyboardButton(text="⚙️ Помощь тренажёра", callback_data="act:optional_load:assistance")],
+        [InlineKeyboardButton(text="⬅️ К тренировке", callback_data="act:workout_draft")],
     ])
     await message.answer(
         f"🏋️ <b>{config.name}</b>\n\nКак выполнялось упражнение?",
@@ -1046,12 +1380,8 @@ async def choose_optional_load(callback: CallbackQuery, state: FSMContext) -> No
     data = await state.get_data()
     if load_kind == "none":
         await state.update_data(load_kg=None, load_kind=None)
-        if data.get("exercise_mode") in {"quick_now", "quick_past"}:
-            await state.set_state(ActivityTrackingStates.entering_quick_sets)
-            await callback.message.answer("Введи подходы и повторения, например <b>3×10</b> или <b>20</b>:", parse_mode="HTML")
-        else:
-            await state.set_state(ActivityTrackingStates.entering_set_repetitions)
-            await callback.message.answer("Сколько повторений в подходе?", reply_markup=_number_keyboard(("5", "8", "10", "12", "15", "20")))
+        await state.set_state(ActivityTrackingStates.entering_set_repetitions)
+        await callback.message.answer("Сколько повторений в подходе?", reply_markup=_number_keyboard(("5", "8", "10", "12", "15", "20")))
         return
     await state.update_data(load_kind=load_kind)
     await state.set_state(ActivityTrackingStates.entering_set_load)
@@ -1068,13 +1398,13 @@ async def pick_exercise(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer("Упражнение не найдено", show_alert=True)
         return
     if mode == "workout":
-        session = ActivityRepository.get_active_workout(str(callback.from_user.id))
+        session = ActivityRepository.get_workout_draft(str(callback.from_user.id))
         if session is None:
             await callback.answer("Сначала начни тренировку", show_alert=True)
             return
         await _start_regular_set_input(callback.message, state, session, config)
         return
-    await _start_quick_exercise(callback.message, state, str(callback.from_user.id), config, mode)
+    await callback.answer("Этот сценарий больше не используется", show_alert=True)
 
 
 @router.message(ActivityTrackingStates.entering_set_load)
@@ -1088,18 +1418,7 @@ async def receive_set_load(message: Message, state: FSMContext) -> None:
         await message.answer("Введи корректный вес от 0,1 до 1000 кг.")
         return
     await state.update_data(load_kg=load)
-    if data.get("pending_measurement") == "load_duration_distance":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⏱ По времени", callback_data="act:functional_input:time")],
-            [InlineKeyboardButton(text="📏 По расстоянию", callback_data="act:functional_input:distance")],
-        ])
-        await message.answer("Как записать этот подход?", reply_markup=keyboard)
-    elif data.get("exercise_mode") in {"quick_now", "quick_past"}:
-        await state.set_state(ActivityTrackingStates.entering_quick_sets)
-        await message.answer("Введи подходы и повторения, например <b>3×10</b> или <b>20</b>:", parse_mode="HTML")
-    else:
-        await state.set_state(ActivityTrackingStates.entering_set_repetitions)
-        await message.answer("Сколько повторений в подходе?", reply_markup=_number_keyboard(("5", "8", "10", "12", "15", "20")))
+    await _continue_set_input_after_load(message, state, data.get("pending_measurement"))
 
 
 @router.callback_query(F.data.startswith("act:functional_input:"))
@@ -1108,9 +1427,7 @@ async def choose_functional_input(callback: CallbackQuery, state: FSMContext) ->
     method = callback.data.rsplit(":", 1)[-1]
     data = await state.get_data()
     await state.update_data(functional_input=method)
-    if data.get("exercise_mode") in {"quick_now", "quick_past"}:
-        await state.set_state(ActivityTrackingStates.entering_quick_sets)
-    elif method == "distance":
+    if method == "distance":
         await state.set_state(ActivityTrackingStates.entering_set_distance)
     else:
         await state.set_state(ActivityTrackingStates.entering_set_duration)
@@ -1136,7 +1453,7 @@ async def receive_set_repetitions(message: Message, state: FSMContext) -> None:
         load_kind=data.get("load_kind"),
     )
     await state.clear()
-    await show_active_workout(message, str(message.from_user.id), prefix="✅ Подход добавлен")
+    await show_workout_draft(message, str(message.from_user.id), prefix="✅ Подход добавлен")
 
 
 @router.message(ActivityTrackingStates.entering_set_duration)
@@ -1153,7 +1470,7 @@ async def receive_set_duration(message: Message, state: FSMContext) -> None:
         load_kind=data.get("load_kind"),
     )
     await state.clear()
-    await show_active_workout(message, str(message.from_user.id), prefix="✅ Подход добавлен")
+    await show_workout_draft(message, str(message.from_user.id), prefix="✅ Подход добавлен")
 
 
 @router.message(ActivityTrackingStates.entering_set_distance)
@@ -1172,7 +1489,7 @@ async def receive_set_distance(message: Message, state: FSMContext) -> None:
         load_kg=data.get("load_kg"), load_kind=data.get("load_kind"),
     )
     await state.clear()
-    await show_active_workout(message, str(message.from_user.id), prefix="✅ Подход добавлен")
+    await show_workout_draft(message, str(message.from_user.id), prefix="✅ Подход добавлен")
 
 
 def _workout_intensity_keyboard(session_id: int) -> InlineKeyboardMarkup:
@@ -1194,13 +1511,27 @@ async def _ask_workout_intensity(message: Message, session_id: int) -> None:
 async def finish_workout_prompt(callback: CallbackQuery) -> None:
     await callback.answer()
     session_id = int(callback.data.rsplit(":", 1)[-1])
-    session = ActivityRepository.mark_workout_awaiting_intensity(session_id, str(callback.from_user.id))
-    if session is None:
+    user_id = str(callback.from_user.id)
+    session = ActivityRepository.get_workout_session(session_id, user_id)
+    if session is not None:
+        ActivityRepository.remove_empty_session_exercises(session.id, user_id)
+    sets = ActivityRepository.get_session_sets(session_id, user_id)
+    if session is None or session.status != "draft":
         await callback.answer("Тренировка не найдена", show_alert=True)
+        return
+    if not sets:
+        await callback.answer("Добавь хотя бы один подход", show_alert=True)
+        return
+    try:
+        estimated_seconds = estimate_workout_duration_seconds(sets)
+    except ActivityValidationError as exc:
+        await callback.answer(str(exc), show_alert=True)
         return
     await _edit_or_answer(
         callback.message,
-        f"🏋️ Тренировка завершена\n⏱ {_format_duration(session.duration_seconds or 0)}\n\n<b>Как прошла тренировка?</b>",
+        f"🏋️ Данные тренировки заполнены\n"
+        f"⏱ Оценочное время: {_format_duration(estimated_seconds)}\n\n"
+        f"<b>Как прошла тренировка?</b>",
         _workout_intensity_keyboard(session.id),
     )
 
@@ -1209,20 +1540,24 @@ async def finish_workout_prompt(callback: CallbackQuery) -> None:
 async def save_workout_intensity(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     _, _, session_id_raw, intensity = callback.data.split(":")
-    session = ActivityRepository.get_workout_session(int(session_id_raw), str(callback.from_user.id))
-    if session is None or session.duration_seconds is None:
+    user_id = str(callback.from_user.id)
+    session = ActivityRepository.get_workout_session(int(session_id_raw), user_id)
+    if session is None or session.status != "draft":
         await callback.answer("Тренировка не найдена", show_alert=True)
         return
     try:
+        sets = ActivityRepository.get_session_sets(session.id, user_id)
+        estimated_seconds = estimate_workout_duration_seconds(sets)
         energy = calculate_workout_energy(
             intensity=intensity, weight_kg=session.weight_kg_snapshot,
-            duration_seconds=session.duration_seconds,
+            duration_seconds=estimated_seconds,
         )
     except ActivityValidationError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
     completed = ActivityRepository.finish_workout(
-        session_id=session.id, user_id=str(callback.from_user.id), intensity=intensity,
+        session_id=session.id, user_id=user_id, intensity=intensity,
+        duration_seconds=estimated_seconds,
         met_value=energy.met_value, gross_calories=energy.gross_calories,
         credited_calories=energy.credited_calories,
     )
@@ -1230,8 +1565,8 @@ async def save_workout_intensity(callback: CallbackQuery, state: FSMContext) -> 
         await callback.answer("Тренировка уже сохранена", show_alert=True)
         return
     await state.clear()
-    note = "\nВремя выполнения оценено автоматически, поэтому калорийность особенно приблизительная." if completed.duration_source == "estimated" else ""
-    text, keyboard = format_activity_overview(str(callback.from_user.id), completed.entry_date)
+    note = "\nВремя тренировки оценено автоматически, поэтому калорийность приблизительная."
+    text, keyboard = format_activity_overview(user_id, completed.entry_date)
     await _edit_or_answer(
         callback.message,
         f"✅ Тренировка сохранена\n"
@@ -1247,7 +1582,7 @@ async def confirm_workout_cancel(callback: CallbackQuery) -> None:
     session_id = int(callback.data.rsplit(":", 1)[-1])
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✖️ Да, отменить", callback_data=f"act:cancel:{session_id}")],
-        [InlineKeyboardButton(text="Продолжить тренировку", callback_data="act:workout_screen")],
+        [InlineKeyboardButton(text="Нет, вернуться", callback_data="act:workout_draft")],
     ])
     await _edit_or_answer(callback.message, "Отменить тренировку и удалить все добавленные подходы?", keyboard)
 
@@ -1256,209 +1591,18 @@ async def confirm_workout_cancel(callback: CallbackQuery) -> None:
 async def cancel_workout(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     session_id = int(callback.data.rsplit(":", 1)[-1])
+    session = ActivityRepository.get_workout_session(session_id, str(callback.from_user.id))
     ActivityRepository.cancel_workout(session_id, str(callback.from_user.id))
     await state.clear()
-    text, keyboard = format_activity_overview(str(callback.from_user.id), date.today())
+    target_date = session.entry_date if session else date.today()
+    text, keyboard = format_activity_overview(str(callback.from_user.id), target_date)
     await _edit_or_answer(callback.message, f"✅ Тренировка отменена\n\n{text}", keyboard)
-
-
-@router.message(F.text == "⚡ Быстрое упражнение")
-async def open_quick_exercise(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    existing = ActivityRepository.get_active_workout(str(message.from_user.id))
-    if existing is not None:
-        await show_active_workout(message, str(message.from_user.id), prefix="Сначала заверши текущую тренировку.")
-        return
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ Выполнить сейчас", callback_data="act:qmode:quick_now")],
-        [InlineKeyboardButton(text="📝 Уже выполнено", callback_data="act:qmode:quick_past")],
-        [InlineKeyboardButton(text="✖️ Закрыть", callback_data="act:close")],
-    ])
-    await message.answer(
-        "⚡ <b>Быстрое упражнение</b>\n\n"
-        "Если начнёшь сейчас, бот измерит реальное время. Для уже выполненного упражнения время будет оценено по подходам.",
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(F.data.startswith("act:qmode:"))
-async def choose_quick_mode(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer()
-    mode = callback.data.rsplit(":", 1)[-1]
-    await state.update_data(exercise_mode=mode)
-    await _edit_or_answer(callback.message, "Выбери категорию упражнения:", _exercise_categories_keyboard(mode))
-
-
-async def _start_quick_exercise(message: Message, state: FSMContext, user_id: str, config, mode: str) -> None:
-    if ActivityRepository.get_active_workout(user_id) is not None:
-        await message.answer("Сначала заверши текущую тренировку.")
-        return
-    weight, weight_source = _weight_snapshot(user_id)
-    try:
-        session = ActivityRepository.create_workout_session(
-            user_id=user_id, entry_date=date.today(), weight_kg=weight,
-            weight_source=weight_source, session_kind="quick",
-            duration_source="timer" if mode == "quick_now" else "estimated",
-            started_at=datetime.utcnow() if mode == "quick_now" else None,
-        )
-    except ActiveWorkoutExistsError:
-        await message.answer("Сначала заверши текущую тренировку.")
-        return
-    exercise = ActivityRepository.add_session_exercise(
-        session_id=session.id, user_id=user_id, exercise_code=config.code,
-        exercise_name=config.name, measurement_type=config.measurement_type,
-        load_input_mode=config.load_input_mode, tempo_seconds_per_rep=config.tempo_seconds_per_rep,
-    )
-    await state.update_data(
-        session_id=session.id, session_exercise_id=exercise.id,
-        exercise_code=config.code, exercise_mode=mode,
-        pending_measurement=config.measurement_type,
-    )
-    if mode == "quick_now":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Закончить упражнение", callback_data=f"act:qstop:{session.id}")],
-            [InlineKeyboardButton(text="✖️ Отменить", callback_data=f"act:cancel_confirm:{session.id}")],
-        ])
-        await message.answer(
-            f"▶️ <b>{config.name}</b>\n\nТаймер запущен. Выполни упражнение и нажми «Закончить упражнение».",
-            reply_markup=keyboard,
-            parse_mode="HTML",
-        )
-        return
-    await _prompt_quick_result_input(message, state, config)
-
-
-async def _prompt_quick_result_input(message: Message, state: FSMContext, config) -> None:
-    if config.measurement_type == "duration":
-        await state.set_state(ActivityTrackingStates.entering_quick_sets)
-        await message.answer("Введи фактическое время упражнения в секундах или формате 1:30:")
-    elif config.load_input_mode == "optional":
-        await _prompt_optional_load(message, config)
-    elif config.measurement_type in {"repetitions_load", "load_duration_distance"}:
-        await state.update_data(load_kind="working")
-        await state.set_state(ActivityTrackingStates.entering_set_load)
-        await message.answer(_load_prompt(config), reply_markup=_number_keyboard(("5", "10", "15", "20", "30", "40", "50", "60")))
-    else:
-        await state.set_state(ActivityTrackingStates.entering_quick_sets)
-        await message.answer("Введи подходы и повторения, например <b>3×10</b> или <b>20</b>:", parse_mode="HTML")
-
-
-@router.callback_query(F.data.startswith("act:qstop:"))
-async def stop_quick_timer(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer()
-    session_id = int(callback.data.rsplit(":", 1)[-1])
-    data = await state.get_data()
-    session = ActivityRepository.mark_workout_awaiting_intensity(session_id, str(callback.from_user.id))
-    config = EXERCISE_BY_CODE.get(str(data.get("exercise_code")))
-    if session is None or config is None:
-        await callback.answer("Быстрое упражнение не найдено", show_alert=True)
-        return
-    if config.measurement_type == "duration":
-        ActivityRepository.add_workout_set(
-            session_id=session.id, session_exercise_id=int(data["session_exercise_id"]),
-            user_id=str(callback.from_user.id), duration_seconds=max(session.duration_seconds or 1, 1),
-        )
-        await _edit_or_answer(
-            callback.message,
-            f"✅ Время: {_format_duration(session.duration_seconds or 0)}\n\n<b>Как прошла тренировка?</b>",
-            _workout_intensity_keyboard(session.id),
-        )
-        return
-    await _prompt_quick_result_input(callback.message, state, config)
-
-
-def _parse_sets_and_reps(text: str | None) -> tuple[int, int]:
-    raw = (text or "").strip().casefold().replace(" ", "")
-    match = re.fullmatch(r"(\d+)[xх×*](\d+)", raw)
-    if match:
-        set_count, repetitions = int(match.group(1)), int(match.group(2))
-    else:
-        set_count, repetitions = 1, int(raw)
-    if set_count <= 0 or set_count > 50 or repetitions <= 0 or repetitions > 1000:
-        raise ValueError
-    return set_count, repetitions
-
-
-@router.message(ActivityTrackingStates.entering_quick_sets)
-async def receive_quick_sets(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    config = EXERCISE_BY_CODE.get(str(data.get("exercise_code")))
-    session_id = int(data.get("session_id") or 0)
-    exercise_id = int(data.get("session_exercise_id") or 0)
-    if config is None or not session_id or not exercise_id:
-        await state.clear()
-        await message.answer("Не удалось восстановить быстрое упражнение.")
-        return
-    try:
-        if config.measurement_type == "duration" or (
-            config.measurement_type == "load_duration_distance" and data.get("functional_input") != "distance"
-        ):
-            duration = _parse_seconds(message.text)
-            ActivityRepository.add_workout_set(
-                session_id=session_id, session_exercise_id=exercise_id,
-                user_id=str(message.from_user.id), duration_seconds=duration,
-                load_kg=data.get("load_kg"),
-                load_kind=data.get("load_kind"),
-            )
-        elif config.measurement_type == "load_duration_distance":
-            distance_meters = _parse_positive_number(message.text)
-            if distance_meters > 100_000:
-                raise ValueError
-            ActivityRepository.add_workout_set(
-                session_id=session_id, session_exercise_id=exercise_id,
-                user_id=str(message.from_user.id), distance_meters=distance_meters,
-                load_kg=data.get("load_kg"), load_kind=data.get("load_kind"),
-            )
-        else:
-            set_count, repetitions = _parse_sets_and_reps(message.text)
-            for _ in range(set_count):
-                ActivityRepository.add_workout_set(
-                    session_id=session_id, session_exercise_id=exercise_id,
-                    user_id=str(message.from_user.id), repetitions=repetitions,
-                    load_kg=data.get("load_kg"),
-                    load_kind=data.get("load_kind"),
-                )
-    except (ValueError, TypeError):
-        if config.measurement_type == "load_duration_distance" and data.get("functional_input") == "distance":
-            prompt = "Введи расстояние в метрах."
-        elif config.measurement_type in {"duration", "load_duration_distance"}:
-            prompt = "Введи секунды числом или время 1:30."
-        else:
-            prompt = "Используй формат 3×10 или одно число, например 20."
-        await message.answer(prompt)
-        return
-
-    session = ActivityRepository.get_workout_session(session_id, str(message.from_user.id))
-    if session is None:
-        await state.clear()
-        await message.answer("Тренировка не найдена.")
-        return
-    if data.get("exercise_mode") == "quick_past":
-        sets = ActivityRepository.get_session_sets(session_id, str(message.from_user.id))
-        estimated_seconds = estimate_quick_workout_duration_seconds(sets)
-        session = ActivityRepository.mark_workout_awaiting_intensity(
-            session_id, str(message.from_user.id), duration_seconds=estimated_seconds,
-        )
-        prefix = f"⏱ Оценочное время: {_format_duration(estimated_seconds)}\n\n"
-    else:
-        prefix = f"⏱ Время: {_format_duration(session.duration_seconds or 0)}\n\n"
-    await _ask_workout_intensity_with_prefix(message, session.id, prefix)
-
-
-async def _ask_workout_intensity_with_prefix(message: Message, session_id: int, prefix: str) -> None:
-    await message.answer(
-        prefix + "<b>Как прошла тренировка?</b>",
-        reply_markup=_workout_intensity_keyboard(session_id),
-        parse_mode="HTML",
-    )
 
 
 def _workout_detail_text(session, user_id: str) -> str:
     exercises, grouped, _ = _sets_by_exercise(session.id, user_id)
-    title = "Быстрое упражнение" if session.session_kind == "quick" else "Силовая тренировка"
     lines = [
-        f"🏋️ <b>{title}</b>",
+        "🏋️ <b>Силовая тренировка</b>",
         "",
         f"Продолжительность: {_format_duration(session.duration_seconds or 0)}",
         f"Интенсивность: {WORKOUT_INTENSITY_LABELS.get(session.intensity, session.intensity or '—')}",
@@ -1481,12 +1625,35 @@ def _workout_detail_keyboard(session, user_id: str) -> InlineKeyboardMarkup:
     for item in sets:
         rows.append([InlineKeyboardButton(text=f"✏️ Подход {item.id} · {_format_set(item)}", callback_data=f"act:set_detail:{item.id}")])
     rows.extend([
-        [InlineKeyboardButton(text="⏱ Изменить время", callback_data=f"act:wedit_time:{session.id}")],
         [InlineKeyboardButton(text="🔥 Изменить интенсивность", callback_data=f"act:wedit_int_menu:{session.id}")],
         [InlineKeyboardButton(text="🗑 Удалить тренировку", callback_data=f"act:wdelete_confirm:{session.id}")],
-        [InlineKeyboardButton(text="⬅️ К дню", callback_data=f"act:day:{session.entry_date.isoformat()}")],
+        [InlineKeyboardButton(text="⬅️ К отчёту за день", callback_data=f"act:report:{session.entry_date.isoformat()}")],
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _recalculate_completed_workout(session, user_id: str):
+    """Обновляет оценочное время и калории после правки состава тренировки."""
+    if session is None or session.status != "completed" or not session.intensity:
+        return session
+    sets = ActivityRepository.get_session_sets(session.id, user_id)
+    if not sets:
+        return session
+    duration_seconds = estimate_workout_duration_seconds(sets)
+    energy = calculate_workout_energy(
+        intensity=session.intensity,
+        weight_kg=session.weight_kg_snapshot,
+        duration_seconds=duration_seconds,
+    )
+    ActivityRepository.update_completed_workout(
+        session_id=session.id,
+        user_id=user_id,
+        duration_seconds=duration_seconds,
+        met_value=energy.met_value,
+        gross_calories=energy.gross_calories,
+        credited_calories=energy.credited_calories,
+    )
+    return ActivityRepository.get_workout_session(session.id, user_id)
 
 
 @router.callback_query(F.data.startswith("act:workout_detail:"))
@@ -1501,48 +1668,6 @@ async def show_workout_detail(callback: CallbackQuery) -> None:
         callback.message, _workout_detail_text(session, str(callback.from_user.id)),
         _workout_detail_keyboard(session, str(callback.from_user.id)),
     )
-
-
-@router.callback_query(F.data.startswith("act:wedit_time:"))
-async def request_workout_duration_edit(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer()
-    session_id = int(callback.data.rsplit(":", 1)[-1])
-    session = ActivityRepository.get_workout_session(session_id, str(callback.from_user.id))
-    if session is None or session.status != "completed":
-        await callback.answer("Тренировка не найдена", show_alert=True)
-        return
-    await state.update_data(edit_session_id=session.id)
-    await state.set_state(ActivityTrackingStates.editing_workout_duration)
-    await callback.message.answer(
-        f"Сейчас: {_format_duration(session.duration_seconds or 0)}.\n\nВведи новую продолжительность в минутах:",
-        reply_markup=_minutes_keyboard(),
-    )
-
-
-@router.message(ActivityTrackingStates.editing_workout_duration)
-async def save_workout_duration_edit(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    session = ActivityRepository.get_workout_session(int(data.get("edit_session_id") or 0), str(message.from_user.id))
-    if session is None or not session.intensity:
-        await state.clear()
-        await message.answer("Тренировка не найдена.")
-        return
-    try:
-        minutes = _parse_positive_number(message.text)
-        energy = calculate_workout_energy(
-            intensity=session.intensity, weight_kg=session.weight_kg_snapshot,
-            duration_seconds=int(round(minutes * 60)),
-        )
-    except (ValueError, ActivityValidationError) as exc:
-        await message.answer(f"Укажи корректное количество минут. {html.escape(str(exc))}", reply_markup=_minutes_keyboard())
-        return
-    ActivityRepository.update_completed_workout(
-        session_id=session.id, user_id=str(message.from_user.id),
-        duration_seconds=int(round(minutes * 60)), met_value=energy.met_value,
-        gross_calories=energy.gross_calories, credited_calories=energy.credited_calories,
-    )
-    await state.clear()
-    await show_activity_main(message, str(message.from_user.id), session.entry_date, prefix="✅ Тренировка обновлена")
 
 
 @router.callback_query(F.data.startswith("act:wedit_int_menu:"))
@@ -1629,7 +1754,7 @@ async def show_set_detail(callback: CallbackQuery) -> None:
         return
     exercise = _exercise_for_set(item.session_id, item.session_exercise_id, str(callback.from_user.id))
     session = ActivityRepository.get_workout_session(item.session_id, str(callback.from_user.id))
-    back_callback = "act:workout_screen" if session and session.status in {"active", "paused", "awaiting_intensity"} else f"act:workout_detail:{item.session_id}"
+    back_callback = "act:workout_draft" if session and session.status == "draft" else f"act:workout_detail:{item.session_id}"
     rows = []
     if item.repetitions is not None:
         rows.append([InlineKeyboardButton(text="🔁 Изменить повторения", callback_data=f"act:set_edit_reps:{item.id}")])
@@ -1678,12 +1803,13 @@ async def save_set_reps_edit(message: Message, state: FSMContext) -> None:
     ActivityRepository.update_workout_set(set_id=item.id, user_id=str(message.from_user.id), repetitions=repetitions)
     await state.clear()
     session = ActivityRepository.get_workout_session(item.session_id, str(message.from_user.id))
-    if session.status in {"active", "paused", "awaiting_intensity"}:
+    if session.status == "draft":
         await message.answer(
-            "✅ Подход обновлён\n\n" + _active_workout_text(session, str(message.from_user.id)),
-            reply_markup=_active_workout_keyboard(session, str(message.from_user.id)), parse_mode="HTML",
+            "✅ Подход обновлён\n\n" + _workout_draft_text(session, str(message.from_user.id)),
+            reply_markup=_workout_draft_keyboard(session, str(message.from_user.id)), parse_mode="HTML",
         )
     else:
+        session = _recalculate_completed_workout(session, str(message.from_user.id))
         await message.answer(
             "✅ Подход обновлён\n\n" + _workout_detail_text(session, str(message.from_user.id)),
             reply_markup=_workout_detail_keyboard(session, str(message.from_user.id)), parse_mode="HTML",
@@ -1723,10 +1849,10 @@ async def save_set_load_edit(message: Message, state: FSMContext) -> None:
     )
     await state.clear()
     session = ActivityRepository.get_workout_session(item.session_id, str(message.from_user.id))
-    if session.status in {"active", "paused", "awaiting_intensity"}:
+    if session.status == "draft":
         await message.answer(
-            "✅ Подход обновлён\n\n" + _active_workout_text(session, str(message.from_user.id)),
-            reply_markup=_active_workout_keyboard(session, str(message.from_user.id)), parse_mode="HTML",
+            "✅ Подход обновлён\n\n" + _workout_draft_text(session, str(message.from_user.id)),
+            reply_markup=_workout_draft_keyboard(session, str(message.from_user.id)), parse_mode="HTML",
         )
     else:
         await message.answer(
@@ -1758,14 +1884,23 @@ async def delete_set(callback: CallbackQuery) -> None:
     if item is None:
         await callback.answer("Подход уже удалён", show_alert=True)
         return
+    session = ActivityRepository.get_workout_session(item.session_id, str(callback.from_user.id))
+    session_sets = ActivityRepository.get_session_sets(item.session_id, str(callback.from_user.id))
+    if session and session.status == "completed" and len(session_sets) <= 1:
+        await callback.answer(
+            "Нельзя удалить единственный подход. Удали тренировку целиком.",
+            show_alert=True,
+        )
+        return
     ActivityRepository.delete_workout_set(item.id, str(callback.from_user.id))
     session = ActivityRepository.get_workout_session(item.session_id, str(callback.from_user.id))
-    if session.status in {"active", "paused", "awaiting_intensity"}:
+    if session.status == "draft":
         await _edit_or_answer(
-            callback.message, "✅ Подход удалён\n\n" + _active_workout_text(session, str(callback.from_user.id)),
-            _active_workout_keyboard(session, str(callback.from_user.id)),
+            callback.message, "✅ Подход удалён\n\n" + _workout_draft_text(session, str(callback.from_user.id)),
+            _workout_draft_keyboard(session, str(callback.from_user.id)),
         )
     else:
+        session = _recalculate_completed_workout(session, str(callback.from_user.id))
         await _edit_or_answer(
             callback.message, "✅ Подход удалён\n\n" + _workout_detail_text(session, str(callback.from_user.id)),
             _workout_detail_keyboard(session, str(callback.from_user.id)),

@@ -31,10 +31,10 @@ from utils.activity_catalog import (
 )
 
 
-OPEN_WORKOUT_STATUSES = {"active", "paused", "awaiting_intensity"}
+DRAFT_WORKOUT_STATUSES = {"draft"}
 
 
-class ActiveWorkoutExistsError(RuntimeError):
+class WorkoutDraftExistsError(RuntimeError):
     pass
 
 
@@ -47,11 +47,8 @@ class ActivityRepository:
         workout = session.query(WorkoutSession).filter(WorkoutSession.id == session_id).first()
         if workout is None:
             return
-        exercises = session.query(WorkoutSessionExercise).filter(
-            WorkoutSessionExercise.session_id == session_id,
-        ).all()
         sets = session.query(WorkoutSet).filter(WorkoutSet.session_id == session_id).all()
-        workout.exercise_count = len(exercises)
+        workout.exercise_count = len({item.session_exercise_id for item in sets})
         workout.set_count = len(sets)
         workout.training_volume_kg = sum(
             float(item.load_kg or 0) * int(item.repetitions or 0)
@@ -312,28 +309,24 @@ class ActivityRepository:
     @staticmethod
     def create_workout_session(
         *, user_id: str, entry_date: date, weight_kg: float, weight_source: str,
-        session_kind: str = "workout", duration_source: str = "timer",
-        started_at: datetime | None = None,
     ) -> WorkoutSession:
         with get_db_session() as session:
             existing = (
                 session.query(WorkoutSession)
                 .filter(
                     WorkoutSession.user_id == str(user_id),
-                    WorkoutSession.status.in_(OPEN_WORKOUT_STATUSES),
+                    WorkoutSession.status.in_(DRAFT_WORKOUT_STATUSES),
                 )
                 .order_by(WorkoutSession.id.desc())
                 .first()
             )
             if existing is not None:
-                raise ActiveWorkoutExistsError(str(existing.id))
+                raise WorkoutDraftExistsError(str(existing.id))
             row = WorkoutSession(
                 user_id=str(user_id),
                 entry_date=entry_date,
-                status="active" if started_at is not None else "awaiting_intensity",
-                session_kind=session_kind,
-                started_at=started_at,
-                duration_source=duration_source,
+                status="draft",
+                duration_source="estimated",
                 weight_kg_snapshot=weight_kg,
                 weight_source=weight_source,
                 calculation_version=CALCULATION_VERSION,
@@ -344,13 +337,13 @@ class ActivityRepository:
             return row
 
     @staticmethod
-    def get_active_workout(user_id: str) -> WorkoutSession | None:
+    def get_workout_draft(user_id: str) -> WorkoutSession | None:
         with get_db_session() as session:
             return (
                 session.query(WorkoutSession)
                 .filter(
                     WorkoutSession.user_id == str(user_id),
-                    WorkoutSession.status.in_(OPEN_WORKOUT_STATUSES),
+                    WorkoutSession.status.in_(DRAFT_WORKOUT_STATUSES),
                 )
                 .order_by(WorkoutSession.id.desc())
                 .first()
@@ -385,86 +378,23 @@ class ActivityRepository:
             ).order_by(WorkoutSession.entry_date.asc(), WorkoutSession.id.asc()).all()
 
     @staticmethod
-    def pause_workout(session_id: int, user_id: str, now: datetime | None = None) -> bool:
-        now = now or datetime.utcnow()
-        with get_db_session() as session:
-            row = session.query(WorkoutSession).filter(
-                WorkoutSession.id == session_id, WorkoutSession.user_id == str(user_id), WorkoutSession.status == "active"
-            ).first()
-            if row is None:
-                return False
-            row.status = "paused"
-            row.paused_at = now
-            row.updated_at = now
-            return True
-
-    @staticmethod
-    def resume_workout(session_id: int, user_id: str, now: datetime | None = None) -> bool:
-        now = now or datetime.utcnow()
-        with get_db_session() as session:
-            row = session.query(WorkoutSession).filter(
-                WorkoutSession.id == session_id, WorkoutSession.user_id == str(user_id), WorkoutSession.status == "paused"
-            ).first()
-            if row is None or row.paused_at is None:
-                return False
-            row.paused_seconds += max(int((now - row.paused_at).total_seconds()), 0)
-            row.paused_at = None
-            row.status = "active"
-            row.updated_at = now
-            return True
-
-    @staticmethod
-    def elapsed_seconds(row: WorkoutSession, now: datetime | None = None) -> int:
-        if row.duration_seconds is not None:
-            return max(int(row.duration_seconds), 0)
-        if row.started_at is None:
-            return 0
-        reference = row.ended_at or (row.paused_at if row.status == "paused" and row.paused_at else None) or now or datetime.utcnow()
-        return max(int((reference - row.started_at).total_seconds()) - int(row.paused_seconds or 0), 0)
-
-    @staticmethod
-    def mark_workout_awaiting_intensity(
-        session_id: int, user_id: str, now: datetime | None = None, duration_seconds: int | None = None,
-    ) -> WorkoutSession | None:
-        now = now or datetime.utcnow()
-        with get_db_session() as session:
-            row = session.query(WorkoutSession).filter(
-                WorkoutSession.id == session_id,
-                WorkoutSession.user_id == str(user_id),
-                WorkoutSession.status.in_({"active", "paused", "awaiting_intensity"}),
-            ).first()
-            if row is None:
-                return None
-            if duration_seconds is None:
-                if row.started_at is None:
-                    return None
-                reference = row.paused_at if row.status == "paused" and row.paused_at else now
-                duration_seconds = max(int((reference - row.started_at).total_seconds()) - int(row.paused_seconds or 0), 1)
-            row.duration_seconds = max(int(duration_seconds), 1)
-            row.ended_at = now
-            row.paused_at = None
-            row.status = "awaiting_intensity"
-            row.updated_at = now
-            session.flush()
-            session.refresh(row)
-            return row
-
-    @staticmethod
     def finish_workout(
         *, session_id: int, user_id: str, intensity: str, met_value: float,
-        gross_calories: float, credited_calories: float,
+        duration_seconds: int, gross_calories: float, credited_calories: float,
     ) -> WorkoutSession | None:
         with get_db_session() as session:
             row = session.query(WorkoutSession).filter(
                 WorkoutSession.id == session_id,
                 WorkoutSession.user_id == str(user_id),
-                WorkoutSession.status == "awaiting_intensity",
+                WorkoutSession.status == "draft",
             ).first()
             if row is None:
                 return None
             row.status = "completed"
             row.intensity = intensity
             row.met_value = met_value
+            row.duration_seconds = max(int(duration_seconds), 1)
+            row.duration_source = "estimated"
             row.gross_calories = gross_calories
             row.credited_calories = credited_calories
             row.updated_at = datetime.utcnow()
@@ -489,7 +419,7 @@ class ActivityRepository:
                 return False
             if duration_seconds is not None:
                 row.duration_seconds = duration_seconds
-                row.duration_source = "entered"
+                row.duration_source = "estimated"
             if intensity is not None:
                 row.intensity = intensity
             if met_value is not None:
@@ -524,7 +454,7 @@ class ActivityRepository:
         with get_db_session() as session:
             session_row = session.query(WorkoutSession).filter(
                 WorkoutSession.id == session_id, WorkoutSession.user_id == str(user_id),
-                WorkoutSession.status.in_(OPEN_WORKOUT_STATUSES),
+                WorkoutSession.status.in_(DRAFT_WORKOUT_STATUSES),
             ).first()
             if session_row is None:
                 raise LookupError("Тренировка не найдена")
@@ -555,7 +485,7 @@ class ActivityRepository:
             session_row = session.query(WorkoutSession).filter(
                 WorkoutSession.id == session_id,
                 WorkoutSession.user_id == str(user_id),
-                WorkoutSession.status.in_(OPEN_WORKOUT_STATUSES),
+                WorkoutSession.status.in_(DRAFT_WORKOUT_STATUSES),
             ).first()
             if session_row is None:
                 raise LookupError("Активная тренировка не найдена")
@@ -586,7 +516,7 @@ class ActivityRepository:
             session_row = session.query(WorkoutSession).filter(
                 WorkoutSession.id == session_id,
                 WorkoutSession.user_id == str(user_id),
-                WorkoutSession.status.in_(OPEN_WORKOUT_STATUSES),
+                WorkoutSession.status.in_(DRAFT_WORKOUT_STATUSES),
             ).first()
             if session_row is None:
                 return None
@@ -634,6 +564,30 @@ class ActivityRepository:
             for item in sets:
                 item.exercise_code = codes.get(item.session_exercise_id)
             return sets
+
+    @staticmethod
+    def remove_empty_session_exercises(session_id: int, user_id: str) -> int:
+        """Удаляет незаполненные упражнения, оставшиеся после отмены ввода."""
+        with get_db_session() as session:
+            used_ids = {
+                row[0] for row in session.query(WorkoutSet.session_exercise_id).filter(
+                    WorkoutSet.session_id == session_id,
+                    WorkoutSet.user_id == str(user_id),
+                ).distinct().all()
+            }
+            query = session.query(WorkoutSessionExercise).filter(
+                WorkoutSessionExercise.session_id == session_id,
+                WorkoutSessionExercise.user_id == str(user_id),
+            )
+            if used_ids:
+                query = query.filter(~WorkoutSessionExercise.id.in_(used_ids))
+            empty_rows = query.all()
+            for row in empty_rows:
+                session.delete(row)
+            if empty_rows:
+                session.flush()
+                ActivityRepository._refresh_workout_aggregates(session, session_id)
+            return len(empty_rows)
 
     @staticmethod
     def delete_workout_set(set_id: int, user_id: str) -> bool:

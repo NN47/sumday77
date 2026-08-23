@@ -89,7 +89,7 @@ from services.photo_food_validator import validate_photo_food_payload
 from services.daily_analysis_preflight_service import return_to_active_daily_preflight
 from utils.validators import parse_date
 from utils.log_sanitizer import safe_exception_summary
-from utils.sensitive_meal_text import check_sensitive_meal_text
+from utils.sensitive_meal_text import check_sensitive_food_name, check_sensitive_meal_text
 from utils.meal_formatters import (
     extract_product_macros as extract_meal_product_macros,
     extract_product_name as extract_meal_product_name,
@@ -238,6 +238,10 @@ SENSITIVE_MEAL_INPUT_REJECTED_TEXT = (
     "Укажите только продукты, блюда и примерное количество.\n\n"
     "Например: <code>колбаса 200 г, хлеб 30 г</code>"
 )
+SENSITIVE_FOOD_NAME_REJECTED_TEXT = (
+    "⚠️ Это поле предназначено только для названия продукта или блюда.\n\n"
+    "Введите короткое название, например: <code>гречка</code>."
+)
 NO_FOOD_RECOGNIZED_TEXT = (
     "⚠️ Не удалось распознать продукты или блюда.\n\n"
     "Укажите, что вы съели и примерное количество.\n\n"
@@ -253,6 +257,20 @@ PHOTO_COMMENT_TOO_LONG_TEXT = (
     "⚠️ Сообщение слишком длинное.\n\n"
     "Укажите только краткое уточнение о продуктах или блюде на фото."
 )
+
+
+async def _reject_sensitive_food_name(message: Message, value: str, *, context: str) -> bool:
+    """Reject a risky user-defined food name without retaining or logging its value."""
+    sensitive_check = check_sensitive_food_name(value)
+    if not sensitive_check.is_sensitive:
+        return False
+    logger.warning(
+        "Sensitive food name rejected context=%s reason=%s",
+        context,
+        sensitive_check.reason.value if sensitive_check.reason else "unknown",
+    )
+    await message.answer(SENSITIVE_FOOD_NAME_REJECTED_TEXT, parse_mode="HTML")
+    return True
 
 
 MEAL_COMPLETION_COMMENT_SYSTEM_PROMPT = """Ты — спортивный друг пользователя, который хорошо разбирается в питании и помогает в Telegram-боте Sumday77.
@@ -4774,6 +4792,11 @@ async def handle_custom_product_name(message: Message, state: FSMContext):
     if len(text) < 2:
         await message.answer("Название слишком короткое. Введите название продукта:", reply_markup=_build_custom_product_reply_keyboard())
         return
+    if len(text) > 80:
+        await message.answer("Название слишком длинное. Введите до 80 символов.", reply_markup=_build_custom_product_reply_keyboard())
+        return
+    if await _reject_sensitive_food_name(message, text, context="custom_product_create"):
+        return
     await state.update_data(custom_product={"name": text})
     await _show_custom_product_value_editor(message, state, "calories", 0)
 
@@ -6032,6 +6055,8 @@ async def photo_analysis_dish_name_apply(message: Message, state: FSMContext):
         return
     if len(value) > 80:
         await message.answer("Название слишком длинное. Введи до 80 символов.")
+        return
+    if await _reject_sensitive_food_name(message, value, context="photo_dish_rename"):
         return
     data = await state.get_data()
     items = data.get("photo_analysis_items") or []
@@ -8053,6 +8078,8 @@ async def meal_product_name_input_value(message: Message, state: FSMContext):
         return
     if len(new_name) > 80:
         await message.answer("Название слишком длинное. Введи до 80 символов.")
+        return
+    if await _reject_sensitive_food_name(message, new_name, context="meal_product_rename"):
         return
 
     data = await state.get_data()

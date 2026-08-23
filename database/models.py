@@ -187,7 +187,7 @@ class DailySteps(Base):
 
 
 class WorkoutSession(Base):
-    """Тренировочная сессия; калории считаются за неё целиком."""
+    """Ручной дневник тренировки; калории считаются за него целиком."""
 
     __tablename__ = "workout_sessions"
     __table_args__ = (
@@ -198,14 +198,9 @@ class WorkoutSession(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(String, nullable=False, index=True)
     entry_date = Column(Date, nullable=False, default=date.today, index=True)
-    status = Column(String(24), nullable=False, default="active")  # active | paused | awaiting_intensity | completed | cancelled
-    session_kind = Column(String(24), nullable=False, default="workout")  # workout | quick
-    started_at = Column(DateTime, nullable=True)
-    ended_at = Column(DateTime, nullable=True)
-    paused_at = Column(DateTime, nullable=True)
-    paused_seconds = Column(Integer, nullable=False, default=0)
+    status = Column(String(24), nullable=False, default="draft")  # draft | completed
     duration_seconds = Column(Integer, nullable=True)
-    duration_source = Column(String(24), nullable=False, default="timer")
+    duration_source = Column(String(24), nullable=False, default="estimated")
     intensity = Column(String(16), nullable=True)
     met_value = Column(Float, nullable=True)
     exercise_count = Column(Integer, nullable=False, default=0)

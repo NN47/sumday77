@@ -92,9 +92,9 @@ quick_actions_inline = InlineKeyboardMarkup(
 # Меню тренировок
 training_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="⏱ Добавить по времени")],
-        [KeyboardButton(text="🏋️ Начать тренировку"), KeyboardButton(text="⚡ Быстрое упражнение")],
-        [KeyboardButton(text="🚶 Добавить шаги"), KeyboardButton(text="📅 История")],
+        [KeyboardButton(text="⏱ Активность по времени")],
+        [KeyboardButton(text="🏋️ Тренировка")],
+        [KeyboardButton(text="📅 Календарь активности")],
         [main_menu_button],
     ],
     resize_keyboard=True,

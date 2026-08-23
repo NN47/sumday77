@@ -348,6 +348,19 @@ EXERCISE_BY_CODE = {item.code: item for item in EXERCISES}
 TIMED_CATEGORY_BY_CODE = {item.code: item for item in TIMED_CATEGORIES}
 EXERCISE_CATEGORY_BY_CODE = {item.code: item for item in EXERCISE_CATEGORIES}
 
+# Дополнительные русские варианты поиска. Они хранятся рядом со справочником,
+# а не в Telegram-обработчиках.
+TIMED_ACTIVITY_SEARCH_ALIASES: dict[str, tuple[str, ...]] = {
+    "boxing": ("боксирование",),
+    "kickboxing": ("кик бокс",),
+    "muay_thai": ("муай тай",),
+    "mma": ("мма",),
+    "sup_boarding": ("сап", "сап серфинг", "сапсёрфинг"),
+    "table_tennis": ("пинг понг", "пинг-понг"),
+    "cross_country_skiing": ("лыжи",),
+    "house_cleaning_general": ("уборка дома",),
+}
+
 
 def timed_activities_for_category(category_code: str) -> list[TimedActivityConfig]:
     return sorted(

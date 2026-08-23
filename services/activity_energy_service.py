@@ -166,13 +166,14 @@ def calculate_steps_energy(*, steps: object, weight_kg: object) -> StepsEstimate
     )
 
 
-def estimate_quick_workout_duration_seconds(sets: Iterable[object]) -> int:
-    """Оценивает длительность уже выполненного упражнения по подходам."""
+def estimate_workout_duration_seconds(sets: Iterable[object]) -> int:
+    """Оценивает длительность ручной тренировки по подходам и переходам."""
     normalized = list(sets)
     if not normalized:
         raise ActivityValidationError("Добавь хотя бы один подход")
     active_seconds = 0.0
     exercise_ids: list[int] = []
+    sets_per_exercise: dict[int, int] = {}
     for workout_set in normalized:
         repetitions = getattr(workout_set, "repetitions", None)
         duration = getattr(workout_set, "duration_seconds", None)
@@ -180,6 +181,7 @@ def estimate_quick_workout_duration_seconds(sets: Iterable[object]) -> int:
         exercise_code = getattr(workout_set, "exercise_code", None)
         session_exercise_id = int(getattr(workout_set, "session_exercise_id", 0) or 0)
         exercise_ids.append(session_exercise_id)
+        sets_per_exercise[session_exercise_id] = sets_per_exercise.get(session_exercise_id, 0) + 1
         if duration:
             active_seconds += float(duration)
             continue
@@ -191,7 +193,10 @@ def estimate_quick_workout_duration_seconds(sets: Iterable[object]) -> int:
             config = EXERCISE_BY_CODE.get(str(exercise_code or ""))
             tempo = config.tempo_seconds_per_rep if config else 3.0
             active_seconds += int(repetitions) * tempo
-    rest_seconds = max(len(normalized) - 1, 0) * REST_BETWEEN_SETS_SECONDS
+    rest_seconds = sum(
+        max(set_count - 1, 0) * REST_BETWEEN_SETS_SECONDS
+        for set_count in sets_per_exercise.values()
+    )
     exercise_transitions = max(len(dict.fromkeys(exercise_ids)) - 1, 0)
     total = active_seconds + rest_seconds + exercise_transitions * REST_BETWEEN_EXERCISES_SECONDS
     return max(int(round(total)), 1)

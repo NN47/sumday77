@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from handlers import meals
-from utils.sensitive_meal_text import SensitiveDataType, check_sensitive_meal_text
+from utils.sensitive_meal_text import (
+    SensitiveDataType,
+    check_sensitive_food_name,
+    check_sensitive_meal_text,
+)
 
 
 @pytest.mark.parametrize(
@@ -30,6 +34,13 @@ from utils.sensitive_meal_text import SensitiveDataType, check_sensitive_meal_te
         "бургеры Санкт-Петербург",
         "принимаю пищу: суп 300 г",
         "рецепт борща: свёкла, капуста и мясо",
+        "салат Цезарь",
+        "сыр Российский",
+        "колбаса Докторская",
+        "диабетическое печенье",
+        "булочка Московская",
+        "молоко Простоквашино",
+        "Иван-чай",
     ],
 )
 def test_regular_food_text_is_not_blocked(text):
@@ -91,6 +102,37 @@ def test_explicit_identity_document_and_address_data_is_blocked(text, expected_r
 
     assert result.is_sensitive is True
     assert result.reason is expected_reason
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_reason"),
+    [
+        ("45 01 123456", SensitiveDataType.DOCUMENT),
+        ("123-456-789 00", SensitiveDataType.DOCUMENT),
+        ("дата рождения: 01.02.1990", SensitiveDataType.PERSONAL_IDENTITY),
+        ("родился 1 января 1990", SensitiveDataType.PERSONAL_IDENTITY),
+        ("ул. Пушкина, д. 12, кв. 4", SensitiveDataType.ADDRESS),
+        ("карта 4111 1111 1111 1111", SensitiveDataType.BANKING),
+        ("4111 1111 1111 1111", SensitiveDataType.BANKING),
+        ("расчетный счет 40702810900000000001", SensitiveDataType.BANKING),
+        ("api-key: sk-secret-token", SensitiveDataType.CREDENTIAL),
+        ("пароль: qwerty123", SensitiveDataType.CREDENTIAL),
+    ],
+)
+def test_structured_sensitive_data_is_blocked_in_food_text(text, expected_reason):
+    result = check_sensitive_meal_text(text)
+
+    assert result.is_sensitive is True
+    assert result.reason is expected_reason
+
+
+def test_food_name_ner_blocks_confident_full_name_but_not_food_like_names():
+    blocked = check_sensitive_food_name("Лев Николаевич Толстой")
+
+    assert blocked.is_sensitive is True
+    assert blocked.reason is SensitiveDataType.PERSONAL_IDENTITY
+    assert check_sensitive_food_name("салат Цезарь").is_sensitive is False
+    assert check_sensitive_food_name("молоко Простоквашино").is_sensitive is False
 
 
 @pytest.mark.parametrize(
@@ -221,3 +263,71 @@ def test_sensitive_input_is_rejected_before_ai_without_state_or_database_storage
     assert source_text not in caplog.text
     assert "Иванов" not in caplog.text
     assert "+7 999" not in caplog.text
+
+
+def test_sensitive_custom_product_name_is_rejected_before_draft_storage():
+    source_text = "Лев Николаевич Толстой, карта 4111 1111 1111 1111"
+    message = SimpleNamespace(
+        text=source_text,
+        from_user=SimpleNamespace(id=12345),
+        answer=AsyncMock(),
+        bot=SimpleNamespace(),
+    )
+    state = _MealInputState()
+
+    with patch(
+        "handlers.meals._reroute_add_method_button_if_needed",
+        new=AsyncMock(return_value=False),
+    ), patch("handlers.meals._show_custom_product_value_editor", new=AsyncMock()) as show_editor:
+        asyncio.run(meals.handle_custom_product_name(message, state))
+
+    show_editor.assert_not_awaited()
+    assert "custom_product" not in state._data
+    message.answer.assert_awaited_once_with(
+        meals.SENSITIVE_FOOD_NAME_REJECTED_TEXT,
+        parse_mode="HTML",
+    )
+
+
+def test_sensitive_product_rename_is_rejected_before_state_or_database_update():
+    source_text = "дата рождения: 01.02.1990"
+    message = SimpleNamespace(text=source_text, answer=AsyncMock())
+    state = _MealInputState()
+    state._data.update(
+        {
+            "editing_product_idx": 0,
+            "meal_id": 10,
+            "saved_products": [{"name": "Гречка", "grams": 100}],
+        }
+    )
+
+    with patch("handlers.meals.MealRepository.update_meal") as update_meal:
+        asyncio.run(meals.meal_product_name_input_value(message, state))
+
+    update_meal.assert_not_called()
+    assert state._data["saved_products"][0]["name"] == "Гречка"
+    message.answer.assert_awaited_once_with(
+        meals.SENSITIVE_FOOD_NAME_REJECTED_TEXT,
+        parse_mode="HTML",
+    )
+
+
+def test_sensitive_photo_dish_name_is_rejected_before_draft_update():
+    source_text = "ул. Пушкина, д. 12, кв. 4"
+    message = SimpleNamespace(text=source_text, answer=AsyncMock())
+    state = _MealInputState()
+    state._data.update(
+        {
+            "photo_analysis_dish_name": "Суп",
+            "photo_analysis_items": [{"name": "Суп", "grams": 300}],
+            "photo_save_token": "valid-token",
+        }
+    )
+
+    asyncio.run(meals.photo_analysis_dish_name_apply(message, state))
+
+    assert state._data["photo_analysis_dish_name"] == "Суп"
+    message.answer.assert_awaited_once_with(
+        meals.SENSITIVE_FOOD_NAME_REJECTED_TEXT,
+        parse_mode="HTML",
+    )

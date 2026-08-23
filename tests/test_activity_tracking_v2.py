@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -18,7 +18,7 @@ from services.activity_energy_service import (
     calculate_steps_energy,
     calculate_timed_activity_energy,
     calculate_workout_energy,
-    estimate_quick_workout_duration_seconds,
+    estimate_workout_duration_seconds,
     summarize_daily_activity_energy,
 )
 from utils.activity_catalog import (
@@ -29,7 +29,14 @@ from utils.activity_catalog import (
     WORKOUT_INTENSITY_METS,
     WORKOUT_INTENSITY_LABELS,
 )
-from handlers.activity_tracking import _format_set
+from handlers.activity_tracking import (
+    _exercise_categories_keyboard,
+    _exercise_search_matches,
+    _format_set,
+    _load_prompt,
+    _timed_search_matches,
+    format_activity_overview,
+)
 from utils.keyboards import TRAINING_BUTTON_TEXT, training_menu
 
 
@@ -88,13 +95,21 @@ def test_first_version_asks_only_the_three_agreed_workout_intensities():
 def test_main_activity_navigation_uses_new_russian_process_names():
     assert TRAINING_BUTTON_TEXT == "🏃 Активность"
     labels = [button.text for row in training_menu.keyboard for button in row]
-    assert labels[:5] == [
-        "⏱ Добавить по времени",
-        "🏋️ Начать тренировку",
-        "⚡ Быстрое упражнение",
-        "🚶 Добавить шаги",
-        "📅 История",
+    assert labels[:3] == [
+        "⏱ Активность по времени",
+        "🏋️ Тренировка",
+        "📅 Календарь активности",
     ]
+    assert "⚡ Быстрое упражнение" not in labels
+
+
+def test_timed_and_exercise_search_find_russian_names():
+    assert [item.code for item in _timed_search_matches("бокс")][:3] == [
+        "boxing", "kickboxing", "muay_thai",
+    ]
+    assert "barbell_bench_press" in {item.code for item in _exercise_search_matches("жим штанги")}
+    category_labels = [button.text for row in _exercise_categories_keyboard().inline_keyboard for button in row]
+    assert category_labels[0] == "🔎 Поиск упражнения"
 
 
 def test_timed_catalog_is_russian_and_uses_stable_unique_codes():
@@ -147,6 +162,12 @@ def test_exercise_measurements_cover_bodyweight_free_weight_and_time():
     assert EXERCISE_BY_CODE["plank"].measurement_type == "duration"
 
 
+def test_weight_prompts_preserve_equipment_specific_input_rules():
+    assert "включая гриф" in _load_prompt(EXERCISE_BY_CODE["barbell_bench_press"])
+    assert "одной гантели" in _load_prompt(EXERCISE_BY_CODE["dumbbell_bench_press"])
+    assert "стека" in _load_prompt(EXERCISE_BY_CODE["leg_press"])
+
+
 def test_activity_validation_rejects_non_finite_and_unrealistic_values():
     with pytest.raises(ActivityValidationError):
         calculate_met_energy(met=5, weight_kg=float("nan"), duration_minutes=30)
@@ -178,14 +199,25 @@ def test_steps_overlap_is_subtracted_from_daily_summary():
     assert summary.gross_calories == pytest.approx(308)
 
 
-def test_estimated_quick_duration_uses_tempo_and_rest():
+def test_estimated_workout_duration_uses_tempo_and_rest():
     sets = [
         SimpleNamespace(repetitions=10, duration_seconds=None, exercise_code="pushups", session_exercise_id=1),
         SimpleNamespace(repetitions=10, duration_seconds=None, exercise_code="pushups", session_exercise_id=1),
         SimpleNamespace(repetitions=8, duration_seconds=None, exercise_code="pushups", session_exercise_id=1),
     ]
 
-    assert estimate_quick_workout_duration_seconds(sets) == 204
+    assert estimate_workout_duration_seconds(sets) == 204
+
+
+def test_estimated_workout_duration_does_not_count_set_rest_across_exercises_twice():
+    sets = [
+        SimpleNamespace(repetitions=10, duration_seconds=None, distance_meters=None, exercise_code="pushups", session_exercise_id=1),
+        SimpleNamespace(repetitions=10, duration_seconds=None, distance_meters=None, exercise_code="pushups", session_exercise_id=1),
+        SimpleNamespace(repetitions=10, duration_seconds=None, distance_meters=None, exercise_code="bodyweight_squats", session_exercise_id=2),
+    ]
+
+    # 90 сек работы + 60 сек между подходами + 90 сек на смену упражнения.
+    assert estimate_workout_duration_seconds(sets) == 240
 
 
 def test_repository_preserves_snapshots_and_catalog_seeding_is_idempotent(activity_store):
@@ -253,40 +285,70 @@ def test_recent_timed_activities_are_unique_and_crud_uses_snapshots(activity_sto
     assert ActivityRepository.get_timed_activity(first.id, "1") is None
 
 
-def test_workout_timer_pause_and_session_level_calories(activity_store):
-    started = datetime(2026, 8, 23, 10, 0, 0)
-    workout = ActivityRepository.create_workout_session(
-        user_id="1", entry_date=date(2026, 8, 23), weight_kg=70,
-        weight_source="profile", started_at=started,
+def test_today_overview_restores_old_inline_actions_without_day_arrows(activity_store):
+    config = TIMED_ACTIVITY_BY_CODE["boxing"]
+    energy = calculate_timed_activity_energy(
+        activity_code=config.code, intensity="moderate", weight_kg=70, duration_minutes=30,
     )
-    assert ActivityRepository.pause_workout(workout.id, "1", started + timedelta(minutes=20))
-    assert ActivityRepository.resume_workout(workout.id, "1", started + timedelta(minutes=30))
-    draft = ActivityRepository.mark_workout_awaiting_intensity(
-        workout.id, "1", started + timedelta(minutes=60)
+    ActivityRepository.save_timed_activity(
+        user_id="1", activity_code=config.code, activity_name=config.name,
+        entry_date=date.today(), duration_minutes=30, intensity="moderate",
+        met_value=energy.met_value, weight_kg=70, weight_source="profile",
+        gross_calories=energy.gross_calories, credited_calories=energy.credited_calories,
     )
 
-    assert draft.duration_seconds == 3000
+    text, keyboard = format_activity_overview("1", date.today())
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+
+    assert "Бокс — 30 мин" in text
+    assert labels == ["✏️ Редактировать активность", "👣 Добавить шаги"]
+    assert all("prev" not in callback and "next" not in callback for callback in callbacks)
+
+
+def test_manual_workout_uses_estimated_duration_and_session_level_calories(activity_store):
+    workout = ActivityRepository.create_workout_session(
+        user_id="1", entry_date=date(2026, 8, 23), weight_kg=70,
+        weight_source="profile",
+    )
+    config = EXERCISE_BY_CODE["pushups"]
+    exercise = ActivityRepository.add_session_exercise(
+        session_id=workout.id, user_id="1", exercise_code=config.code,
+        exercise_name=config.name, measurement_type=config.measurement_type,
+        load_input_mode=config.load_input_mode,
+        tempo_seconds_per_rep=config.tempo_seconds_per_rep,
+    )
+    for repetitions in (10, 10, 8):
+        ActivityRepository.add_workout_set(
+            session_id=workout.id, session_exercise_id=exercise.id,
+            user_id="1", repetitions=repetitions,
+        )
+    duration_seconds = estimate_workout_duration_seconds(
+        ActivityRepository.get_session_sets(workout.id, "1")
+    )
+    assert duration_seconds == 204
     energy = calculate_workout_energy(
-        intensity="moderate", weight_kg=draft.weight_kg_snapshot,
-        duration_seconds=draft.duration_seconds,
+        intensity="moderate", weight_kg=workout.weight_kg_snapshot,
+        duration_seconds=duration_seconds,
     )
     completed = ActivityRepository.finish_workout(
-        session_id=draft.id, user_id="1", intensity="moderate",
+        session_id=workout.id, user_id="1", intensity="moderate",
+        duration_seconds=duration_seconds,
         met_value=energy.met_value, gross_calories=energy.gross_calories,
         credited_calories=energy.credited_calories,
     )
     assert completed.status == "completed"
-    assert completed.gross_calories == pytest.approx(306.25)
-    assert completed.credited_calories == pytest.approx(245.0)
-    assert completed.exercise_count == 0
-    assert completed.set_count == 0
+    assert completed.duration_source == "estimated"
+    assert completed.duration_seconds == 204
+    assert completed.exercise_count == 1
+    assert completed.set_count == 3
     assert completed.training_volume_kg == 0
 
 
 def test_repository_keeps_individual_sets_and_repeats_previous(activity_store):
     workout = ActivityRepository.create_workout_session(
         user_id="1", entry_date=date.today(), weight_kg=70,
-        weight_source="profile", started_at=datetime.utcnow(),
+        weight_source="profile",
     )
     config = EXERCISE_BY_CODE["barbell_bench_press"]
     exercise = ActivityRepository.add_session_exercise(
@@ -306,14 +368,13 @@ def test_repository_keeps_individual_sets_and_repeats_previous(activity_store):
     assert repeated.position == 2
     assert [(item.repetitions, item.load_kg) for item in sets] == [(10, 60), (10, 60)]
 
-    draft = ActivityRepository.mark_workout_awaiting_intensity(
-        workout.id, "1", duration_seconds=600,
-    )
+    duration_seconds = estimate_workout_duration_seconds(sets)
     energy = calculate_workout_energy(
-        intensity="moderate", weight_kg=70, duration_seconds=draft.duration_seconds,
+        intensity="moderate", weight_kg=70, duration_seconds=duration_seconds,
     )
     completed = ActivityRepository.finish_workout(
         session_id=workout.id, user_id="1", intensity="moderate",
+        duration_seconds=duration_seconds,
         met_value=energy.met_value, gross_calories=energy.gross_calories,
         credited_calories=energy.credited_calories,
     )
@@ -329,6 +390,22 @@ def test_repository_keeps_individual_sets_and_repeats_previous(activity_store):
     assert ActivityRepository.get_workout_set(first.id, "1") is None
     refreshed = ActivityRepository.get_workout_session(workout.id, "1")
     assert (refreshed.set_count, refreshed.training_volume_kg) == (1, 500)
+
+
+def test_cancelled_set_input_does_not_leave_empty_exercise_in_draft(activity_store):
+    workout = ActivityRepository.create_workout_session(
+        user_id="1", entry_date=date.today(), weight_kg=70, weight_source="profile",
+    )
+    config = EXERCISE_BY_CODE["pushups"]
+    ActivityRepository.add_session_exercise(
+        session_id=workout.id, user_id="1", exercise_code=config.code,
+        exercise_name=config.name, measurement_type=config.measurement_type,
+        load_input_mode=config.load_input_mode,
+        tempo_seconds_per_rep=config.tempo_seconds_per_rep,
+    )
+
+    assert ActivityRepository.remove_empty_session_exercises(workout.id, "1") == 1
+    assert ActivityRepository.get_session_exercises(workout.id, "1") == []
 
 
 def test_set_formatter_keeps_actual_units_only():
@@ -349,14 +426,14 @@ def test_set_formatter_keeps_actual_units_only():
 def test_only_one_open_workout_is_allowed(activity_store):
     created = ActivityRepository.create_workout_session(
         user_id="1", entry_date=date.today(), weight_kg=70,
-        weight_source="profile", started_at=datetime.utcnow(),
+        weight_source="profile",
     )
-    reopened = ActivityRepository.get_active_workout("1")
+    reopened = ActivityRepository.get_workout_draft("1")
     assert reopened.id == created.id
-    assert reopened.status == "active"
+    assert reopened.status == "draft"
 
-    with pytest.raises(repository_module.ActiveWorkoutExistsError):
+    with pytest.raises(repository_module.WorkoutDraftExistsError):
         ActivityRepository.create_workout_session(
             user_id="1", entry_date=date.today(), weight_kg=70,
-            weight_source="profile", started_at=datetime.utcnow(),
+            weight_source="profile",
         )

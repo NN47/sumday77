@@ -66,15 +66,14 @@ class ActivityTrackingStates(StatesGroup):
     """Состояния новой независимой модели физической активности."""
 
     entering_timed_duration = State()
+    searching_timed_activity = State()
+    searching_exercise = State()
     editing_timed_duration = State()
     entering_steps = State()
     entering_set_repetitions = State()
     entering_set_load = State()
     entering_set_duration = State()
     entering_set_distance = State()
-    entering_quick_sets = State()
-    entering_quick_load = State()
-    editing_workout_duration = State()
     editing_set_repetitions = State()
     editing_set_load = State()
 

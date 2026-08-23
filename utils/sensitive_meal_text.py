@@ -5,7 +5,10 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from typing import Pattern
+
+from natasha import Doc, NewsEmbedding, NewsNERTagger, Segmenter
 
 
 class SensitiveDataType(str, Enum):
@@ -25,6 +28,7 @@ class SensitiveTextPolicy(str, Enum):
     """Context-specific policies for the shared local text check."""
 
     MEAL = "meal"
+    FOOD_NAME = "food_name"
     SUPPORT = "support"
 
 
@@ -53,7 +57,9 @@ DOCUMENT_PATTERNS = _compile(
     r"\b(?:мой\s+)?паспорт\b",
     r"\b(?:номер|серия)\s+паспорта\b",
     r"\bпаспорт\s*[:№]\s*\d{2}\s*\d{2}\s*\d{6}\b",
+    r"(?<!\d)\d{2}\s+\d{2}\s+\d{6}(?!\d)",
     r"\bснилс\b(?:\s*[:№]?\s*\d{3}[- ]?\d{3}[- ]?\d{3}[- ]?\d{2})?",
+    r"(?<!\d)\d{3}-\d{3}-\d{3}[ -]\d{2}(?!\d)",
     r"\bинн\s*[:№]?\s*\d{10,12}\b",
 )
 
@@ -74,12 +80,24 @@ PERSONAL_NAME_PATTERNS = _compile(
     ignore_case=False,
 )
 
+DATE_OF_BIRTH_PATTERNS = _compile(
+    r"\b(?:дата\s+рождения|д\.\s*р\.)\s*[:=-]?\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b",
+    r"\b(?:родил(?:ся|ась)|рожден(?:а)?)\s+\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b",
+    r"\b(?:родил(?:ся|ась)|рожден(?:а)?)\s+\d{1,2}\s+"
+    r"(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)"
+    r"\s+\d{4}\b",
+)
+
 ADDRESS_PATTERNS = _compile(
     r"\bмой\s+адрес\b",
     r"\bадрес\s+проживания\b",
     r"\bживу\s+по\s+адресу\b",
+    r"\bпроживаю\s+по\s+адресу\b",
     r"\bпрописан(?:а)?\s+по\s+адресу\b",
     r"\bместо\s+жительства\b",
+    r"\b(?:ул(?:ица)?\.?|проспект|пр-т|переулок|пер\.?|шоссе|набережная|наб\.?)"
+    r"\s+[а-яё0-9 .'-]{2,40}(?:,|\s)\s*(?:д(?:ом)?\.?)\s*№?\s*\d+[а-я]?\b",
+    r"\b(?:д(?:ом)?\.?)\s*№?\s*\d+[а-я]?\s*[,;]\s*(?:кв(?:артира)?\.?)\s*№?\s*\d+\b",
 )
 
 MEDICAL_DISEASE_PATTERNS = _compile(
@@ -87,7 +105,7 @@ MEDICAL_DISEASE_PATTERNS = _compile(
     r"\bзаболеван\w*\b",
     r"\bболезн\w*\b",
     r"\bболею\b",
-    r"\bдиабет\w*\b",
+    r"\bдиабет(?!ическ)\w*\b",
     r"\bпреддиабет\w*\b",
     r"\bинсулинорезистент\w*\b",
     r"\bгипертон\w*\b",
@@ -186,7 +204,7 @@ MEDICAL_MEDICATION_PATTERNS = _compile(
 
 MEDICAL_DOCTOR_PATTERNS = _compile(
     r"\bврач\w*\b",
-    r"\bдоктор\w*\b",
+    r"\bдоктор(?!ск)\w*\b",
     r"\bтерапевт\w*\b",
     r"\bхирург\w*\b",
     r"\bэндокринолог\w*\b",
@@ -389,7 +407,10 @@ def _check_meal_text(normalized: str, normalized_original: str) -> SensitiveMeal
         (SensitiveDataType.DOCUMENT, DOCUMENT_PATTERNS, normalized),
         (SensitiveDataType.PERSONAL_IDENTITY, PERSONAL_IDENTITY_PATTERNS, normalized),
         (SensitiveDataType.PERSONAL_IDENTITY, PERSONAL_NAME_PATTERNS, normalized_original),
+        (SensitiveDataType.PERSONAL_IDENTITY, DATE_OF_BIRTH_PATTERNS, normalized),
         (SensitiveDataType.ADDRESS, ADDRESS_PATTERNS, normalized),
+        (SensitiveDataType.CREDENTIAL, CREDENTIAL_PATTERNS, normalized),
+        (SensitiveDataType.BANKING, BANKING_PATTERNS, normalized),
         (SensitiveDataType.MEDICAL, MEDICAL_STRONG_PATTERNS, normalized),
         (SensitiveDataType.MEDICAL, MEDICAL_PHRASE_PATTERNS, normalized),
         (SensitiveDataType.MEDICAL, MEDICAL_CONTEXT_PATTERNS, normalized),
@@ -397,6 +418,43 @@ def _check_meal_text(normalized: str, normalized_original: str) -> SensitiveMeal
     for reason, patterns, candidate in checks:
         if _matches_any(candidate, patterns):
             return SensitiveMealTextCheck(is_sensitive=True, reason=reason)
+    if _contains_payment_card_number(normalized):
+        return SensitiveMealTextCheck(is_sensitive=True, reason=SensitiveDataType.BANKING)
+    return SensitiveMealTextCheck(is_sensitive=False)
+
+
+@lru_cache(maxsize=1)
+def _food_name_ner() -> tuple[Segmenter, NewsNERTagger]:
+    """Load the compact CPU-only Natasha NER model once per process."""
+    embedding = NewsEmbedding()
+    return Segmenter(), NewsNERTagger(embedding)
+
+
+def _contains_confident_full_name(text: str) -> bool:
+    """Use NER only for high-confidence full names, never for lone food-like names."""
+    segmenter, ner_tagger = _food_name_ner()
+    doc = Doc(text)
+    doc.segment(segmenter)
+    doc.tag_ner(ner_tagger)
+    patronymic = re.compile(r"(?:ович|евич|ич|овна|евна|ична)$", re.IGNORECASE)
+    for span in doc.spans:
+        if span.type != "PER":
+            continue
+        words = re.findall(r"[А-ЯЁа-яё]+(?:-[А-ЯЁа-яё]+)?", span.text)
+        if len(words) >= 3 and any(patronymic.search(word) for word in words):
+            return True
+    return False
+
+
+def _check_food_name(normalized: str, normalized_original: str) -> SensitiveMealTextCheck:
+    base_check = _check_meal_text(normalized, normalized_original)
+    if base_check.is_sensitive:
+        return base_check
+    if _contains_confident_full_name(normalized_original):
+        return SensitiveMealTextCheck(
+            is_sensitive=True,
+            reason=SensitiveDataType.PERSONAL_IDENTITY,
+        )
     return SensitiveMealTextCheck(is_sensitive=False)
 
 
@@ -451,6 +509,8 @@ def check_sensitive_text(
     normalized = normalized_original.casefold()
     if policy is SensitiveTextPolicy.MEAL:
         return _check_meal_text(normalized, normalized_original)
+    if policy is SensitiveTextPolicy.FOOD_NAME:
+        return _check_food_name(normalized, normalized_original)
     if policy is SensitiveTextPolicy.SUPPORT:
         return _check_support_text(normalized)
     raise ValueError(f"Unsupported sensitive-text policy: {policy!r}")
@@ -459,6 +519,11 @@ def check_sensitive_text(
 def check_sensitive_meal_text(text: str) -> SensitiveMealTextCheck:
     """Backward-compatible meal-specific wrapper."""
     return check_sensitive_text(text, policy=SensitiveTextPolicy.MEAL)
+
+
+def check_sensitive_food_name(text: str) -> SensitiveMealTextCheck:
+    """Strict local check for user-defined product and dish names."""
+    return check_sensitive_text(text, policy=SensitiveTextPolicy.FOOD_NAME)
 
 
 def check_sensitive_support_text(text: str) -> SensitiveMealTextCheck:
