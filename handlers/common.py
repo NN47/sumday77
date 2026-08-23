@@ -196,7 +196,7 @@ async def quick_supplements(callback: CallbackQuery, state: FSMContext):
 async def quick_steps_add(callback: CallbackQuery, state: FSMContext):
     """Быстрый переход к добавлению шагов."""
     await callback.answer()
-    from handlers.workouts import start_steps_flow
+    from handlers.activity_tracking import start_steps_flow
     await start_steps_flow(callback.message, state, str(callback.from_user.id))
 
 

@@ -5,8 +5,9 @@ import asyncio
 import json
 from dataclasses import dataclass
 from datetime import date, timedelta
+from sqlalchemy.exc import SQLAlchemyError
 
-from database.repositories import MealRepository, WeightRepository, WorkoutRepository, WaterRepository, NoteRepository
+from database.repositories import ActivityRepository, MealRepository, WeightRepository, WorkoutRepository, WaterRepository, NoteRepository
 from handlers.water import get_water_recommended
 from services.deepseek_service import deepseek_service
 from utils.formatters import get_kbju_goal_label
@@ -14,6 +15,7 @@ from utils.meal_types import display_meal_type
 from utils.progress_formatters import LIFESTYLE_ACTIVITY_COEFFICIENTS
 from utils.note_factors import normalize_note_rating, sanitize_note_factors
 from utils.workout_utils import calculate_workout_calories
+from services.activity_energy_service import get_daily_activity_energy_summary
 
 DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT = """# Роль
 
@@ -447,22 +449,66 @@ class ExtendedActivityAnalysisService:
             water_by_day[current.isoformat()] = WaterRepository.get_daily_total(user_id, current)
             current += timedelta(days=1)
 
-        workouts = WorkoutRepository.get_workouts_for_period(user_id, period.start_date, period.end_date)
-        workout_items = []
-        steps = 0
+        try:
+            timed_entries = ActivityRepository.get_timed_activities_for_period(user_id, period.start_date, period.end_date)
+            sessions = [
+                item for item in ActivityRepository.get_workout_sessions_for_period(user_id, period.start_date, period.end_date)
+                if item.status == "completed"
+            ]
+            step_entries = ActivityRepository.get_steps_for_period(user_id, period.start_date, period.end_date)
+        except SQLAlchemyError:
+            timed_entries, sessions, step_entries = [], [], []
+        workout_items = [
+            {
+                "date": item.entry_date.isoformat(),
+                "kind": "timed_activity",
+                "activity_code": item.activity_code,
+                "activity": item.activity_name_snapshot,
+                "duration_minutes": item.duration_minutes,
+                "intensity": item.intensity,
+                "estimated_kcal": round(item.gross_calories),
+            }
+            for item in timed_entries
+        ]
+        for session in sessions:
+            exercise_names = [
+                exercise.exercise_name_snapshot
+                for exercise in ActivityRepository.get_session_exercises(session.id, user_id)
+            ]
+            workout_items.append({
+                "date": session.entry_date.isoformat(),
+                "kind": "workout",
+                "duration_minutes": round((session.duration_seconds or 0) / 60, 1),
+                "intensity": session.intensity,
+                "exercises": exercise_names,
+                "estimated_kcal": round(session.gross_calories),
+            })
+        steps = sum(item.steps for item in step_entries)
         burned = 0.0
-        for w in workouts:
-            kcal = w.calories or calculate_workout_calories(user_id, w.exercise, w.variant, w.count)
-            burned += kcal
-            if (w.exercise or "").strip().lower() in {"steps", "шаги"}:
-                steps += int(w.count or 0)
-            workout_items.append({"date": w.date.isoformat(), "exercise": w.exercise, "variant": w.variant, "count": w.count, "estimated_kcal": round(kcal)})
+        counted = 0
+        current_activity_date = period.start_date
+        while current_activity_date <= period.end_date:
+            activity_summary = get_daily_activity_energy_summary(user_id, current_activity_date)
+            burned += activity_summary.gross_calories
+            counted += round(activity_summary.credited_calories)
+            current_activity_date += timedelta(days=1)
+
+        # Временная совместимость с базой до переключения на новую схему.
+        if not workout_items and not step_entries:
+            workouts = WorkoutRepository.get_workouts_for_period(user_id, period.start_date, period.end_date)
+            for w in workouts:
+                kcal = w.calories or calculate_workout_calories(user_id, w.exercise, w.variant, w.count)
+                burned += kcal
+                if (w.exercise or "").strip().lower() in {"steps", "шаги"}:
+                    steps += int(w.count or 0)
+                workout_items.append({"date": w.date.isoformat(), "exercise": w.exercise, "variant": w.variant, "count": w.count, "estimated_kcal": round(kcal)})
 
         weights = WeightRepository.get_weights_for_date_range(user_id, period.end_date - timedelta(days=10), period.end_date)
         total = {"calories": sum(m.calories or 0 for m in meals), "protein": sum(m.protein or 0 for m in meals), "fat": sum(m.fat or 0 for m in meals), "carbs": sum(m.carbs or 0 for m in meals)}
         base = {"calories": settings.calories, "protein": settings.protein, "fat": settings.fat, "carbs": settings.carbs} if settings else None
-        coef = LIFESTYLE_ACTIVITY_COEFFICIENTS.get(((settings.activity if settings else "") or "").strip().lower(), LIFESTYLE_ACTIVITY_COEFFICIENTS["medium"])
-        counted = round(burned * coef)
+        if not timed_entries and not sessions and not step_entries:
+            coef = LIFESTYLE_ACTIVITY_COEFFICIENTS.get(((settings.activity if settings else "") or "").strip().lower(), LIFESTYLE_ACTIVITY_COEFFICIENTS["medium"])
+            counted = round(burned * coef)
         adjusted_cal = (settings.calories + counted) if settings else None
         ratio = adjusted_cal / settings.calories if settings and settings.calories else 1
         adjusted = {"calories": adjusted_cal, "protein": settings.protein * ratio, "fat": settings.fat * ratio, "carbs": settings.carbs * ratio} if settings else None

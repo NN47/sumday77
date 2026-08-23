@@ -62,6 +62,23 @@ class WorkoutStates(StatesGroup):
     editing_weight = State()  # Редактирование рабочего веса
 
 
+class ActivityTrackingStates(StatesGroup):
+    """Состояния новой независимой модели физической активности."""
+
+    entering_timed_duration = State()
+    editing_timed_duration = State()
+    entering_steps = State()
+    entering_set_repetitions = State()
+    entering_set_load = State()
+    entering_set_duration = State()
+    entering_set_distance = State()
+    entering_quick_sets = State()
+    entering_quick_load = State()
+    editing_workout_duration = State()
+    editing_set_repetitions = State()
+    editing_set_load = State()
+
+
 class WeightStates(StatesGroup):
     """Состояния для работы с весом."""
     entering_weight = State()

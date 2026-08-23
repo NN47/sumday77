@@ -214,18 +214,15 @@ class NutritionCalculatorTests(unittest.TestCase):
         self.assertGreaterEqual(profile.carbs, 0)
 
     def test_steps_coefficient_thresholds(self):
-        self.assertEqual(get_steps_calories_coefficient(2999), 0.0)
-        self.assertEqual(get_steps_calories_coefficient(3000), 0.30)
-        self.assertEqual(get_steps_calories_coefficient(6999), 0.30)
-        self.assertEqual(get_steps_calories_coefficient(7000), 0.50)
-        self.assertEqual(get_steps_calories_coefficient(11999), 0.50)
-        self.assertEqual(get_steps_calories_coefficient(12000), 0.65)
+        self.assertEqual(get_steps_calories_coefficient(0), 1.0)
+        self.assertEqual(get_steps_calories_coefficient(3000), 1.0)
+        self.assertEqual(get_steps_calories_coefficient(12000), 1.0)
 
     def test_counted_steps_calories_uses_partial_coefficient(self):
-        self.assertEqual(calculate_counted_steps_calories(steps=8000, steps_calories=215), 108)
+        self.assertEqual(calculate_counted_steps_calories(steps=8000, steps_calories=215), 215)
 
     def test_counted_workout_calories_uses_90_percent(self):
-        self.assertEqual(calculate_counted_workout_calories(workout_calories=333), 300)
+        self.assertEqual(calculate_counted_workout_calories(workout_calories=333), 333)
 
     def test_daily_calorie_summary_builds_expected_values(self):
         summary = calculate_daily_calorie_summary(
@@ -239,11 +236,11 @@ class NutritionCalculatorTests(unittest.TestCase):
         self.assertEqual(summary.base_goal, 2000)
         self.assertEqual(summary.eaten_calories, 1800)
         self.assertEqual(summary.activity_total, 570)
-        self.assertEqual(summary.activity_counted, 385)
-        self.assertEqual(summary.daily_limit, 2385)
-        self.assertEqual(summary.calories_left, 585)
+        self.assertEqual(summary.activity_counted, 570)
+        self.assertEqual(summary.daily_limit, 2570)
+        self.assertEqual(summary.calories_left, 770)
 
-    def test_daily_calorie_summary_limits_activity_counted_to_800(self):
+    def test_daily_calorie_summary_does_not_apply_arbitrary_daily_cap(self):
         summary = calculate_daily_calorie_summary(
             base_goal=2100,
             eaten_calories=2200,
@@ -253,9 +250,9 @@ class NutritionCalculatorTests(unittest.TestCase):
         )
 
         self.assertEqual(summary.activity_total, 1500)
-        self.assertEqual(summary.activity_counted, 800)
-        self.assertEqual(summary.daily_limit, 2900)
-        self.assertEqual(summary.calories_left, 700)
+        self.assertEqual(summary.activity_counted, 1500)
+        self.assertEqual(summary.daily_limit, 3600)
+        self.assertEqual(summary.calories_left, 1400)
 
 
 if __name__ == "__main__":

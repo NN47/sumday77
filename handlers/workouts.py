@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-REPS_EXERCISES = {"Отжимания", "Подтягивания", "Приседания", "Пресс", "Берпи"}
+REPS_EXERCISES = {"Отжимания", "Подтягивания", "Приседания", "Скручивания", "Берпи"}
 DURATION_EXERCISES = {
     "Планка",
     "Йога",
@@ -1969,5 +1969,12 @@ async def enter_manual_count(message: Message, state: FSMContext):
 
 
 def register_workout_handlers(dp):
-    """Регистрирует обработчики тренировок."""
-    dp.include_router(router)
+    """Регистрирует новую независимую модель активности.
+
+    Функции этого модуля временно остаются импортируемыми для старых отчётов и
+    тестов, но пользовательские обновления больше не попадают в старую таблицу
+    ``workouts``.
+    """
+    from handlers.activity_tracking import router as activity_tracking_router
+
+    dp.include_router(activity_tracking_router)

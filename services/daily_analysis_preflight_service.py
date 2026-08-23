@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from datetime import date
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from sqlalchemy.exc import SQLAlchemyError
 
 from database.repositories import (
+    ActivityRepository,
     MealRepository,
     NoteRepository,
     WaterRepository,
@@ -79,8 +81,32 @@ def collect_daily_preflight(user_id: str, target_date: date) -> DailyAnalysisPre
     meals = MealRepository.get_meals_for_date(user_id, target_date)
     totals = MealRepository.get_daily_totals(user_id, target_date)
     water_ml = int(WaterRepository.get_daily_total(user_id, target_date) or 0)
-    workouts = WorkoutRepository.get_workouts_for_day(user_id, target_date)
-    steps, activity_text = _activity_line(workouts)
+    # Новая модель является основной. Legacy fallback нужен только на период,
+    # когда тестовые/старые базы ещё не содержат новых таблиц.
+    try:
+        timed_entries = ActivityRepository.get_timed_activities_for_day(user_id, target_date)
+        workout_sessions = [
+            item for item in ActivityRepository.get_workout_sessions_for_day(user_id, target_date)
+            if item.status == "completed"
+        ]
+        daily_steps = ActivityRepository.get_steps_for_day(user_id, target_date)
+    except SQLAlchemyError:
+        timed_entries, workout_sessions, daily_steps = [], [], None
+    if timed_entries or workout_sessions or daily_steps is not None:
+        steps = int(getattr(daily_steps, "steps", 0) or 0)
+        activity_parts = [
+            f"{entry.activity_name_snapshot.lower()} {_format_number(entry.duration_minutes)} мин"
+            for entry in timed_entries
+        ]
+        activity_parts.extend(
+            f"тренировка {_format_number((session.duration_seconds or 0) / 60)} мин"
+            for session in workout_sessions
+        )
+        activity_text = ", ".join(activity_parts[:3]) or "не внесена"
+        workouts = []
+    else:
+        workouts = WorkoutRepository.get_workouts_for_day(user_id, target_date)
+        steps, activity_text = _activity_line(workouts)
     weight = WeightRepository.get_weight_for_date(user_id, target_date)
     note = NoteRepository.get_note_for_date(user_id, target_date)
 
@@ -109,6 +135,24 @@ def collect_daily_preflight(user_id: str, target_date: date) -> DailyAnalysisPre
             }
             for workout in workouts
         ],
+        "timed_activities": [
+            {
+                "id": entry.id,
+                "activity_code": entry.activity_code,
+                "duration_minutes": entry.duration_minutes,
+                "intensity": entry.intensity,
+            }
+            for entry in timed_entries
+        ],
+        "workout_sessions": [
+            {
+                "id": session.id,
+                "duration_seconds": session.duration_seconds,
+                "intensity": session.intensity,
+            }
+            for session in workout_sessions
+        ],
+        "steps": steps,
         "weight": getattr(weight, "value", None),
         "note": {
             "rating": getattr(note, "day_rating", None),
@@ -117,7 +161,7 @@ def collect_daily_preflight(user_id: str, target_date: date) -> DailyAnalysisPre
     }
     payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, default=str)
     snapshot_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    has_non_steps_activity = any(
+    has_non_steps_activity = bool(timed_entries or workout_sessions) or any(
         (workout.exercise or "").strip().lower() not in {"шаги", "steps"}
         for workout in workouts
     )

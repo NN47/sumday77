@@ -28,7 +28,7 @@ ACTIVITY_INPUT_CONFIG: dict[str, ActivityInputConfig] = {
     "pushups": ActivityInputConfig("pushups", "Отжимания", "Отжимания", (ActivityInputMethod.REPETITIONS,)),
     "pullups": ActivityInputConfig("pullups", "Подтягивания", "Подтягивания", (ActivityInputMethod.REPETITIONS,)),
     "squats": ActivityInputConfig("squats", "Приседания", "Приседания", (ActivityInputMethod.REPETITIONS,)),
-    "abs": ActivityInputConfig("abs", "Пресс", "Пресс", (ActivityInputMethod.REPETITIONS,)),
+    "abs": ActivityInputConfig("abs", "Скручивания", "Скручивания", (ActivityInputMethod.REPETITIONS,)),
     "burpee": ActivityInputConfig("burpee", "Берпи", "Берпи", (ActivityInputMethod.REPETITIONS,)),
     "steps": ActivityInputConfig("steps", "Шаги", "Шаги", (ActivityInputMethod.STEPS,)),
 }

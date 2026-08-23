@@ -69,6 +69,202 @@ class Workout(Base):
     working_weight = Column(Float, nullable=True)
 
 
+class ActivityCategory(Base):
+    """Стабильная категория справочника поминутной активности."""
+
+    __tablename__ = "activity_categories"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(64), nullable=False, unique=True, index=True)
+    name = Column(String(120), nullable=False)
+    icon = Column(String(16), nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+
+class ExerciseCategory(Base):
+    """Стабильная категория справочника тренировочных упражнений."""
+
+    __tablename__ = "exercise_categories"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(64), nullable=False, unique=True, index=True)
+    name = Column(String(120), nullable=False)
+    icon = Column(String(16), nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+
+class TimedActivityDefinition(Base):
+    """Версионируемая запись справочника поминутных активностей."""
+
+    __tablename__ = "timed_activity_definitions"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(64), nullable=False, unique=True, index=True)
+    category_code = Column(
+        String(64), ForeignKey("activity_categories.code"), nullable=False, index=True,
+    )
+    name = Column(String(160), nullable=False)
+    emoji = Column(String(16), nullable=True)
+    intensity_mets_json = Column(Text, nullable=False, default="{}")
+    cadence_steps_per_minute = Column(Float, nullable=True)
+    source_name = Column(String(160), nullable=False)
+    source_version = Column(String(32), nullable=False)
+    source_updated_at = Column(Date, nullable=False)
+    source_url = Column(String(500), nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+
+class ExerciseDefinition(Base):
+    """Централизованная конфигурация упражнения и поддерживаемого ввода."""
+
+    __tablename__ = "exercise_definitions"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String(64), nullable=False, unique=True, index=True)
+    category_code = Column(
+        String(64), ForeignKey("exercise_categories.code"), nullable=False, index=True,
+    )
+    name = Column(String(160), nullable=False)
+    measurement_type = Column(String(32), nullable=False)  # repetitions | repetitions_load | duration | load_duration_distance
+    load_input_mode = Column(String(32), nullable=False, default="none")  # none | total | per_item | optional | assistance
+    tempo_seconds_per_rep = Column(Float, nullable=False, default=3.0)
+    sort_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+
+
+class TimedActivityEntry(Base):
+    """Поминутная активность со снимком всех исходных данных расчёта."""
+
+    __tablename__ = "timed_activity_entries"
+    __table_args__ = (
+        CheckConstraint("duration_minutes > 0", name="ck_timed_activity_positive_duration"),
+        CheckConstraint("met_value >= 0", name="ck_timed_activity_nonnegative_met"),
+        Index("ix_timed_activity_user_date", "user_id", "entry_date"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    activity_code = Column(String(64), nullable=False, index=True)
+    activity_name_snapshot = Column(String(160), nullable=False)
+    entry_date = Column(Date, nullable=False, default=date.today, index=True)
+    duration_minutes = Column(Float, nullable=False)
+    intensity = Column(String(16), nullable=False)
+    met_value = Column(Float, nullable=False)
+    weight_kg_snapshot = Column(Float, nullable=False)
+    weight_source = Column(String(24), nullable=False, default="profile")
+    gross_calories = Column(Float, nullable=False)
+    credited_calories = Column(Float, nullable=False)
+    duration_source = Column(String(24), nullable=False, default="entered")
+    calculation_version = Column(String(32), nullable=False)
+    source_version = Column(String(32), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class DailySteps(Base):
+    """Единое суточное значение шагов, не смешанное с упражнениями."""
+
+    __tablename__ = "daily_steps"
+    __table_args__ = (
+        UniqueConstraint("user_id", "entry_date", name="uq_daily_steps_user_date"),
+        CheckConstraint("steps >= 0", name="ck_daily_steps_nonnegative"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    entry_date = Column(Date, nullable=False, default=date.today, index=True)
+    steps = Column(Integer, nullable=False)
+    weight_kg_snapshot = Column(Float, nullable=False)
+    weight_source = Column(String(24), nullable=False, default="profile")
+    gross_calories = Column(Float, nullable=False)
+    credited_calories = Column(Float, nullable=False)
+    calculation_version = Column(String(32), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class WorkoutSession(Base):
+    """Тренировочная сессия; калории считаются за неё целиком."""
+
+    __tablename__ = "workout_sessions"
+    __table_args__ = (
+        Index("ix_workout_sessions_user_date", "user_id", "entry_date"),
+        Index("ix_workout_sessions_user_status", "user_id", "status"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    entry_date = Column(Date, nullable=False, default=date.today, index=True)
+    status = Column(String(24), nullable=False, default="active")  # active | paused | awaiting_intensity | completed | cancelled
+    session_kind = Column(String(24), nullable=False, default="workout")  # workout | quick
+    started_at = Column(DateTime, nullable=True)
+    ended_at = Column(DateTime, nullable=True)
+    paused_at = Column(DateTime, nullable=True)
+    paused_seconds = Column(Integer, nullable=False, default=0)
+    duration_seconds = Column(Integer, nullable=True)
+    duration_source = Column(String(24), nullable=False, default="timer")
+    intensity = Column(String(16), nullable=True)
+    met_value = Column(Float, nullable=True)
+    exercise_count = Column(Integer, nullable=False, default=0)
+    set_count = Column(Integer, nullable=False, default=0)
+    training_volume_kg = Column(Float, nullable=False, default=0)
+    weight_kg_snapshot = Column(Float, nullable=False)
+    weight_source = Column(String(24), nullable=False, default="profile")
+    gross_calories = Column(Float, nullable=False, default=0)
+    credited_calories = Column(Float, nullable=False, default=0)
+    calculation_version = Column(String(32), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class WorkoutSessionExercise(Base):
+    """Упражнение внутри сессии с сохранённым названием и конфигурацией."""
+
+    __tablename__ = "workout_session_exercises"
+    __table_args__ = (
+        UniqueConstraint("session_id", "position", name="uq_workout_session_exercise_position"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("workout_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    exercise_code = Column(String(64), nullable=False, index=True)
+    exercise_name_snapshot = Column(String(160), nullable=False)
+    measurement_type_snapshot = Column(String(32), nullable=False)
+    load_input_mode_snapshot = Column(String(32), nullable=False, default="none")
+    tempo_seconds_per_rep_snapshot = Column(Float, nullable=False, default=3.0)
+    position = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class WorkoutSet(Base):
+    """Отдельный подход упражнения."""
+
+    __tablename__ = "workout_sets"
+    __table_args__ = (
+        UniqueConstraint("session_exercise_id", "position", name="uq_workout_set_position"),
+        CheckConstraint("repetitions IS NULL OR repetitions > 0", name="ck_workout_set_positive_repetitions"),
+        CheckConstraint("load_kg IS NULL OR load_kg >= 0", name="ck_workout_set_nonnegative_load"),
+        CheckConstraint("duration_seconds IS NULL OR duration_seconds > 0", name="ck_workout_set_positive_duration"),
+        CheckConstraint("distance_meters IS NULL OR distance_meters > 0", name="ck_workout_set_positive_distance"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("workout_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_exercise_id = Column(Integer, ForeignKey("workout_session_exercises.id", ondelete="CASCADE"), nullable=False, index=True)
+    position = Column(Integer, nullable=False)
+    repetitions = Column(Integer, nullable=True)
+    load_kg = Column(Float, nullable=True)
+    load_kind = Column(String(24), nullable=True)  # working | additional | assistance
+    duration_seconds = Column(Integer, nullable=True)
+    distance_meters = Column(Float, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class CustomWorkoutExercise(Base):
     """Модель пользовательского упражнения для тренировок."""
     __tablename__ = "custom_workout_exercises"

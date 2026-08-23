@@ -217,11 +217,12 @@ def test_sup_boarding_search_matches_synonyms():
     assert "катание на сапе" in tokens
 
 
-def test_unweighted_deadlift_variants_are_bodyweight_not_gym():
+def test_unweighted_deadlift_variants_are_not_exposed_as_deadlifts():
     assert "Становая тяга без утяжелителя" not in workouts.ACTIVITY_CATEGORIES["gym"]["activities"]
     assert "Румынская тяга без утяжелителя" not in workouts.ACTIVITY_CATEGORIES["gym"]["activities"]
-    assert "Становая тяга без утяжелителя" in workouts.ACTIVITY_CATEGORIES["bodyweight"]["activities"]
-    assert "Румынская тяга без утяжелителя" in workouts.ACTIVITY_CATEGORIES["bodyweight"]["activities"]
+    assert "Становая тяга без утяжелителя" not in workouts.ACTIVITY_CATEGORIES["bodyweight"]["activities"]
+    assert "Румынская тяга без утяжелителя" not in workouts.ACTIVITY_CATEGORIES["bodyweight"]["activities"]
+    assert "Наклон с отведением таза" in workouts.ACTIVITY_CATEGORIES["bodyweight"]["activities"]
 
 def test_gym_category_main_list_is_sorted_by_russian_alphabet():
     gym_exercises = sorted([

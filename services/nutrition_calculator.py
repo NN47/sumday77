@@ -54,10 +54,6 @@ GOAL_LABELS: dict[str, str] = {
     "gain": "Набор массы",
 }
 
-MAX_ACTIVITY_COUNTED_CALORIES = 800
-WORKOUT_CALORIES_COEFFICIENT = 0.90
-
-
 @dataclass(frozen=True)
 class NutritionProfile:
     """Результат полного расчёта нормы КБЖУ."""
@@ -149,25 +145,20 @@ def calculate_macros(weight: float, target_calories: float, goal: str) -> tuple[
 
 
 def get_steps_calories_coefficient(steps: int) -> float:
-    """Возвращает коэффициент учёта калорий от шагов в зависимости от количества шагов."""
-    if steps < 3000:
-        return 0.0
-    if steps < 7000:
-        return 0.30
-    if steps < 12000:
-        return 0.50
-    return 0.65
+    """Совместимый API: новые калории шагов уже являются активными."""
+    _ = steps
+    return 1.0
 
 
 def calculate_counted_steps_calories(steps: int, steps_calories: int) -> int:
-    """Считает учитываемые калории от шагов с округлением до целого."""
-    coefficient = get_steps_calories_coefficient(steps=steps)
-    return round_half_up(max(steps_calories, 0) * coefficient)
+    """Принимает уже рассчитанную активную энергию шагов без второго процента."""
+    _ = steps
+    return round_half_up(max(steps_calories, 0))
 
 
 def calculate_counted_workout_calories(workout_calories: int) -> int:
-    """Считает учитываемые калории от тренировок с округлением до целого."""
-    return round_half_up(max(workout_calories, 0) * WORKOUT_CALORIES_COEFFICIENT)
+    """Принимает net-калории тренировки, рассчитанные единым MET-сервисом."""
+    return round_half_up(max(workout_calories, 0))
 
 
 def round_half_up(value: float) -> int:
@@ -186,7 +177,7 @@ def calculate_daily_calorie_summary(
     """
     Формирует итоговую дневную сводку:
     - activity_total = steps_calories + workout_calories
-    - activity_counted = counted_steps_calories + counted_workout_calories (но не более 800 ккал)
+    - activity_counted = активные калории шагов + активные калории тренировок
     - daily_limit = base_goal + activity_counted
     - calories_left = daily_limit - eaten_calories
     """
@@ -204,10 +195,7 @@ def calculate_daily_calorie_summary(
     )
 
     activity_total = safe_steps_calories + safe_workout_calories
-    activity_counted = min(
-        counted_steps_calories + counted_workout_calories,
-        MAX_ACTIVITY_COUNTED_CALORIES,
-    )
+    activity_counted = counted_steps_calories + counted_workout_calories
 
     daily_limit = safe_base_goal + activity_counted
     calories_left = daily_limit - safe_eaten_calories

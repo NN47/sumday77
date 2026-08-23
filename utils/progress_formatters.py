@@ -10,6 +10,7 @@ from database.repositories import (
 )
 from database.models import Workout
 from utils.workout_utils import calculate_workout_calories, get_daily_workout_calories
+from services.activity_energy_service import get_daily_activity_energy_summary
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +70,18 @@ def format_progress_block(user_id: str, entry_date: date | None = None) -> str:
     
     progress_date = entry_date or date.today()
     totals = MealRepository.get_daily_totals(user_id, progress_date)
-    activity_total = get_daily_workout_calories(user_id, progress_date)
-    lifestyle_coef = LIFESTYLE_ACTIVITY_COEFFICIENTS.get(
-        (settings.activity or "").strip().lower(),
-        LIFESTYLE_ACTIVITY_COEFFICIENTS["medium"],
-    )
-    activity_counted = round(activity_total * lifestyle_coef)
+    new_activity = get_daily_activity_energy_summary(user_id, progress_date)
+    if new_activity.gross_calories > 0 or new_activity.steps > 0:
+        activity_total = new_activity.gross_calories
+        activity_counted = round(new_activity.credited_calories)
+    else:
+        # Совместимость со старой таблицей до переключения сервера на новую БД.
+        activity_total = get_daily_workout_calories(user_id, progress_date)
+        lifestyle_coef = LIFESTYLE_ACTIVITY_COEFFICIENTS.get(
+            (settings.activity or "").strip().lower(),
+            LIFESTYLE_ACTIVITY_COEFFICIENTS["medium"],
+        )
+        activity_counted = round(activity_total * lifestyle_coef)
     
     base_calories_target = settings.calories
     adjusted_calories_target = base_calories_target + activity_counted

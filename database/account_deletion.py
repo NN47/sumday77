@@ -14,6 +14,7 @@ from database.models import (
     AIQuotaCounter,
     AIQuotaOperation,
     ActivityAnalysisEntry,
+    DailySteps,
     CustomWorkoutExercise,
     Dish,
     DishIngredient,
@@ -39,6 +40,10 @@ from database.models import (
     Weight,
     WellbeingEntry,
     Workout,
+    TimedActivityEntry,
+    WorkoutSession,
+    WorkoutSessionExercise,
+    WorkoutSet,
 )
 from database.session import get_db_session
 
@@ -57,6 +62,11 @@ DELETE_ORDER = (
     MealCompletionComment,
     SupplementNotificationState,
     SupplementEntry,
+    WorkoutSet,
+    WorkoutSessionExercise,
+    WorkoutSession,
+    TimedActivityEntry,
+    DailySteps,
     Workout,
     CustomWorkoutExercise,
     Weight,

@@ -20,6 +20,7 @@ from database.models import (
     ErrorLog,
     EveningAnalysisNotificationState,
     DailyAnalysisPreparationSession,
+    DailySteps,
     GeminiAccount,
     GeminiRequestLog,
     KbjuSettings,
@@ -41,6 +42,10 @@ from database.models import (
     Weight,
     WellbeingEntry,
     Workout,
+    TimedActivityEntry,
+    WorkoutSession,
+    WorkoutSessionExercise,
+    WorkoutSet,
 )
 
 
@@ -118,6 +123,73 @@ class AccountDeletionTests(unittest.TestCase):
         )
         session.add(EveningAnalysisNotificationState(user_id=user_id))
         session.add(Workout(user_id=user_id, exercise="Бег"))
+        session.add(
+            TimedActivityEntry(
+                user_id=user_id,
+                activity_code="walking_leisure",
+                activity_name_snapshot="Прогулка",
+                entry_date=quota_date,
+                duration_minutes=30,
+                intensity="moderate",
+                met_value=3,
+                weight_kg_snapshot=70,
+                weight_source="profile",
+                gross_calories=110,
+                credited_calories=73,
+                calculation_version="met-net-v1",
+                source_version="2024",
+            )
+        )
+        session.add(
+            DailySteps(
+                user_id=user_id,
+                entry_date=quota_date,
+                steps=8000,
+                weight_kg_snapshot=70,
+                weight_source="profile",
+                gross_calories=320,
+                credited_calories=320,
+                calculation_version="met-net-v1",
+            )
+        )
+        workout_session = WorkoutSession(
+            user_id=user_id,
+            entry_date=quota_date,
+            status="completed",
+            session_kind="workout",
+            duration_seconds=1800,
+            duration_source="timer",
+            intensity="moderate",
+            met_value=5,
+            weight_kg_snapshot=70,
+            weight_source="profile",
+            gross_calories=184,
+            credited_calories=147,
+            calculation_version="met-net-v1",
+        )
+        session.add(workout_session)
+        session.flush()
+        session_exercise = WorkoutSessionExercise(
+            user_id=user_id,
+            session_id=workout_session.id,
+            exercise_code="pushups",
+            exercise_name_snapshot="Отжимания",
+            measurement_type_snapshot="repetitions",
+            load_input_mode_snapshot="none",
+            tempo_seconds_per_rep_snapshot=3,
+            position=1,
+        )
+        session.add(session_exercise)
+        session.flush()
+        session.add(
+            WorkoutSet(
+                user_id=user_id,
+                session_id=workout_session.id,
+                session_exercise_id=session_exercise.id,
+                position=1,
+                repetitions=20,
+            )
+        )
         session.add(
             CustomWorkoutExercise(
                 user_id=user_id,

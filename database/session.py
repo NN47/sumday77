@@ -64,6 +64,24 @@ def init_db():
     # Создаём все таблицы
     Base.metadata.create_all(engine)
     logger.info("База данных инициализирована")
+
+    # Новый справочник физической активности синхронизируется отдельно от
+    # пользовательских записей. Повторный запуск безопасен.
+    from database.repositories.activity_repository import ActivityRepository
+
+    @contextmanager
+    def _catalog_session():
+        catalog_session = Session(bind=engine)
+        try:
+            yield catalog_session
+            catalog_session.commit()
+        except Exception:
+            catalog_session.rollback()
+            raise
+        finally:
+            catalog_session.close()
+
+    ActivityRepository.seed_catalog(session_provider=_catalog_session)
     
     # Простая миграция для добавления столбцов
     with engine.connect() as conn:

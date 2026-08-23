@@ -1431,19 +1431,16 @@ async def handle_daily_analysis_preflight(callback: CallbackQuery, state: FSMCon
         await start_add_water(callback.message, state, entry_date=target_date)
         return
     if action == "steps":
-        from handlers.workouts import start_steps_flow
+        from handlers.activity_tracking import start_steps_flow
 
         await state.clear()
         await start_steps_flow(callback.message, state, user_id, target_date)
         return
     if action == "activity":
-        from handlers.workouts import _send_add_activity_screen
-        from states.user_states import WorkoutStates
+        from handlers.activity_tracking import start_timed_activity_flow
 
         await state.clear()
-        await state.update_data(entry_date=target_date.isoformat())
-        await state.set_state(WorkoutStates.choosing_exercise)
-        await _send_add_activity_screen(callback.message, state, user_id)
+        await start_timed_activity_flow(callback.message, state, user_id, target_date)
         return
     if action == "note":
         from handlers.wellbeing import start_note_flow

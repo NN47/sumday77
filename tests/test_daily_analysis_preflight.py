@@ -108,8 +108,8 @@ class DailyAnalysisPreflightNavigationTests(unittest.TestCase):
             with (
                 patch("handlers.meals.show_day_meals", new=AsyncMock()) as food,
                 patch("handlers.water.start_add_water", new=AsyncMock()) as water,
-                patch("handlers.workouts.start_steps_flow", new=AsyncMock()) as steps,
-                patch("handlers.workouts._send_add_activity_screen", new=AsyncMock()) as activity,
+                patch("handlers.activity_tracking.start_steps_flow", new=AsyncMock()) as steps,
+                patch("handlers.activity_tracking.start_timed_activity_flow", new=AsyncMock()) as activity,
                 patch("handlers.wellbeing.start_note_flow", new=AsyncMock()) as note,
             ):
                 for action in ("food", "water", "steps", "activity", "note"):
