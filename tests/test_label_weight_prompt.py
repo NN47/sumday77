@@ -62,12 +62,15 @@ def test_label_weight_input_menu_does_not_duplicate_standard_package_weight() ->
 
 
 def test_label_weight_confirmation_menu_contains_adjustments_save_and_back() -> None:
-    rows = [[button.text for button in row] for row in _build_label_weight_confirm_menu().keyboard]
+    save_token = "L" * 22
+    menu = _build_label_weight_confirm_menu(save_token)
+    rows = [[button.text for button in row] for row in menu.inline_keyboard]
 
-    assert rows[0] == ["+1", "+5", "+10", "+20", "+50", "+100"]
-    assert rows[1] == ["-1", "-5", "-10", "-20", "-50", "-100"]
-    assert rows[2] == ["✅ Сохранить", "⬅️ Назад"]
-    assert len(rows) == 3
+    assert rows[0] == ["+1 г", "+5 г", "+10 г", "+20 г", "+50 г", "+100 г"]
+    assert rows[1] == ["-1 г", "-5 г", "-10 г", "-20 г", "-50 г", "-100 г"]
+    assert rows[2] == ["⬅️ Назад"]
+    assert rows[3] == ["✅ Сохранить"]
+    assert menu.inline_keyboard[-1][0].callback_data == f"save_label_analysis:{save_token}"
 
 
 def test_format_label_weight_confirmation_text_recalculates_kbju() -> None:
@@ -82,3 +85,4 @@ def test_format_label_weight_confirmation_text_recalculates_kbju() -> None:
     assert "✅ <b>Вы выбрали:</b> 240 г" in text
     assert "🔥 <b>Калории:</b> 240 ккал" in text
     assert "🥩 <b>Белки:</b> 24.0 г" in text
+    assert "нажать" not in text.lower()

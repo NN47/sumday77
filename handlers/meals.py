@@ -441,19 +441,22 @@ def _format_ai_food_analysis_message(title: str, items: list, totals: dict, *, s
     return "\n".join(lines)
 
 
-def _build_ai_meal_preview_inline_menu() -> InlineKeyboardMarkup:
+def _build_ai_meal_preview_inline_menu(save_token: str) -> InlineKeyboardMarkup:
     """Строит inline-кнопки предпросмотра текстового AI-анализа."""
     return InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_ai_meal_draft"),
-            InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_ai_meal_draft"),
-        ]]
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_ai_meal_draft"),
+                InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_ai_meal_draft"),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Сохранить",
+                    callback_data=f"save_ai_meal_draft:{save_token}",
+                )
+            ],
+        ]
     )
-
-
-def _build_ai_meal_preview_reply_menu() -> ReplyKeyboardMarkup:
-    """Строит основную reply-кнопку сохранения предпросмотра AI-анализа."""
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="✅ Сохранить")]], resize_keyboard=True)
 
 
 def _build_ai_meal_cancel_confirmation_menu() -> InlineKeyboardMarkup:
@@ -536,10 +539,9 @@ async def _send_ai_meal_preview(message: Message, state: FSMContext) -> None:
     )
     await message.answer(
         _format_ai_food_analysis_message(title, items, totals, saved=False),
-        reply_markup=_build_ai_meal_preview_inline_menu(),
+        reply_markup=_build_ai_meal_preview_inline_menu(save_token),
         parse_mode="HTML",
     )
-    await message.answer("Если всё верно, нажми кнопку сохранения ниже.", reply_markup=_build_ai_meal_preview_reply_menu())
 
 
 def _format_current_meal_after_save_message(meal_type: str, current_meal_items: list, entry_date: date) -> str:
@@ -622,15 +624,32 @@ def _build_label_weight_input_menu(package_weight: float | None = None) -> Reply
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
-def _build_label_weight_confirm_menu() -> ReplyKeyboardMarkup:
-    """Строит меню подтверждения веса с кнопками корректировки."""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=f"+{step}") for step in LABEL_WEIGHT_ADJUSTMENTS],
-            [KeyboardButton(text=f"-{step}") for step in LABEL_WEIGHT_ADJUSTMENTS],
-            [KeyboardButton(text="✅ Сохранить"), KeyboardButton(text="⬅️ Назад")],
-        ],
-        resize_keyboard=True,
+def _build_label_weight_confirm_menu(save_token: str) -> InlineKeyboardMarkup:
+    """Строит единое inline-меню подтверждения результата анализа этикетки."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"+{step} г",
+                    callback_data=f"label_wchg:{save_token}:{step}",
+                )
+                for step in LABEL_WEIGHT_ADJUSTMENTS
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"-{step} г",
+                    callback_data=f"label_wchg:{save_token}:-{step}",
+                )
+                for step in LABEL_WEIGHT_ADJUSTMENTS
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"label_wback:{save_token}")],
+            [
+                InlineKeyboardButton(
+                    text="✅ Сохранить",
+                    callback_data=f"save_label_analysis:{save_token}",
+                )
+            ],
+        ]
     )
 
 
@@ -662,12 +681,13 @@ def _build_photo_analysis_confirm_menu(
         name = _short_product_button_name(item.get("name") or "Продукт")
         rows.append([InlineKeyboardButton(text=f"✏️ {name}", callback_data=f"edit_photo_food_item:{idx}")])
     rows.append([InlineKeyboardButton(text="✏️ Название блюда", callback_data="photo_dish_name")])
+    rows.append([InlineKeyboardButton(text="⚖️ Общий вес", callback_data="photo_total_weight")])
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="photo_cancel")])
     rows.append([
-        InlineKeyboardButton(text="⚖️ Общий вес", callback_data="photo_total_weight"),
         InlineKeyboardButton(
             text="✅ Сохранить",
             callback_data=f"save_photo_food_analysis:{save_token}",
-        ),
+        )
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -785,16 +805,11 @@ async def _send_photo_analysis_confirmation(
     save_token: str,
     dish_name: str | None = None,
 ) -> None:
-    """Показывает результат анализа с inline-кнопками и нижней кнопкой полной отмены."""
+    """Показывает результат анализа и все действия в одной inline-клавиатуре."""
     await message.answer(
         _format_photo_analysis_confirmation_text(items, dish_name=dish_name),
         reply_markup=_build_photo_analysis_confirm_menu(items, save_token),
         parse_mode="HTML",
-    )
-    await message.answer(
-        "⬇️ Кнопки управления",
-        reply_markup=_build_photo_analysis_cancel_menu(),
-        disable_notification=True,
     )
 
 
@@ -814,6 +829,19 @@ async def _edit_or_send_photo_analysis_message(
             safe_exception_summary(exc),
         )
         await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
+
+
+async def _hide_meal_reply_keyboard(message: Message) -> None:
+    """Скрывает старую reply-клавиатуру без видимого служебного сообщения."""
+    placeholder = await message.answer(
+        "\u2063",
+        reply_markup=ReplyKeyboardRemove(),
+        disable_notification=True,
+    )
+    try:
+        await placeholder.delete()
+    except (AttributeError, TelegramBadRequest):
+        pass
 
 
 def _normalize_photo_analysis_items(items: list | None) -> list[dict]:
@@ -912,12 +940,8 @@ def _format_photo_analysis_confirmation_text(items: list[dict], *, dish_name: st
                 f"🥩 Белки: {totals['protein']:.1f} г",
                 f"🥑 Жиры: {totals['fat']:.1f} г",
                 f"🍚 Углеводы: {totals['carbs']:.1f} г",
-                "",
-                "Выберите продукт для редактирования или нажмите <b>✅ Сохранить</b>.",
             ]
         )
-    else:
-        lines.append("Проверьте результат перед сохранением.")
     return "\n".join(lines).rstrip()
 
 
@@ -980,8 +1004,6 @@ def _format_label_weight_confirmation_text(data: dict, weight_grams: float) -> s
         "",
         "<b>Итоговые КБЖУ:</b>",
         _format_kbju_summary_block(totals),
-        "",
-        "Можешь скорректировать вес кнопками ниже или нажать <b>✅ Сохранить</b>.",
     ]
     return "\n".join(lines)
 
@@ -5059,7 +5081,7 @@ async def _handle_provider_food_input(
     )
     if reservation is None:
         return
-    await message.answer("Обрабатываю…")
+    await message.answer("Обрабатываю…", reply_markup=ReplyKeyboardRemove())
     try:
         raw = await asyncio.to_thread(
             analyzer,
@@ -5339,12 +5361,16 @@ async def back_to_ai_meal_draft(callback: CallbackQuery, state: FSMContext):
 
     totals = _collect_ai_draft_totals(items)
     title = draft.get("analysis_title") or "🧾 AI-анализ приёма пищи"
+    save_token = draft.get("save_token")
+    if not _is_valid_meal_save_token(save_token):
+        save_token = _new_meal_save_token()
+        draft = {**draft, "save_token": save_token}
     await callback.answer()
     await state.set_state(MealEntryStates.confirming_ai_meal)
     await state.update_data(ai_pending_meal={**draft, "items": items, "total": totals})
     await callback.message.edit_text(
         _format_ai_food_analysis_message(title, items, totals, saved=False),
-        reply_markup=_build_ai_meal_preview_inline_menu(),
+        reply_markup=_build_ai_meal_preview_inline_menu(save_token),
         parse_mode="HTML",
     )
 
@@ -5413,6 +5439,36 @@ async def _save_ai_meal_draft(
         parse_mode="HTML",
     )
     return save_result
+
+
+@router.callback_query(
+    MealEntryStates.confirming_ai_meal,
+    lambda c: c.data and c.data.startswith("save_ai_meal_draft:"),
+)
+async def save_ai_meal_draft_from_inline(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет текущий текстовый AI-черновик по привязанной inline-кнопке."""
+    data = await state.get_data()
+    pending = data.get("ai_pending_meal") or {}
+    callback_token = callback.data.split(":", maxsplit=1)[1]
+    current_token = pending.get("save_token")
+    if (
+        not _is_valid_meal_save_token(callback_token)
+        or callback_token != current_token
+    ):
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+
+    await callback.answer()
+    save_result = await _save_ai_meal_draft(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
+    )
+    if save_result.status is not MealSaveStatus.FAILED:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except (AttributeError, TelegramBadRequest):
+            pass
 
 
 @router.callback_query(F.data == "save_ai_meal_draft")
@@ -5541,7 +5597,10 @@ async def _handle_food_photo_analysis(
         entry_date = date.today()
 
     logger.info("food_photo_analysis_started provider=%s", provider)
-    await message.answer("📷 Анализирую фото с помощью ИИ, секунду...")
+    await message.answer(
+        "📷 Анализирую фото с помощью ИИ, секунду...",
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
     if image_file_id:
         file_id = image_file_id
@@ -5671,11 +5730,6 @@ async def _handle_food_photo_analysis(
             _format_photo_dish_candidates_text(candidates),
             reply_markup=_build_photo_dish_candidates_menu(candidates),
             parse_mode="HTML",
-        )
-        await message.answer(
-            "⬇️ Кнопки управления",
-            reply_markup=_build_photo_analysis_cancel_menu(),
-            disable_notification=True,
         )
         return
     await _send_photo_analysis_confirmation(
@@ -6026,7 +6080,7 @@ async def photo_analysis_dish_name_start(callback: CallbackQuery, state: FSMCont
     await state.set_state(MealEntryStates.editing_photo_dish_name_input)
     await callback.message.answer(
         "Введи короткое название блюда (до 80 символов):",
-        reply_markup=_build_photo_analysis_cancel_menu(),
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -6212,10 +6266,6 @@ async def photo_analysis_total_weight_open(callback: CallbackQuery, state: FSMCo
         reply_markup=_build_photo_total_weight_editor_menu(),
         parse_mode="HTML",
     )
-    await callback.message.answer(
-        "Для отмены изменения общего веса нажми «❌ Отмена».",
-        reply_markup=_build_photo_analysis_cancel_menu(),
-    )
     await callback.answer()
 
 
@@ -6255,7 +6305,7 @@ async def photo_analysis_total_weight_manual_request(callback: CallbackQuery, st
     await state.set_state(MealEntryStates.editing_photo_total_weight_manual_input)
     await callback.message.answer(
         "Введи общий вес блюда числом в граммах, например: 500",
-        reply_markup=_build_photo_analysis_cancel_menu(),
+        reply_markup=ReplyKeyboardRemove(),
     )
     await callback.answer()
 
@@ -6647,61 +6697,34 @@ async def handle_weight_input(message: Message, state: FSMContext):
 
     await state.update_data(selected_label_weight=weight_grams)
     await state.set_state(MealEntryStates.confirming_label_weight)
+    data = await state.get_data()
+    save_token = data.get("label_save_token")
+    if not _is_valid_meal_save_token(save_token):
+        save_token = _new_meal_save_token()
+        await state.update_data(label_save_token=save_token)
+        data["label_save_token"] = save_token
+    await _hide_meal_reply_keyboard(message)
     await message.answer(
-        _format_label_weight_confirmation_text(await state.get_data(), weight_grams),
-        reply_markup=_build_label_weight_confirm_menu(),
+        _format_label_weight_confirmation_text(data, weight_grams),
+        reply_markup=_build_label_weight_confirm_menu(save_token),
         parse_mode="HTML",
     )
 
 
-@router.message(MealEntryStates.confirming_label_weight)
-async def handle_label_weight_confirmation(message: Message, state: FSMContext):
-    """Подтверждает, корректирует или сохраняет продукт после анализа этикетки."""
-    text = (message.text or "").strip()
-    if await _reroute_add_method_button_if_needed(message, state, text):
-        return
-
-    data = await state.get_data()
-    current_weight = max(1.0, _safe_float(data.get("selected_label_weight"), 1.0))
-
-    if text == "⬅️ Назад":
-        package_weight = _safe_float(data.get("package_weight")) or None
-        weight_input_menu = _build_label_weight_input_menu(package_weight)
-        await state.set_state(MealEntryStates.waiting_for_weight_input)
-        await message.answer(
-            _format_label_weight_prompt(
-                product_name=data.get("product_name", "Продукт"),
-                kcal_100g=_safe_float((data.get("kbju_per_100g") or {}).get("kcal")),
-                protein_100g=_safe_float((data.get("kbju_per_100g") or {}).get("protein")),
-                fat_100g=_safe_float((data.get("kbju_per_100g") or {}).get("fat")),
-                carbs_100g=_safe_float((data.get("kbju_per_100g") or {}).get("carbs")),
-                package_weight=package_weight,
-            ),
-            reply_markup=weight_input_menu,
-            parse_mode="HTML",
-        )
-        return
-
-    if re.fullmatch(r"[+-](1|5|10|20|50|100)", text):
-        current_weight = max(1.0, current_weight + float(text))
-        await state.update_data(selected_label_weight=current_weight)
-        await message.answer(
-            _format_label_weight_confirmation_text(data, current_weight),
-            reply_markup=_build_label_weight_confirm_menu(),
-            parse_mode="HTML",
-        )
-        return
-
-    if text != "✅ Сохранить":
-        await message.answer("Скорректируй вес кнопками или нажми ✅ Сохранить / ⬅️ Назад.")
-        return
-
+async def _save_label_analysis_draft(
+    message: Message,
+    state: FSMContext,
+    *,
+    user_id: str,
+    data: dict,
+    weight_grams: float,
+) -> MealSaveResult:
+    """Сохраняет подтверждённый результат этикетки для message- и callback-сценариев."""
     save_token = data.get("label_save_token")
     if not _is_valid_meal_save_token(save_token):
         await message.answer(STALE_MEAL_SAVE_TEXT)
-        return
+        return _failed_meal_save_result("stale_draft")
 
-    user_id = str(message.from_user.id)
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     entry_date_str = data.get("entry_date")
     if entry_date_str:
@@ -6713,7 +6736,6 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
     else:
         entry_date = date.today()
 
-    weight_grams = current_weight
     kbju_per_100g = data.get("kbju_per_100g")
     product_name = data.get("product_name", "Продукт")
     meal_source = data.get("meal_source")
@@ -6774,7 +6796,7 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
         await message.answer(
             "Не удалось сохранить приём пищи. Данные этикетки сохранены — попробуй ещё раз."
         )
-        return
+        return save_result
 
     saved_meal = save_result.meal
 
@@ -6813,6 +6835,154 @@ async def handle_label_weight_confirmation(message: Message, state: FSMContext):
         ),
         parse_mode="HTML",
     )
+    return save_result
+
+
+@router.message(MealEntryStates.confirming_label_weight)
+async def handle_label_weight_confirmation(message: Message, state: FSMContext):
+    """Поддерживает ввод со старой reply-клавиатуры для уже открытых сценариев."""
+    text = (message.text or "").strip()
+    if await _reroute_add_method_button_if_needed(message, state, text):
+        return
+
+    data = await state.get_data()
+    current_weight = max(1.0, _safe_float(data.get("selected_label_weight"), 1.0))
+
+    if text == "⬅️ Назад":
+        package_weight = _safe_float(data.get("package_weight")) or None
+        weight_input_menu = _build_label_weight_input_menu(package_weight)
+        await state.set_state(MealEntryStates.waiting_for_weight_input)
+        await message.answer(
+            _format_label_weight_prompt(
+                product_name=data.get("product_name", "Продукт"),
+                kcal_100g=_safe_float((data.get("kbju_per_100g") or {}).get("kcal")),
+                protein_100g=_safe_float((data.get("kbju_per_100g") or {}).get("protein")),
+                fat_100g=_safe_float((data.get("kbju_per_100g") or {}).get("fat")),
+                carbs_100g=_safe_float((data.get("kbju_per_100g") or {}).get("carbs")),
+                package_weight=package_weight,
+            ),
+            reply_markup=weight_input_menu,
+            parse_mode="HTML",
+        )
+        return
+
+    if re.fullmatch(r"[+-](1|5|10|20|50|100)", text):
+        current_weight = max(1.0, current_weight + float(text))
+        await state.update_data(selected_label_weight=current_weight)
+        save_token = data.get("label_save_token")
+        await message.answer(
+            _format_label_weight_confirmation_text(data, current_weight),
+            reply_markup=_build_label_weight_confirm_menu(save_token),
+            parse_mode="HTML",
+        )
+        return
+
+    if text != "✅ Сохранить":
+        await message.answer("Скорректируй вес кнопками или нажми ✅ Сохранить / ⬅️ Назад.")
+        return
+
+    await _save_label_analysis_draft(
+        message,
+        state,
+        user_id=str(message.from_user.id),
+        data=data,
+        weight_grams=current_weight,
+    )
+
+
+def _is_current_label_callback(data: dict, callback_token: str) -> bool:
+    return bool(
+        _is_valid_meal_save_token(callback_token)
+        and callback_token == data.get("label_save_token")
+    )
+
+
+@router.callback_query(
+    MealEntryStates.confirming_label_weight,
+    lambda c: c.data and c.data.startswith("label_wchg:"),
+)
+async def label_weight_change_inline(callback: CallbackQuery, state: FSMContext):
+    """Корректирует вес этикетки без создания новых сообщений."""
+    try:
+        _, callback_token, raw_delta = callback.data.split(":", maxsplit=2)
+        delta = float(raw_delta)
+    except (TypeError, ValueError):
+        await callback.answer("Не удалось изменить вес", show_alert=True)
+        return
+    data = await state.get_data()
+    if not _is_current_label_callback(data, callback_token):
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+
+    current_weight = max(1.0, _safe_float(data.get("selected_label_weight"), 1.0))
+    current_weight = max(1.0, current_weight + delta)
+    await state.update_data(selected_label_weight=current_weight)
+    await callback.message.edit_text(
+        _format_label_weight_confirmation_text(data, current_weight),
+        reply_markup=_build_label_weight_confirm_menu(callback_token),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(
+    MealEntryStates.confirming_label_weight,
+    lambda c: c.data and c.data.startswith("label_wback:"),
+)
+async def label_weight_back_inline(callback: CallbackQuery, state: FSMContext):
+    """Возвращает к выбору веса этикетки."""
+    data = await state.get_data()
+    callback_token = callback.data.split(":", maxsplit=1)[1]
+    if not _is_current_label_callback(data, callback_token):
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+
+    package_weight = _safe_float(data.get("package_weight")) or None
+    await state.set_state(MealEntryStates.waiting_for_weight_input)
+    await callback.answer()
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+    await callback.message.answer(
+        _format_label_weight_prompt(
+            product_name=data.get("product_name", "Продукт"),
+            kcal_100g=_safe_float((data.get("kbju_per_100g") or {}).get("kcal")),
+            protein_100g=_safe_float((data.get("kbju_per_100g") or {}).get("protein")),
+            fat_100g=_safe_float((data.get("kbju_per_100g") or {}).get("fat")),
+            carbs_100g=_safe_float((data.get("kbju_per_100g") or {}).get("carbs")),
+            package_weight=package_weight,
+        ),
+        reply_markup=_build_label_weight_input_menu(package_weight),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(
+    MealEntryStates.confirming_label_weight,
+    lambda c: c.data and c.data.startswith("save_label_analysis:"),
+)
+async def save_label_analysis_inline(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет результат этикетки по последней inline-кнопке."""
+    data = await state.get_data()
+    callback_token = callback.data.split(":", maxsplit=1)[1]
+    if not _is_current_label_callback(data, callback_token):
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+
+    await callback.answer()
+    save_result = await _save_label_analysis_draft(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
+        data=data,
+        weight_grams=max(1.0, _safe_float(data.get("selected_label_weight"), 1.0)),
+    )
+    if save_result.status is not MealSaveStatus.FAILED:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
 
 @router.message(lambda m: m.text == "📊 Дневной отчёт")
 async def calories_today_results(message: Message):

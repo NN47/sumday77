@@ -35,6 +35,7 @@ def build_callback(data=None):
     message = SimpleNamespace(
         bot=SimpleNamespace(menu_stack=[]),
         edit_text=AsyncMock(),
+        edit_reply_markup=AsyncMock(),
         answer=AsyncMock(),
     )
     return SimpleNamespace(
@@ -51,6 +52,7 @@ def sample_draft():
         "analysis_title": "AI-анализ приёма пищи",
         "meal_type": "breakfast",
         "entry_date": "2026-08-11",
+        "save_token": "T" * meals.MEAL_SAVE_TOKEN_LENGTH,
         "items": [
             {
                 "name": "Творог",
@@ -64,17 +66,18 @@ def sample_draft():
     }
 
 
-def test_text_meal_preview_swaps_save_and_cancel_controls():
-    inline = meals._build_ai_meal_preview_inline_menu()
-    reply = meals._build_ai_meal_preview_reply_menu()
+def test_text_meal_preview_uses_one_inline_keyboard_with_save_last():
+    save_token = "T" * meals.MEAL_SAVE_TOKEN_LENGTH
+    inline = meals._build_ai_meal_preview_inline_menu(save_token)
 
     assert [[button.text for button in row] for row in inline.inline_keyboard] == [
-        ["❌ Отмена", "✏️ Редактировать"]
+        ["❌ Отмена", "✏️ Редактировать"],
+        ["✅ Сохранить"],
     ]
     assert [[button.callback_data for button in row] for row in inline.inline_keyboard] == [
-        ["cancel_ai_meal_draft", "edit_ai_meal_draft"]
+        ["cancel_ai_meal_draft", "edit_ai_meal_draft"],
+        [f"save_ai_meal_draft:{save_token}"],
     ]
-    assert [[button.text for button in row] for row in reply.keyboard] == [["✅ Сохранить"]]
 
 
 def test_first_cancel_click_keeps_draft_and_requests_confirmation():
@@ -108,6 +111,7 @@ def test_declining_cancel_restores_unchanged_draft_preview():
     state.set_state.assert_awaited_once_with(meals.MealEntryStates.confirming_ai_meal)
     keyboard = callback.message.edit_text.await_args.kwargs["reply_markup"]
     assert [button.text for button in keyboard.inline_keyboard[0]] == ["❌ Отмена", "✏️ Редактировать"]
+    assert [button.text for button in keyboard.inline_keyboard[-1]] == ["✅ Сохранить"]
 
 
 def test_confirmed_cancel_clears_draft_and_returns_to_add_methods():
@@ -152,3 +156,20 @@ def test_reply_save_uses_existing_draft_save_logic():
         asyncio.run(meals.handle_ai_confirm(message, state))
 
     save_draft.assert_awaited_once_with(message, state, user_id="12345")
+
+
+def test_inline_save_uses_bound_draft_and_removes_old_buttons():
+    draft = sample_draft()
+    state = DummyState({"ai_pending_meal": draft})
+    callback = build_callback(f"save_ai_meal_draft:{draft['save_token']}")
+    saved = meals.MealSaveResult(meals.MealSaveStatus.SAVED, SimpleNamespace(id=7))
+
+    with patch(
+        "handlers.meals._save_ai_meal_draft",
+        new_callable=AsyncMock,
+        return_value=saved,
+    ) as save_draft:
+        asyncio.run(meals.save_ai_meal_draft_from_inline(callback, state))
+
+    save_draft.assert_awaited_once_with(callback.message, state, user_id="12345")
+    callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)

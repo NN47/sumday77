@@ -187,7 +187,7 @@ def test_safe_photo_comment_creates_structured_preview_and_saves_without_raw_com
     assert "food_photo_comment" not in state.data
     assert "photo_analysis_comment" not in state.data
     assert [item["name"] for item in state.data["photo_analysis_items"]] == ["Куриная грудка", "Рис"]
-    preview = message.answer.await_args_list[-2].args[0]
+    preview = message.answer.await_args_list[-1].args[0]
     assert "500 ккал" in preview
     assert "1800 ккал" not in preview
     assert comment not in json.dumps(state.data, ensure_ascii=False)

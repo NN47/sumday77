@@ -186,7 +186,7 @@ def test_ok_contract_keeps_existing_meal_preview_flow(text, response_items, expe
     assert [item["name"] for item in state._data["ai_pending_meal"]["items"]] == expected_names
     assert state._data["ai_pending_meal"]["raw_query"] == ", ".join(expected_names)
     assert text not in json.dumps(state._data, ensure_ascii=False) or text == ", ".join(expected_names)
-    assert message.answer.await_args_list[-1].kwargs["reply_markup"].keyboard[0][0].text == "✅ Сохранить"
+    assert message.answer.await_args_list[-1].kwargs["reply_markup"].inline_keyboard[-1][0].text == "✅ Сохранить"
 
 
 def test_sensitive_filter_still_blocks_before_food_analyzer():
@@ -270,7 +270,7 @@ def test_model_total_mismatch_is_replaced_before_preview():
         "fat": 15,
         "carbs": 50,
     }
-    preview = message.answer.await_args_list[-2].args[0]
+    preview = message.answer.await_args_list[-1].args[0]
     assert "500 ккал" in preview
     assert "1800 ккал" not in preview
 

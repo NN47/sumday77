@@ -40,8 +40,20 @@ def test_photo_analysis_confirm_menu_uses_single_product_edit_and_save_buttons()
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
     callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
 
-    assert rows == [["✏️ Пицца 4 сыра"], ["✏️ Название блюда"], ["⚖️ Общий вес", "✅ Сохранить"]]
-    assert callbacks == [["edit_photo_food_item:0"], ["photo_dish_name"], ["photo_total_weight", f"save_photo_food_analysis:{save_token}"]]
+    assert rows == [
+        ["✏️ Пицца 4 сыра"],
+        ["✏️ Название блюда"],
+        ["⚖️ Общий вес"],
+        ["❌ Отмена"],
+        ["✅ Сохранить"],
+    ]
+    assert callbacks == [
+        ["edit_photo_food_item:0"],
+        ["photo_dish_name"],
+        ["photo_total_weight"],
+        ["photo_cancel"],
+        [f"save_photo_food_analysis:{save_token}"],
+    ]
 
 
 def test_photo_analysis_confirm_menu_uses_product_edit_buttons_for_multiple_items():
@@ -54,8 +66,19 @@ def test_photo_analysis_confirm_menu_uses_product_edit_buttons_for_multiple_item
     rows = [[button.text for button in row] for row in keyboard.inline_keyboard]
     callbacks = [[button.callback_data for button in row] for row in keyboard.inline_keyboard]
 
-    assert rows == [["✏️ Кусочек медовика"], ["✏️ Кофе с молоком"], ["✏️ Название блюда"], ["⚖️ Общий вес", "✅ Сохранить"]]
-    assert callbacks == [["edit_photo_food_item:0"], ["edit_photo_food_item:1"], ["photo_dish_name"], ["photo_total_weight", f"save_photo_food_analysis:{save_token}"]]
+    assert rows == [
+        ["✏️ Кусочек медовика"],
+        ["✏️ Кофе с молоком"],
+        ["✏️ Название блюда"],
+        ["⚖️ Общий вес"],
+        ["❌ Отмена"],
+        ["✅ Сохранить"],
+    ]
+    assert callbacks[-3:] == [
+        ["photo_total_weight"],
+        ["photo_cancel"],
+        [f"save_photo_food_analysis:{save_token}"],
+    ]
 
 
 def test_food_photo_clarification_menu_offers_skip_or_cancel():
@@ -134,7 +157,7 @@ def test_photo_delete_last_product_shows_empty_message_and_no_save_button():
     )
 
 
-def test_send_photo_analysis_confirmation_attaches_inline_and_cancel_reply_keyboard():
+def test_send_photo_analysis_confirmation_uses_only_one_inline_keyboard():
     message = _build_message()
     items = [{"name": "Йогурт манго", "grams": 120, "kcal": 90}]
     save_token = "C" * meals.MEAL_SAVE_TOKEN_LENGTH
@@ -143,13 +166,13 @@ def test_send_photo_analysis_confirmation_attaches_inline_and_cancel_reply_keybo
         asyncio.run(meals._send_photo_analysis_confirmation(message, items, save_token))
 
     push_stack.assert_not_called()
-    assert message.answer.await_count == 2
-    result_call, controls_call = message.answer.await_args_list
+    assert message.answer.await_count == 1
+    result_call = message.answer.await_args_list[0]
     assert result_call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "edit_photo_food_item:0"
-    assert [button.callback_data for button in result_call.kwargs["reply_markup"].inline_keyboard[-1]] == ["photo_total_weight", f"save_photo_food_analysis:{save_token}"]
+    assert [button.callback_data for button in result_call.kwargs["reply_markup"].inline_keyboard[-1]] == [f"save_photo_food_analysis:{save_token}"]
+    assert result_call.kwargs["reply_markup"].inline_keyboard[-2][0].callback_data == "photo_cancel"
     assert "Для отмены" not in result_call.args[0]
-    assert controls_call.args[0] == "⬇️ Кнопки управления"
-    assert [[button.text for button in row] for row in controls_call.kwargs["reply_markup"].keyboard] == [["❌ Отмена"]]
+    assert "нажмите" not in result_call.args[0].lower()
 
 
 def test_photo_analysis_cancel_clears_draft_and_returns_to_add_methods():
@@ -721,6 +744,32 @@ def test_label_save_persists_detected_unit_and_package_metadata() -> None:
     assert product["package_weight_g"] == 100
     assert product["package_units"] == 10
     assert upsert.call_args.args == ("12345", product)
+
+
+def test_label_inline_save_uses_bound_token_and_shared_save_logic() -> None:
+    save_token = "L" * meals.MEAL_SAVE_TOKEN_LENGTH
+    callback = _build_callback(f"save_label_analysis:{save_token}")
+    state = _DummyState()
+    state._data = {
+        "label_save_token": save_token,
+        "selected_label_weight": 35,
+    }
+    saved = meals.MealSaveResult(meals.MealSaveStatus.SAVED, SimpleNamespace(id=77))
+
+    with patch(
+        "handlers.meals._save_label_analysis_draft",
+        new=AsyncMock(return_value=saved),
+    ) as save_label:
+        asyncio.run(meals.save_label_analysis_inline(callback, state))
+
+    save_label.assert_awaited_once_with(
+        callback.message,
+        state,
+        user_id="12345",
+        data=state._data,
+        weight_grams=35,
+    )
+    callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
 
 
 def test_meal_finish_button_returns_to_food_diary_for_entry_date():
@@ -2004,8 +2053,8 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
         "carbs": 0.0,
     }
     assert "AI text meal analysis provider=deepseek" in caplog.text
-    analysis_text = message.answer.await_args_list[-2].args[0]
-    save_prompt_text = message.answer.await_args_list[-1].args[0]
+    analysis_call = message.answer.await_args_list[-1]
+    analysis_text = analysis_call.args[0]
 
     assert "<b>📝 AI-анализ приёма пищи</b>" in analysis_text
     assert "🤖 <b>📝 AI-анализ приёма пищи</b>" not in analysis_text
@@ -2014,17 +2063,19 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     assert "🔥 <b>Калории:</b> <b>330 ккал</b>" in analysis_text
     assert "✅ <b>Продукт сохранён.</b>" not in analysis_text
     assert "Проверьте данные перед сохранением." in analysis_text
-    assert message.answer.await_args_list[-2].kwargs["parse_mode"] == "HTML"
-    analysis_keyboard = message.answer.await_args_list[-2].kwargs["reply_markup"]
+    assert analysis_call.kwargs["parse_mode"] == "HTML"
+    analysis_keyboard = analysis_call.kwargs["reply_markup"]
     assert [[button.text for button in row] for row in analysis_keyboard.inline_keyboard] == [
-        ["❌ Отмена", "✏️ Редактировать"]
+        ["❌ Отмена", "✏️ Редактировать"],
+        ["✅ Сохранить"],
     ]
-    assert [[button.callback_data for button in row] for row in analysis_keyboard.inline_keyboard] == [
-        ["cancel_ai_meal_draft", "edit_ai_meal_draft"]
-    ]
-    assert "нажми кнопку сохранения" in save_prompt_text
-    save_keyboard = message.answer.await_args_list[-1].kwargs["reply_markup"]
-    assert [[button.text for button in row] for row in save_keyboard.keyboard] == [["✅ Сохранить"]]
+    assert analysis_keyboard.inline_keyboard[0][0].callback_data == "cancel_ai_meal_draft"
+    assert analysis_keyboard.inline_keyboard[0][1].callback_data == "edit_ai_meal_draft"
+    assert analysis_keyboard.inline_keyboard[-1][0].callback_data.startswith("save_ai_meal_draft:")
+    assert all(
+        "нажми кнопку сохранения" not in str(call.args[0]).lower()
+        for call in message.answer.await_args_list
+    )
 
 
 def test_my_products_page_edits_existing_message_instead_of_sending_new_one():
