@@ -13,6 +13,7 @@ from utils.keyboards import (
     main_menu,
     push_menu_stack,
     quick_actions_inline,
+    training_menu,
 )
 from database.repositories import AnalyticsRepository
 from utils.log_sanitizer import safe_exception_summary
@@ -159,6 +160,15 @@ async def go_back(message: Message, state: FSMContext):
             from handlers.meals import send_today_results
 
             await send_today_results(message, str(message.from_user.id))
+            return
+
+        if current_menu is calendar_back_menu and prev_menu is training_menu:
+            # Из календаря активности возвращаем дневную сводку и меню раздела,
+            # а не служебное сообщение с названием кнопки «Назад».
+            from handlers.activity_tracking import show_activity_main
+
+            await state.clear()
+            await show_activity_main(message, str(message.from_user.id))
             return
 
         push_menu_stack(message.bot, prev_menu)

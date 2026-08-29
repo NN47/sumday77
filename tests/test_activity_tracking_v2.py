@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 from datetime import date
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -30,14 +32,27 @@ from utils.activity_catalog import (
     WORKOUT_INTENSITY_LABELS,
 )
 from handlers.activity_tracking import (
+    ACTIVITY_BUTTON_ALIASES,
+    WORKOUT_BACK_TO_ACTIVITY,
     _exercise_categories_keyboard,
+    _exercise_list_keyboard,
     _exercise_search_matches,
     _format_set,
+    _legacy_workout_actions_text,
     _load_prompt,
+    _show_legacy_workout_actions,
+    _show_repetitions_input,
     _timed_search_matches,
     format_activity_overview,
+    receive_set_repetitions,
 )
-from utils.keyboards import TRAINING_BUTTON_TEXT, training_menu
+from utils.keyboards import (
+    TRAINING_BUTTON_TEXT,
+    WORKOUT_BUTTON_TEXT,
+    add_another_set_menu,
+    count_menu,
+    training_menu,
+)
 
 
 @pytest.fixture()
@@ -103,6 +118,11 @@ def test_main_activity_navigation_uses_new_russian_process_names():
     assert "⚡ Быстрое упражнение" not in labels
 
 
+def test_workout_button_is_not_handled_as_activity_section_entry():
+    assert WORKOUT_BUTTON_TEXT == "🏋️ Тренировка"
+    assert WORKOUT_BUTTON_TEXT not in ACTIVITY_BUTTON_ALIASES
+
+
 def test_timed_and_exercise_search_find_russian_names():
     assert [item.code for item in _timed_search_matches("бокс")][:3] == [
         "boxing", "kickboxing", "muay_thai",
@@ -110,6 +130,144 @@ def test_timed_and_exercise_search_find_russian_names():
     assert "barbell_bench_press" in {item.code for item in _exercise_search_matches("жим штанги")}
     category_labels = [button.text for row in _exercise_categories_keyboard().inline_keyboard for button in row]
     assert category_labels[0] == "🔎 Поиск упражнения"
+
+
+def test_new_workout_back_returns_to_activity_and_keeps_origin_through_categories():
+    categories = _exercise_categories_keyboard(
+        back_target=WORKOUT_BACK_TO_ACTIVITY,
+    )
+    assert categories.inline_keyboard[-1][0].text == "⬅️ В раздел активности"
+    assert categories.inline_keyboard[-1][0].callback_data == "act:workout_start_back"
+    assert categories.inline_keyboard[1][0].callback_data.endswith(":activity")
+
+    exercises = _exercise_list_keyboard(
+        "workout", "bodyweight", 0, back_target=WORKOUT_BACK_TO_ACTIVITY,
+    )
+    assert exercises.inline_keyboard[-1][0].callback_data == (
+        "act:ecategories:workout:activity"
+    )
+
+
+def test_adding_exercise_to_existing_workout_returns_to_draft():
+    categories = _exercise_categories_keyboard()
+    assert categories.inline_keyboard[-1][0].text == "⬅️ К тренировке"
+    assert categories.inline_keyboard[-1][0].callback_data == "act:workout_draft"
+
+
+def test_workout_repetitions_restore_previous_large_reply_keyboard():
+    config = EXERCISE_BY_CODE["pushups"]
+    message = SimpleNamespace(
+        bot=SimpleNamespace(menu_stack=[]),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(set_state=AsyncMock())
+
+    asyncio.run(_show_repetitions_input(message, state, config))
+
+    call = message.answer.await_args
+    assert "Выбери количество повторений" in call.args[0]
+    assert call.kwargs["reply_markup"] is count_menu
+    assert [[button.text for button in row] for row in count_menu.keyboard[:2]] == [
+        ["1", "2", "3", "4", "5"],
+        ["6", "7", "8", "9", "10"],
+    ]
+
+
+def test_saved_set_restores_previous_confirmation_and_reply_actions(activity_store):
+    session = ActivityRepository.create_workout_session(
+        user_id="1", entry_date=date.today(), weight_kg=70, weight_source="profile",
+    )
+    config = EXERCISE_BY_CODE["pushups"]
+    exercise = ActivityRepository.add_session_exercise(
+        session_id=session.id,
+        user_id="1",
+        exercise_code=config.code,
+        exercise_name=config.name,
+        measurement_type=config.measurement_type,
+        load_input_mode=config.load_input_mode,
+        tempo_seconds_per_rep=config.tempo_seconds_per_rep,
+    )
+    ActivityRepository.add_workout_set(
+        session_id=session.id,
+        session_exercise_id=exercise.id,
+        user_id="1",
+        repetitions=15,
+    )
+
+    text = _legacy_workout_actions_text(session, "1")
+    assert "✅ Записал! 👍" in text
+    assert "🏋️ <b>Отжимания</b>" in text
+    assert "🔁 15 раз" in text
+    assert "Хотите внести еще подход?" in text
+
+    message = SimpleNamespace(
+        bot=SimpleNamespace(menu_stack=[]),
+        answer=AsyncMock(),
+    )
+    asyncio.run(_show_legacy_workout_actions(message, "1"))
+    assert message.answer.await_args.kwargs["reply_markup"] is add_another_set_menu
+
+
+def test_repetition_save_uses_previous_confirmation_in_active_flow(activity_store):
+    session = ActivityRepository.create_workout_session(
+        user_id="1", entry_date=date.today(), weight_kg=70, weight_source="profile",
+    )
+    config = EXERCISE_BY_CODE["pushups"]
+    exercise = ActivityRepository.add_session_exercise(
+        session_id=session.id,
+        user_id="1",
+        exercise_code=config.code,
+        exercise_name=config.name,
+        measurement_type=config.measurement_type,
+        load_input_mode=config.load_input_mode,
+        tempo_seconds_per_rep=config.tempo_seconds_per_rep,
+    )
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={
+            "session_id": session.id,
+            "session_exercise_id": exercise.id,
+            "exercise_code": config.code,
+            "load_kg": None,
+            "load_kind": None,
+        }),
+        clear=AsyncMock(),
+    )
+    message = SimpleNamespace(
+        text="15",
+        from_user=SimpleNamespace(id=1),
+        bot=SimpleNamespace(menu_stack=[]),
+        answer=AsyncMock(),
+    )
+
+    asyncio.run(receive_set_repetitions(message, state))
+
+    state.clear.assert_awaited_once()
+    assert ActivityRepository.get_session_sets(session.id, "1")[0].repetitions == 15
+    call = message.answer.await_args
+    assert "✅ Записал! 👍" in call.args[0]
+    assert call.kwargs["reply_markup"] is add_another_set_menu
+
+
+def test_back_from_activity_calendar_renders_activity_overview():
+    from handlers import common
+    from utils.keyboards import calendar_back_menu, main_menu
+
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=12345),
+        bot=SimpleNamespace(menu_stack=[main_menu, training_menu, calendar_back_menu]),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(clear=AsyncMock())
+
+    with patch(
+        "handlers.activity_tracking.show_activity_main", new=AsyncMock(),
+    ) as show_activity:
+        asyncio.run(common.go_back(message, state))
+
+    state.clear.assert_awaited_once()
+    show_activity.assert_awaited_once_with(message, "12345")
+    message.answer.assert_not_awaited()
+    assert message.bot.menu_stack == [main_menu, training_menu]
 
 
 def test_timed_catalog_is_russian_and_uses_stable_unique_codes():

@@ -13,6 +13,7 @@ WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT = "⚖️ Вес и замеры"
 TRAINING_BUTTON_TEXT = "🏃 Активность"
 PREVIOUS_TRAINING_BUTTON_TEXT = "🚴 Активность"
 LEGACY_TRAINING_BUTTON_TEXT = "🏋️ Тренировка"
+WORKOUT_BUTTON_TEXT = "🏋️ Тренировка"
 MEALS_BUTTON_TEXT = "🍱 Дневник питания"
 LEGACY_MEALS_BUTTON_TEXT = "🍱 КБЖУ"
 MEALS_BUTTON_ALIASES = {
@@ -93,7 +94,7 @@ quick_actions_inline = InlineKeyboardMarkup(
 training_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="⏱ Активность по времени")],
-        [KeyboardButton(text="🏋️ Тренировка")],
+        [KeyboardButton(text=WORKOUT_BUTTON_TEXT)],
         [KeyboardButton(text="📅 Календарь активности")],
         [main_menu_button],
     ],
