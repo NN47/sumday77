@@ -134,6 +134,10 @@ class AgeGateStates(StatesGroup):
     confirming_age = State()
 
 
+class LegalStates(StatesGroup):
+    reviewing = State()
+
+
 class ActivityAnalysisStates(StatesGroup):
     """Состояния для календаря ИИ-анализа деятельности."""
     entering_manual_analysis = State()

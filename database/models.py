@@ -36,6 +36,10 @@ class User(Base):
     # NULL means that the one-time 18+ gate has not been completed yet.
     # We intentionally do not store a birth date or an exact age.
     age_verified = Column(Boolean, nullable=True)
+    accepted_terms_version = Column(String(40), nullable=True)
+    acknowledged_privacy_version = Column(String(40), nullable=True)
+    terms_accepted_at = Column(DateTime, nullable=True)
+    privacy_acknowledged_at = Column(DateTime, nullable=True)
 
 
 class EveningAnalysisNotificationState(Base):
@@ -617,8 +621,6 @@ class SupportMessage(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(String, nullable=False, index=True)
-    username = Column(String, nullable=True)
-    full_name = Column(String, nullable=True)
     message_text = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     is_read = Column(Boolean, default=False, nullable=False, index=True)

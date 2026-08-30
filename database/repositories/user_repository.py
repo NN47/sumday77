@@ -3,10 +3,35 @@ from datetime import datetime, timedelta, date
 
 from database.models import User
 from database.session import get_db_session
+from utils.legal_documents import LEGAL_DOCUMENTS, has_current_acceptance
 
 
 class UserRepository:
     """Методы работы с пользователями и их активностью."""
+
+    @staticmethod
+    def has_current_legal_acceptance(user_id: str) -> bool:
+        with get_db_session() as session:
+            user = session.query(User).filter(User.user_id == str(user_id)).first()
+            return has_current_acceptance(user)
+
+    @staticmethod
+    def accept_legal_documents(user_id: str) -> None:
+        """Record offer acceptance and policy acknowledgement; not PD consent."""
+        with get_db_session() as session:
+            user = session.query(User).filter(User.user_id == str(user_id)).first()
+            if user is None:
+                user = User(user_id=str(user_id))
+                session.add(user)
+            now = datetime.utcnow()
+            terms_version = LEGAL_DOCUMENTS["terms"].version
+            privacy_version = LEGAL_DOCUMENTS["privacy"].version
+            if user.accepted_terms_version != terms_version or user.terms_accepted_at is None:
+                user.accepted_terms_version = terms_version
+                user.terms_accepted_at = now
+            if user.acknowledged_privacy_version != privacy_version or user.privacy_acknowledged_at is None:
+                user.acknowledged_privacy_version = privacy_version
+                user.privacy_acknowledged_at = now
 
     @staticmethod
     def touch_user(user_id: str) -> None:

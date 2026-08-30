@@ -1,5 +1,6 @@
 """Клавиатуры для бота."""
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from utils.legal_documents import TERMS_BUTTON, PRIVACY_BUTTON
 
 # Главная кнопка меню
 MAIN_MENU_BUTTON_TEXT = "🔄 Главное меню"
@@ -691,7 +692,8 @@ settings_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🗑 Удалить аккаунт")],
         [KeyboardButton(text="💬 Поддержка")],
-        [KeyboardButton(text="🔒 Политика конфиденциальности")],
+        [KeyboardButton(text=TERMS_BUTTON)],
+        [KeyboardButton(text=PRIVACY_BUTTON)],
         [main_menu_button],
     ],
     resize_keyboard=True,

@@ -134,10 +134,12 @@ def test_allowed_support_text_is_html_escaped_before_forwarding():
     assert "&lt;b&gt;Назад&lt;/b&gt;" in forwarded
     create_message.assert_called_once_with(
         user_id="12345",
-        username="user_name",
-        full_name="Иван Иванов",
         message_text=source_text,
     )
+    assert "user_name" not in forwarded
+    assert "Иван" not in forwarded
+    assert "Язык:" not in forwarded
+    assert "12345" in forwarded
     state.clear.assert_awaited_once()
 
 

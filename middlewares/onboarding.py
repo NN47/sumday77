@@ -15,6 +15,7 @@ from handlers.kbju_test import (
 )
 from states.user_states import AgeGateStates, KbjuTestStates
 from utils.keyboards import kbju_age_range_inline
+from utils.legal_access import is_public_legal_event
 
 
 class OnboardingMiddleware(BaseMiddleware):
@@ -47,6 +48,8 @@ class OnboardingMiddleware(BaseMiddleware):
         return await handler(event, data)
 
     async def _is_allowed_message(self, message: Message, data: dict[str, Any]) -> bool:
+        if await is_public_legal_event(message, data.get("state")):
+            return True
         if message.from_user is None:
             return True
 
@@ -78,6 +81,8 @@ class OnboardingMiddleware(BaseMiddleware):
         return False
 
     async def _is_allowed_callback(self, callback: CallbackQuery, data: dict[str, Any]) -> bool:
+        if await is_public_legal_event(callback, data.get("state")):
+            return True
         if callback.from_user is None:
             return True
 

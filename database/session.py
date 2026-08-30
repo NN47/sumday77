@@ -63,6 +63,8 @@ def init_db():
     """Инициализация базы данных: создание таблиц и миграции."""
     # Создаём все таблицы
     Base.metadata.create_all(engine)
+    from database.legal_migration import migrate_legal_metadata
+    migrate_legal_metadata(engine)
     logger.info("База данных инициализирована")
 
     # Новый справочник физической активности синхронизируется отдельно от

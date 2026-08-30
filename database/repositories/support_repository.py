@@ -9,13 +9,11 @@ class SupportRepository:
     """Операции с сообщениями поддержки."""
 
     @staticmethod
-    def create_message(user_id: str, message_text: str, username: str | None = None, full_name: str | None = None) -> None:
+    def create_message(user_id: str, message_text: str) -> None:
         with get_db_session() as session:
             session.add(
                 SupportMessage(
                     user_id=user_id,
-                    username=username,
-                    full_name=full_name,
                     message_text=message_text,
                 )
             )

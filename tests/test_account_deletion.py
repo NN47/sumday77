@@ -294,7 +294,6 @@ class AccountDeletionTests(unittest.TestCase):
         session.add(
             SupportMessage(
                 user_id=user_id,
-                username=f"user_{user_id}",
                 message_text="Сообщение в поддержку",
             )
         )

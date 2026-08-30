@@ -22,13 +22,15 @@ from services.user_process_cleanup import clear_user_fsm_states, clear_user_proc
 from config import ADMIN_ID
 from utils.log_sanitizer import safe_exception_summary
 from utils.sensitive_text import check_sensitive_support_text
+from utils.legal_documents import SUPPORT_CONTACT
 
 logger = logging.getLogger(__name__)
 
 router = Router()
+account_deletion_router = Router(name="account_deletion")
 
 SUPPORT_SENSITIVE_INPUT_WARNING = (
-    "Не отправляйте пароли, коды доступа, реквизиты документов, банковские данные, "
+    "Не отправляйте ФИО, телефон, адрес, email, пароли, коды доступа, реквизиты документов, банковские данные, "
     "диагнозы и подробности лечения. Для решения технической проблемы опишите действия "
     "в боте и текст ошибки без личных подробностей."
 )
@@ -42,6 +44,11 @@ def reset_user_state(message: Message, *, keep_supplements: bool = False):
     """Сбрасывает состояние пользователя (упрощённая версия)."""
     # TODO: Заменить на FSM состояния
     pass
+
+
+def _is_start_command(message: Message) -> bool:
+    command = (message.text or "").split(maxsplit=1)
+    return bool(command and command[0].split("@")[0] == "/start")
 
 
 @router.message(lambda m: m.text == "⚙️ Настройки")
@@ -59,7 +66,7 @@ async def settings(message: Message, state: FSMContext):
     )
 
 
-@router.message(lambda m: m.text == "🗑 Удалить аккаунт")
+@account_deletion_router.message(lambda m: m.text == "🗑 Удалить аккаунт")
 async def delete_account_start(message: Message, state: FSMContext):
     """Начинает процесс удаления аккаунта."""
     reset_user_state(message)
@@ -83,7 +90,7 @@ async def delete_account_start(message: Message, state: FSMContext):
     )
 
 
-@router.message(
+@account_deletion_router.message(
     StateFilter(AccountDeletionStates.waiting_for_button_confirmation),
     lambda m: m.text == "Да, удалить аккаунт",
 )
@@ -97,9 +104,9 @@ async def delete_account_confirm(message: Message, state: FSMContext):
     )
 
 
-@router.message(
+@account_deletion_router.message(
     StateFilter(AccountDeletionStates.waiting_for_text_confirmation),
-    lambda m: m.text not in ["❌ Отмена", "Да, удалить аккаунт"],
+    lambda m: m.text != "❌ Отмена" and not _is_start_command(m),
 )
 async def delete_account_text_confirm(message: Message, state: FSMContext):
     """Удаляет аккаунт после текстового подтверждения."""
@@ -140,15 +147,16 @@ async def delete_account_text_confirm(message: Message, state: FSMContext):
         )
     else:
         user_operation_guard.rollback_deletion(user_id)
-        push_menu_stack(message.bot, settings_menu)
+        push_menu_stack(message.bot, delete_account_confirm_menu)
         await message.answer(
             "❌ Произошла ошибка при удалении аккаунта.\n"
-            "Попробуйте позже или обратитесь в поддержку.",
-            reply_markup=settings_menu,
+            "Можно повторить текст подтверждения или нажать «❌ Отмена».\n"
+            f"Поддержка: {SUPPORT_CONTACT}.",
+            reply_markup=delete_account_confirm_menu,
         )
 
 
-@router.message(
+@account_deletion_router.message(
     StateFilter(
         AccountDeletionStates.waiting_for_button_confirmation,
         AccountDeletionStates.waiting_for_text_confirmation,
@@ -165,6 +173,15 @@ async def delete_account_cancel(message: Message, state: FSMContext):
     )
 
 
+@account_deletion_router.message(
+    StateFilter(AccountDeletionStates.waiting_for_button_confirmation),
+    lambda m: not _is_start_command(m),
+)
+async def delete_account_button_required(message: Message):
+    await message.answer("Выберите «Да, удалить аккаунт» или «❌ Отмена».",
+                         reply_markup=delete_account_confirm_menu)
+
+
 @router.message(lambda m: m.text == "💬 Поддержка")
 async def support(message: Message, state: FSMContext):
     """Начинает процесс отправки сообщения в поддержку."""
@@ -175,7 +192,8 @@ async def support(message: Message, state: FSMContext):
     await state.set_state(SupportStates.waiting_for_message)
     await message.answer(
         "💬 <b>Поддержка</b>\n\n"
-        "Напишите ваш вопрос или сообщение для поддержки. Я перешлю его администратору.\n\n"
+        "Напишите ваш вопрос или сообщение для поддержки. Я перешлю его администратору.\n"
+        f"Связаться напрямую: {SUPPORT_CONTACT}\n\n"
         f"⚠️ {SUPPORT_SENSITIVE_INPUT_WARNING}\n\n"
         f"Для отмены используйте кнопку '⬅️ Назад' или '{MAIN_MENU_BUTTON_TEXT}'.",
         reply_markup=ReplyKeyboardMarkup(
@@ -227,14 +245,7 @@ async def handle_support_message(message: Message, state: FSMContext):
     # Формируем сообщение для администратора
     user_info = "👤 <b>Пользователь:</b>\n"
     user_info += f"ID: <code>{html.escape(user_id)}</code>\n"
-    if message.from_user.username:
-        user_info += f"Username: @{html.escape(message.from_user.username)}\n"
-    if message.from_user.first_name:
-        user_info += f"Имя: {html.escape(message.from_user.first_name)}\n"
-    if message.from_user.last_name:
-        user_info += f"Фамилия: {html.escape(message.from_user.last_name)}\n"
-    language_code = html.escape(message.from_user.language_code or "не указан")
-    user_info += f"Язык: {language_code}\n\n"
+    user_info += "\n"
     user_info += f"💬 <b>Сообщение:</b>\n{html.escape(stripped_text)}"
     
     try:
@@ -244,11 +255,8 @@ async def handle_support_message(message: Message, state: FSMContext):
             text=user_info,
             parse_mode="HTML"
         )
-        full_name = " ".join(item for item in [message.from_user.first_name, message.from_user.last_name] if item).strip() or None
         SupportRepository.create_message(
             user_id=user_id,
-            username=message.from_user.username,
-            full_name=full_name,
             message_text=stripped_text,
         )
         AnalyticsRepository.track_event(user_id, "support_message_sent", section="support")
@@ -281,46 +289,8 @@ async def handle_support_message(message: Message, state: FSMContext):
 @router.message(lambda m: m.text == "🔒 Политика конфиденциальности")
 async def privacy_policy(message: Message):
     """Показывает политику конфиденциальности."""
-    reset_user_state(message)
-    user_id = str(message.from_user.id)
-    logger.info("Privacy policy opened")
-    
-    privacy_text = (
-        "🔒 <b>Политика конфиденциальности</b>\n\n"
-        "Добро пожаловать в Fitness Bot! Мы ценим вашу конфиденциальность и стремимся защищать ваши личные данные.\n\n"
-        "<b>1. Сбор данных</b>\n"
-        "Бот собирает и хранит следующие данные:\n"
-        "• Идентификатор пользователя Telegram\n"
-        "• Данные о тренировках (упражнения, количество, даты)\n"
-        "• Записи веса и замеров тела\n"
-        "• Записи питания (КБЖУ)\n"
-        "• Информация о добавках и их приёме\n"
-        "• Настройки КБЖУ и цели\n\n"
-        "<b>2. Использование данных</b>\n"
-        "Ваши данные используются исключительно для:\n"
-        "• Предоставления функционала бота\n"
-        "• Отображения статистики и прогресса\n"
-        "• Расчёта калорий и КБЖУ\n"
-        "• Хранения истории тренировок и питания\n\n"
-        "<b>3. Хранение данных</b>\n"
-        "Все данные хранятся в защищённой базе данных на сервере бота. "
-        "Мы применяем стандартные меры безопасности для защиты вашей информации.\n\n"
-        "<b>4. Передача данных третьим лицам</b>\n"
-        "Мы не передаём ваши персональные данные третьим лицам. "
-        "Данные используются только для работы бота и не продаются, не сдаются в аренду и не передаются другим компаниям.\n\n"
-        "<b>5. Удаление данных</b>\n"
-        "Вы можете в любой момент удалить свой аккаунт и все связанные данные через функцию "
-        "\"🗑 Удалить аккаунт\" в настройках. После удаления все ваши данные будут безвозвратно удалены из базы данных.\n\n"
-        "<b>6. Изменения в политике</b>\n"
-        "Мы оставляем за собой право обновлять данную политику конфиденциальности. "
-        "О существенных изменениях мы уведомим пользователей через бота.\n\n"
-        "<b>7. Контакты</b>\n"
-        "Если у вас есть вопросы о политике конфиденциальности, используйте функцию \"💬 Поддержка\" в настройках.\n\n"
-        "Дата последнего обновления: 17.12.2025"
-    )
-    
-    push_menu_stack(message.bot, settings_menu)
-    await message.answer(privacy_text, reply_markup=settings_menu, parse_mode="HTML")
+    from handlers.legal import show_document
+    await show_document(message, "privacy")
 
 
 def register_settings_handlers(dp):

@@ -53,6 +53,13 @@ async def start(message: Message, state: FSMContext):
 
         age_verified = user.age_verified
 
+    await continue_start(message, state, user_id=user_id, age_verified=age_verified, is_new_user=is_new_user)
+
+
+async def continue_start(message: Message, state: FSMContext, *, user_id: str,
+                         age_verified: bool | None, is_new_user: bool = False,
+                         start_payload: str | None = None) -> None:
+    """Continue the existing age/test flow using the actual Telegram actor ID."""
     if age_verified is False:
         await start_age_confirmation(message, state)
         return
@@ -64,7 +71,8 @@ async def start(message: Message, state: FSMContext):
             await restart_required_kbju_test(message, state)
         return
 
-    await show_verified_start(message, state, is_new_user=is_new_user)
+    await show_verified_start(message, state, is_new_user=is_new_user,
+                              user_id=user_id, start_payload=start_payload)
 
 
 async def show_verified_start(
@@ -73,6 +81,7 @@ async def show_verified_start(
     *,
     is_new_user: bool = False,
     user_id: str | None = None,
+    start_payload: str | None = None,
 ) -> None:
     """Render /start content only after the persisted 18+ check succeeds."""
     user_id = str(user_id if user_id is not None else message.from_user.id)
@@ -80,6 +89,8 @@ async def show_verified_start(
     payload = ""
     if message.text and " " in message.text:
         payload = message.text.split(" ", 1)[1].strip().lower()
+    if start_payload is not None:
+        payload = start_payload.strip().lower()
     if payload == "recommendations":
         from handlers.common import _build_recommendations_text
         await message.answer(_build_recommendations_text(), parse_mode="Markdown")
