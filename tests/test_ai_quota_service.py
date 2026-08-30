@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 import os
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
@@ -31,6 +32,7 @@ from services.ai_quota_service import (
     AIQuotaExceeded,
     AIQuotaService,
     FREE_PLAN,
+    format_free_ai_status_block,
     quota_period_key,
 )
 
@@ -111,6 +113,41 @@ class AIQuotaServiceTests(unittest.TestCase):
                 self.assertEqual(status.used, 1)
                 self.assertEqual(status.reserved, 0)
 
+    def test_meal_completion_comment_daily_limit_is_eight(self):
+        entitlement = FREE_PLAN.features[AIFeature.MEAL_COMPLETION_COMMENT]
+        self.assertEqual(entitlement.limit, 8)
+        self.assertEqual(entitlement.attempt_limit, 8)
+
+    def test_user_status_does_not_show_internal_image_attempt_limit(self):
+        statuses = {
+            AIFeature.MEAL_TEXT: SimpleNamespace(remaining=15, limit=15),
+            AIFeature.MEAL_PHOTO: SimpleNamespace(remaining=5, limit=5),
+            AIFeature.NUTRITION_LABEL: SimpleNamespace(remaining=10, limit=10),
+            AIFeature.DAILY_ANALYSIS: SimpleNamespace(
+                remaining=1,
+                limit=1,
+                used=0,
+                period_key=date(2026, 8, 24),
+            ),
+        }
+        with patch(
+            "services.ai_quota_service.ai_quota_service.get_statuses",
+            return_value=statuses,
+        ), patch(
+            "services.ai_quota_service.ai_quota_service.get_attempt_status"
+        ) as get_attempt_status, patch(
+            "database.repositories.activity_analysis_repository.ActivityAnalysisRepository.get_successful_ai_for_date",
+            return_value=None,
+        ):
+            full = format_free_ai_status_block("status-user")
+            compact = format_free_ai_status_block("status-user", compact=True)
+
+        get_attempt_status.assert_not_called()
+        self.assertIn("📷 Фото еды: осталось 5 из 5", full)
+        self.assertIn("📋 Этикетки: осталось 10 из 10", full)
+        self.assertNotIn("Фото + этикетки", full)
+        self.assertNotIn("Общие запросы", compact)
+
     def test_preflight_status_does_not_spend_quota(self):
         status = self.service.get_status("preflight", AIFeature.DAILY_ANALYSIS, now=self.now)
         self.assertEqual(status.used, 0)
@@ -142,13 +179,14 @@ class AIQuotaServiceTests(unittest.TestCase):
             self.assertEqual(operation.provider_attempt_count, 2)
             self.assertEqual(session.query(AIAttemptCounter).one().attempt_count, 2)
 
-    def test_photo_and_label_share_twenty_real_provider_attempts(self):
+    def test_photo_and_label_share_twenty_five_provider_attempts(self):
+        limit = FREE_PLAN.features[AIFeature.MEAL_PHOTO].attempt_limit
+        self.assertEqual(limit, 25)
         with patch("services.ai_quota_service.quota_period_key", return_value=date(2026, 8, 24)):
-            for index in range(10):
+            for index in range(limit):
                 feature = AIFeature.MEAL_PHOTO if index % 2 == 0 else AIFeature.NUTRITION_LABEL
                 request_id = f"image-attempt:{index}"
                 self.service.reserve("image-attempt-user", feature, request_id, now=self.now)
-                self.service.register_additional_provider_attempt(request_id)
                 self.service.release(request_id, outcome="no_food")
             with self.assertRaises(AIAttemptLimitExceeded):
                 self.service.reserve(
@@ -157,6 +195,29 @@ class AIQuotaServiceTests(unittest.TestCase):
                     "image-attempt:blocked",
                     now=self.now,
                 )
+
+    def test_attempt_status_reports_shared_image_group_for_photo_and_label(self):
+        self.service.reserve("attempt-status-user", AIFeature.MEAL_PHOTO, "attempt-status:photo", now=self.now)
+        self.service.release("attempt-status:photo", outcome="no_food")
+        self.service.reserve("attempt-status-user", AIFeature.NUTRITION_LABEL, "attempt-status:label", now=self.now)
+        self.service.release("attempt-status:label", outcome="provider_error")
+
+        photo_status = self.service.get_attempt_status(
+            "attempt-status-user",
+            AIFeature.MEAL_PHOTO,
+            now=self.now,
+        )
+        label_status = self.service.get_attempt_status(
+            "attempt-status-user",
+            AIFeature.NUTRITION_LABEL,
+            now=self.now,
+        )
+
+        self.assertEqual(photo_status.group_key, "meal_image")
+        self.assertEqual(label_status.group_key, "meal_image")
+        self.assertEqual(photo_status.used, 2)
+        self.assertEqual(label_status.used, 2)
+        self.assertEqual(photo_status.remaining, photo_status.limit - 2)
 
     def test_cancel_or_edit_after_use_does_not_return_or_spend_again(self):
         request_id = "draft:use-on-visible-result"

@@ -120,20 +120,41 @@ MEAL_SAVE_CALLBACK_TOKEN_LENGTH = 12
 STALE_MEAL_SAVE_TEXT = "Этот приём пищи уже сохранён или запрос устарел."
 
 
+MEAL_AI_QUOTA_ALTERNATIVES = (
+    (AIFeature.MEAL_TEXT, "ai", "📝 Текстовый AI-анализ"),
+    (AIFeature.MEAL_PHOTO, "photo", "📷 Анализ еды по фото"),
+    (AIFeature.NUTRITION_LABEL, "label", "📋 Анализ этикетки"),
+)
+
+
 def _build_quota_alternatives_menu(
     meal_type: str,
     feature: AIFeature | None = None,
+    available_ai_quotas: dict[AIFeature, int] | None = None,
 ) -> InlineKeyboardMarkup:
-    """Контекстные бесплатные способы продолжить без нового AI-запроса."""
+    """Контекстные способы продолжить после исчерпания одной AI-квоты."""
     normalized = normalize_meal_type(meal_type, fallback=MealType.SNACK.value)
-    rows = [
+    rows = []
+    for alternative_feature, action, title in MEAL_AI_QUOTA_ALTERNATIVES:
+        remaining = int((available_ai_quotas or {}).get(alternative_feature, 0))
+        if alternative_feature is feature or remaining <= 0:
+            continue
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text="📦 Мои продукты",
-                    callback_data=f"quota_alt:products:{normalized}",
+                    text=f"{title} · осталось {remaining}",
+                    callback_data=f"quota_alt:{action}:{normalized}",
                 )
-            ],
-    ]
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="📦 Мои продукты",
+                callback_data=f"quota_alt:products:{normalized}",
+            )
+        ]
+    )
     if feature is not AIFeature.NUTRITION_LABEL:
         rows.append(
             [
@@ -157,17 +178,84 @@ def _build_quota_alternatives_menu(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _quota_limit_text(feature: AIFeature) -> str:
+def _quota_limit_text(
+    feature: AIFeature,
+    available_ai_quotas: dict[AIFeature, int] | None = None,
+) -> str:
     titles = {
         AIFeature.MEAL_TEXT: "текстового AI-анализа",
         AIFeature.MEAL_PHOTO: "анализа еды по фото",
         AIFeature.NUTRITION_LABEL: "анализа этикеток",
     }
-    return (
+    message = (
         f"Лимит бесплатного {titles.get(feature, 'AI-анализа')} на сегодня закончился.\n"
-        "Он обновится в 02:00 МСК.\n"
-        "Сейчас можно добавить продукт вручную или выбрать его из сохранённых."
+        "Он обновится в 02:00 МСК."
     )
+    if any(remaining > 0 for remaining in (available_ai_quotas or {}).values()):
+        return message + "\nДругие способы AI-анализа ещё доступны — выбери подходящий ниже."
+    return message + "\nСейчас можно добавить продукт вручную или выбрать его из сохранённых."
+
+
+def _available_meal_ai_quotas(
+    user_id: str,
+    exhausted_feature: AIFeature,
+    *,
+    exclude_same_attempt_group: bool = False,
+) -> dict[AIFeature, int]:
+    """Возвращает остатки других пользовательских AI-квот для меню альтернатив."""
+    features = tuple(item[0] for item in MEAL_AI_QUOTA_ALTERNATIVES)
+    try:
+        statuses = ai_quota_service.get_statuses(user_id, features)
+        blocked_attempt_group = None
+        if exclude_same_attempt_group:
+            current_status = statuses.get(exhausted_feature)
+            if current_status is not None:
+                blocked_attempt_group = ai_quota_service.entitlement(
+                    current_status.plan_key,
+                    exhausted_feature,
+                ).attempt_group
+
+        available = {}
+        for alternative_feature, status in statuses.items():
+            if alternative_feature is exhausted_feature or status.remaining <= 0:
+                continue
+            if blocked_attempt_group is not None:
+                alternative_group = ai_quota_service.entitlement(
+                    status.plan_key,
+                    alternative_feature,
+                ).attempt_group
+                if alternative_group == blocked_attempt_group:
+                    continue
+            available[alternative_feature] = status.remaining
+        return available
+    except Exception as error:
+        logger.warning(
+            "Failed to load alternative AI quotas feature=%s error_type=%s",
+            exhausted_feature.value,
+            safe_exception_summary(error),
+        )
+        return {}
+
+
+def _attempt_limit_text(
+    feature: AIFeature,
+    available_ai_quotas: dict[AIFeature, int] | None = None,
+) -> str:
+    if feature in {AIFeature.MEAL_PHOTO, AIFeature.NUTRITION_LABEL}:
+        message = (
+            "Общий дневной запас запросов для фото еды и этикеток закончился.\n"
+            "Он расходуется при каждой отправке изображения, даже если AI не смог его распознать. "
+            "Поэтому в отдельных лимитах фото или этикеток ещё может оставаться запас.\n"
+            "Новые запросы изображений будут доступны после 02:00 МСК."
+        )
+    else:
+        message = (
+            "Общий дневной запас попыток текстового AI-анализа закончился.\n"
+            "Новые запросы будут доступны после 02:00 МСК."
+        )
+    if any(remaining > 0 for remaining in (available_ai_quotas or {}).values()):
+        return message + "\nДругие способы AI-анализа ещё доступны — выбери подходящий ниже."
+    return message + "\nМожно выбрать сохранённый продукт или внести данные вручную."
 
 
 async def _reserve_meal_ai_quota(
@@ -182,25 +270,43 @@ async def _reserve_meal_ai_quota(
     try:
         return ai_quota_service.reserve(user_id, feature, request_id)
     except AIQuotaExceeded:
+        available_ai_quotas = _available_meal_ai_quotas(user_id, feature)
+        logger.info("AI quota denied feature=%s reason=feature_limit", feature.value)
         await message.answer(
-            _quota_limit_text(feature),
-            reply_markup=_build_quota_alternatives_menu(meal_type, feature),
+            _quota_limit_text(feature, available_ai_quotas),
+            reply_markup=_build_quota_alternatives_menu(
+                meal_type,
+                feature,
+                available_ai_quotas,
+            ),
         )
     except AIAttemptLimitExceeded:
+        available_ai_quotas = _available_meal_ai_quotas(
+            user_id,
+            feature,
+            exclude_same_attempt_group=True,
+        )
+        logger.info("AI quota denied feature=%s reason=attempt_limit", feature.value)
         await message.answer(
-            "Слишком много неудачных AI-попыток за сегодня. Попробуй после 02:00 МСК "
-            "или используй ручное добавление.",
-            reply_markup=_build_quota_alternatives_menu(meal_type, feature),
+            _attempt_limit_text(feature, available_ai_quotas),
+            reply_markup=_build_quota_alternatives_menu(
+                meal_type,
+                feature,
+                available_ai_quotas,
+            ),
         )
     except AIGlobalLimitExceeded:
+        logger.info("AI quota denied feature=%s reason=global_limit", feature.value)
         await message.answer(
             "AI-функции временно приостановлены из-за общего дневного предела. "
             "Дневник и ручное добавление продолжают работать.",
             reply_markup=_build_quota_alternatives_menu(meal_type, feature),
         )
     except AIOperationInProgress:
+        logger.info("AI quota denied feature=%s reason=operation_in_progress", feature.value)
         await message.answer("Предыдущий AI-запрос ещё обрабатывается. Дождись результата.")
     except AIOperationCooldown:
+        logger.info("AI quota denied feature=%s reason=cooldown", feature.value)
         await message.answer("Подожди несколько секунд перед следующим AI-запросом.")
     except AIQuotaAlreadyConsumed:
         await message.answer("Этот AI-запрос уже обработан. Новый лимит не списан.")
@@ -1013,13 +1119,19 @@ MY_PRODUCTS_HISTORY_BATCH_SIZE = 100
 
 MY_PRODUCTS_SOURCE_FILTERS = {
     "text_ai": {"button": "📝 Из текстового AI-анализа", "title": "📝 <b>Мои продукты из текстового AI-анализа"},
-    "photo_analysis": {"button": "🗂 Старые продукты из фотоанализа", "title": "🗂 <b>Старые продукты из фотоанализа"},
+    "photo_analysis": {
+        "button": "📷 Из анализа еды по фото",
+        "aliases": ("🗂 Старые продукты из фотоанализа",),
+        "title": "📷 <b>Мои продукты из анализа еды по фото",
+    },
     "label_analysis": {"button": "📋 Из анализа этикетки", "title": "📋 <b>Мои продукты из анализа этикетки"},
     "manual": {"button": "✍️ Внесённые вручную", "title": "✍️ <b>Мои продукты, внесённые вручную"},
     "all": {"button": "📦 Все продукты", "title": "📦 <b>Все мои продукты"},
 }
 MY_PRODUCTS_SOURCE_BUTTON_TO_FILTER = {
-    config["button"]: source_filter for source_filter, config in MY_PRODUCTS_SOURCE_FILTERS.items()
+    button: source_filter
+    for source_filter, config in MY_PRODUCTS_SOURCE_FILTERS.items()
+    for button in (config["button"], *config.get("aliases", ()))
 }
 
 
@@ -1719,11 +1831,7 @@ def _build_my_product_keyboard(meal_type: str) -> ReplyKeyboardMarkup:
 def _build_my_products_source_filter_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📝 Из текстового AI-анализа")],
-            [KeyboardButton(text="📷 Из анализа еды по фото")],
-            [KeyboardButton(text="📋 Из анализа этикетки")],
-            [KeyboardButton(text="✍️ Внесённые вручную")],
-            [KeyboardButton(text="📦 Все продукты")],
+            *[[KeyboardButton(text=config["button"])] for config in MY_PRODUCTS_SOURCE_FILTERS.values()],
             [KeyboardButton(text="⬅️ Назад")],
         ],
         resize_keyboard=True,
@@ -2808,11 +2916,15 @@ def _build_meal_entry_post_save_keyboard(meal_type: str, entry_date: date) -> In
                     callback_data=f"edit_meal:{normalized_meal_type}:{iso_date}",
                 ),
                 InlineKeyboardButton(
-                    text="📦 Мои продукты",
-                    callback_data=f"meal_entry_my_products:{normalized_meal_type}:1",
+                    text="🤖 AI-лимиты",
+                    callback_data="meal_entry_ai_limits",
                 ),
             ],
             [
+                InlineKeyboardButton(
+                    text="📦 Мои продукты",
+                    callback_data=f"meal_entry_my_products:{normalized_meal_type}:1",
+                ),
                 InlineKeyboardButton(
                     text="🍽 Мои блюда",
                     callback_data=f"meal_entry_my_dishes:{normalized_meal_type}:1",
@@ -3665,6 +3777,15 @@ async def my_dish_archive(callback: CallbackQuery, state: FSMContext):
     )
     if not shown:
         await callback.message.edit_text("В «Моих блюдах» пока пусто.")
+
+
+@router.callback_query(lambda c: c.data == "meal_entry_ai_limits")
+async def show_meal_entry_ai_limits(callback: CallbackQuery):
+    """Показывает актуальные остатки AI-квот без нового сообщения в чате."""
+    await callback.answer(
+        format_free_ai_status_block(str(callback.from_user.id), compact=True),
+        show_alert=True,
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_entry_my_products:"))
@@ -4603,6 +4724,15 @@ async def handle_quota_alternative(callback: CallbackQuery, state: FSMContext):
         return
     if action == "manual":
         await _start_custom_product_creation(callback.message, state, meal_type=meal_type)
+        return
+    if action == "ai":
+        await kbju_add_via_ai(callback.message, state)
+        return
+    if action == "photo":
+        await kbju_add_via_photo(callback.message, state)
+        return
+    if action == "label":
+        await kbju_add_via_label(callback.message, state)
         return
     await _show_input_methods(callback.message, state, user_id=user_id)
 

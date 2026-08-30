@@ -33,6 +33,109 @@ def _build_callback(callback_data: str):
     return callback
 
 
+def test_exhausted_label_quota_offers_other_available_ai_methods():
+    available = {
+        meals.AIFeature.MEAL_TEXT: 12,
+        meals.AIFeature.MEAL_PHOTO: 3,
+    }
+
+    text = meals._quota_limit_text(meals.AIFeature.NUTRITION_LABEL, available)
+    keyboard = meals._build_quota_alternatives_menu(
+        "lunch",
+        meals.AIFeature.NUTRITION_LABEL,
+        available,
+    )
+
+    assert "Другие способы AI-анализа ещё доступны" in text
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard][:2] == [
+        ["📝 Текстовый AI-анализ · осталось 12"],
+        ["📷 Анализ еды по фото · осталось 3"],
+    ]
+    assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard][:2] == [
+        ["quota_alt:ai:lunch"],
+        ["quota_alt:photo:lunch"],
+    ]
+
+
+def test_quota_photo_alternative_opens_photo_flow():
+    callback = _build_callback("quota_alt:photo:lunch")
+    state = _DummyState()
+
+    with patch("handlers.meals.kbju_add_via_photo", new_callable=AsyncMock) as open_photo:
+        asyncio.run(meals.handle_quota_alternative(callback, state))
+
+    callback.answer.assert_awaited_once_with()
+    open_photo.assert_awaited_once_with(callback.message, state)
+    assert state._data["meal_type"] == "lunch"
+
+
+def test_shared_image_attempt_limit_offers_text_ai_but_not_other_image_mode():
+    message = _build_message()
+    statuses = {
+        meals.AIFeature.MEAL_TEXT: SimpleNamespace(remaining=9, plan_key="free"),
+        meals.AIFeature.MEAL_PHOTO: SimpleNamespace(remaining=3, plan_key="free"),
+        meals.AIFeature.NUTRITION_LABEL: SimpleNamespace(remaining=4, plan_key="free"),
+    }
+
+    def entitlement(_plan_key, feature):
+        group = "meal_text" if feature is meals.AIFeature.MEAL_TEXT else "meal_image"
+        return SimpleNamespace(attempt_group=group)
+
+    with patch.object(
+        meals.ai_quota_service,
+        "reserve",
+        side_effect=meals.AIAttemptLimitExceeded(),
+    ), patch.object(
+        meals.ai_quota_service,
+        "get_statuses",
+        return_value=statuses,
+    ), patch.object(
+        meals.ai_quota_service,
+        "entitlement",
+        side_effect=entitlement,
+    ):
+        result = asyncio.run(
+            meals._reserve_meal_ai_quota(
+                message,
+                user_id="12345",
+                feature=meals.AIFeature.NUTRITION_LABEL,
+                request_id="label:test",
+                meal_type="lunch",
+            )
+        )
+
+    assert result is None
+    text = message.answer.await_args.args[0]
+    assert "Общий дневной запас запросов для фото еды и этикеток закончился" in text
+    assert "даже если AI не смог его распознать" in text
+    keyboard_texts = [
+        button.text
+        for row in message.answer.await_args.kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert "📝 Текстовый AI-анализ · осталось 9" in keyboard_texts
+    assert all("Анализ еды по фото" not in text for text in keyboard_texts)
+    assert all("Анализ этикетки" not in text for text in keyboard_texts)
+
+
+def test_meal_entry_ai_limits_shows_current_status_in_alert():
+    callback = _build_callback("meal_entry_ai_limits")
+    status_text = (
+        "Бесплатные AI-возможности до 02:00 МСК:\n\n"
+        "📝 Текст: осталось 12 из 15\n"
+        "📷 Фото еды: осталось 3 из 5\n"
+        "📋 Этикетки: осталось 0 из 10\n"
+        "🧠 Анализ дня: доступен"
+    )
+
+    with patch("handlers.meals.format_free_ai_status_block", return_value=status_text) as format_status:
+        asyncio.run(meals.show_meal_entry_ai_limits(callback))
+
+    format_status.assert_called_once_with("12345", compact=True)
+    callback.answer.assert_awaited_once_with(status_text, show_alert=True)
+    callback.message.answer.assert_not_awaited()
+
+
 def test_photo_analysis_confirm_menu_uses_single_product_edit_and_save_buttons():
     save_token = "A" * meals.MEAL_SAVE_TOKEN_LENGTH
     keyboard = meals._build_photo_analysis_confirm_menu([{"name": "Пицца 4 сыра"}], save_token)
@@ -313,12 +416,12 @@ def test_reopening_filled_meal_from_diary_shows_existing_products_before_new_add
     assert "🔥 <b>Калории:</b> 94 ккал" in current_meal_text
     keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"]
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
-        ["✏️ Редактировать", "📦 Мои продукты"],
-        ["🍽 Мои блюда"],
+        ["✏️ Редактировать", "🤖 AI-лимиты"],
+        ["📦 Мои продукты", "🍽 Мои блюда"],
     ]
     assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
-        ["edit_meal:snack:2026-04-08", "meal_entry_my_products:snack:1"],
-        ["meal_entry_my_dishes:snack:1"],
+        ["edit_meal:snack:2026-04-08", "meal_entry_ai_limits"],
+        ["meal_entry_my_products:snack:1", "meal_entry_my_dishes:snack:1"],
     ]
     add_menu_call = callback.message.answer.await_args_list[2]
     assert add_menu_call.args[0] == "Можно добавить ещё продукт в этот приём пищи или завершить его."
@@ -394,12 +497,12 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_switches_bottom_
     assert "✅ Когда приём пищи заполнен" not in answer_text
     keyboard = message.answer.await_args_list[1].kwargs["reply_markup"]
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
-        ["✏️ Редактировать", "📦 Мои продукты"],
-        ["🍽 Мои блюда"],
+        ["✏️ Редактировать", "🤖 AI-лимиты"],
+        ["📦 Мои продукты", "🍽 Мои блюда"],
     ]
     assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
-        ["edit_meal:breakfast:2026-04-08", "meal_entry_my_products:breakfast:1"],
-        ["meal_entry_my_dishes:breakfast:1"],
+        ["edit_meal:breakfast:2026-04-08", "meal_entry_ai_limits"],
+        ["meal_entry_my_products:breakfast:1", "meal_entry_my_dishes:breakfast:1"],
     ]
     assert message.answer.await_args_list[1].kwargs["parse_mode"] == "HTML"
     add_menu_call = message.answer.await_args_list[-1]
@@ -2236,8 +2339,8 @@ def test_back_from_ai_method_restores_open_meal_entry_screen():
     assert "<b>Итого завтрак:</b>" in restored_text
     inline_keyboard = message.answer.await_args_list[0].kwargs["reply_markup"].inline_keyboard
     assert [[button.text for button in row] for row in inline_keyboard] == [
-        ["✏️ Редактировать", "📦 Мои продукты"],
-        ["🍽 Мои блюда"],
+        ["✏️ Редактировать", "🤖 AI-лимиты"],
+        ["📦 Мои продукты", "🍽 Мои блюда"],
     ]
     assert message.answer.await_args_list[1].args[0] == "Можно добавить ещё продукт в этот приём пищи или завершить его."
     assert message.answer.await_args_list[1].kwargs["reply_markup"] == meals.kbju_add_menu

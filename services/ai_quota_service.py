@@ -70,7 +70,7 @@ FREE_PLAN = PlanDefinition(
             AI_DAILY_ANALYSIS_ATTEMPT_LIMIT_PER_DAY,
         ),
         AIFeature.MEAL_COMPLETION_COMMENT: FeatureEntitlement(
-            4,
+            8,
             "meal_completion_comment",
             AI_MEAL_COMMENT_ATTEMPT_LIMIT_PER_DAY,
         ),
@@ -93,6 +93,18 @@ class QuotaStatus:
     @property
     def remaining(self) -> int:
         return max(0, self.limit - self.used - self.reserved)
+
+
+@dataclass(frozen=True)
+class AttemptStatus:
+    group_key: str
+    period_key: date
+    limit: int
+    used: int
+
+    @property
+    def remaining(self) -> int:
+        return max(0, self.limit - self.used)
 
 
 @dataclass(frozen=True)
@@ -704,6 +716,34 @@ class AIQuotaService:
         selected = tuple(features or AIFeature)
         return {feature: self.get_status(user_id, feature, now=now) for feature in selected}
 
+    def get_attempt_status(
+        self,
+        user_id: str | int,
+        feature: AIFeature | str,
+        *,
+        now: datetime | None = None,
+    ) -> AttemptStatus:
+        """Возвращает общий технический запас запросов для группы функции."""
+        user_id = str(user_id)
+        feature = AIFeature(feature)
+        plan_key = self.get_plan_key(user_id, now=now)
+        entitlement = self.entitlement(plan_key, feature)
+        period = quota_period_key(now or datetime.now(MSK_TZ))
+        with get_db_session() as session:
+            row = (
+                session.query(AIAttemptCounter)
+                .filter(AIAttemptCounter.user_id == user_id)
+                .filter(AIAttemptCounter.group_key == entitlement.attempt_group)
+                .filter(AIAttemptCounter.period_key == period)
+                .first()
+            )
+            return AttemptStatus(
+                group_key=entitlement.attempt_group,
+                period_key=period,
+                limit=entitlement.attempt_limit,
+                used=int(row.attempt_count or 0) if row else 0,
+            )
+
     def get_operation(self, request_id: str) -> AIQuotaOperation | None:
         with get_db_session() as session:
             return (
@@ -936,8 +976,8 @@ class AIQuotaService:
 ai_quota_service = AIQuotaService()
 
 
-def format_free_ai_status_block(user_id: str | int) -> str:
-    """Короткий пользовательский блок остатков без изменения названий кнопок."""
+def format_free_ai_status_block(user_id: str | int, *, compact: bool = False) -> str:
+    """Показывает только пользовательские AI-квоты, без внутренних предохранителей."""
     try:
         statuses = ai_quota_service.get_statuses(
             user_id,
@@ -978,6 +1018,15 @@ def format_free_ai_status_block(user_id: str | int) -> str:
     except SQLAlchemyError:
         existing_daily = None
     daily_value = "готов" if daily.used or existing_daily else "доступен" if daily.remaining else "лимит исчерпан"
+    if compact:
+        lines = [
+            "AI-лимиты до 02:00 МСК:",
+            f"📝 Текст: {text.remaining}/{text.limit}",
+            f"📷 Фото еды: {photo.remaining}/{photo.limit}",
+            f"📋 Этикетки: {label.remaining}/{label.limit}",
+        ]
+        lines.append(f"🧠 Анализ дня: {daily_value}")
+        return "\n".join(lines)
     return (
         "Бесплатные AI-возможности до 02:00 МСК:\n\n"
         f"📝 Текст: осталось {text.remaining} из {text.limit}\n"

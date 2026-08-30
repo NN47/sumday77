@@ -166,9 +166,13 @@ async def _edit_or_answer(message: Message, text: str, keyboard: InlineKeyboardM
 
 async def _hide_section_reply_keyboard(message: Message) -> None:
     """Скрывает меню раздела перед сценарием с inline-кнопками."""
-    placeholder = await message.answer(
-        "\u2063", reply_markup=ReplyKeyboardRemove(), disable_notification=True,
-    )
+    try:
+        placeholder = await message.answer(
+            "Открываю…", reply_markup=ReplyKeyboardRemove(), disable_notification=True,
+        )
+    except TelegramBadRequest:
+        # Служебное сообщение не должно блокировать открытие основного экрана.
+        return
     try:
         await placeholder.delete()
     except (TelegramBadRequest, AttributeError):
@@ -264,10 +268,48 @@ async def _replace_with_activity_main(
     await message.answer("Выбери действие:", reply_markup=training_menu, disable_notification=True)
 
 
-@router.message(StateFilter(None), F.text.in_(ACTIVITY_BUTTON_ALIASES))
+@router.message(F.text.in_(ACTIVITY_BUTTON_ALIASES))
 async def open_activity(message: Message, state: FSMContext) -> None:
     await state.clear()
     await show_activity_main(message, str(message.from_user.id))
+
+
+# Reply-навигация регистрируется раньше обработчиков ввода FSM.
+@router.message(F.text == WORKOUT_BUTTON_TEXT)
+async def start_workout(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await _hide_section_reply_keyboard(message)
+    user_id = str(message.from_user.id)
+    existing = ActivityRepository.get_workout_draft(user_id)
+    if existing is not None:
+        ActivityRepository.remove_empty_session_exercises(existing.id, user_id)
+        if ActivityRepository.get_session_sets(existing.id, user_id):
+            await _show_legacy_workout_actions(
+                message,
+                user_id,
+                prefix="Продолжаем незавершённую тренировку.",
+            )
+        else:
+            await _show_new_workout_categories(message, state)
+        return
+    weight, weight_source = _weight_snapshot(user_id)
+    try:
+        ActivityRepository.create_workout_session(
+            user_id=user_id, entry_date=date.today(), weight_kg=weight,
+            weight_source=weight_source,
+        )
+    except WorkoutDraftExistsError:
+        existing = ActivityRepository.get_workout_draft(user_id)
+        if existing is not None and not ActivityRepository.get_session_sets(existing.id, user_id):
+            await _show_new_workout_categories(message, state)
+        else:
+            await _show_legacy_workout_actions(
+                message,
+                user_id,
+                prefix="Продолжаем незавершённую тренировку.",
+            )
+        return
+    await _show_new_workout_categories(message, state)
 
 
 @router.callback_query(F.data == "act:main")
@@ -1258,43 +1300,6 @@ async def _show_new_workout_categories(message: Message, state: FSMContext) -> N
         ),
         parse_mode="HTML",
     )
-
-
-@router.message(F.text == WORKOUT_BUTTON_TEXT)
-async def start_workout(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await _hide_section_reply_keyboard(message)
-    user_id = str(message.from_user.id)
-    existing = ActivityRepository.get_workout_draft(user_id)
-    if existing is not None:
-        ActivityRepository.remove_empty_session_exercises(existing.id, user_id)
-        if ActivityRepository.get_session_sets(existing.id, user_id):
-            await _show_legacy_workout_actions(
-                message,
-                user_id,
-                prefix="Продолжаем незавершённую тренировку.",
-            )
-        else:
-            await _show_new_workout_categories(message, state)
-        return
-    weight, weight_source = _weight_snapshot(user_id)
-    try:
-        ActivityRepository.create_workout_session(
-            user_id=user_id, entry_date=date.today(), weight_kg=weight,
-            weight_source=weight_source,
-        )
-    except WorkoutDraftExistsError:
-        existing = ActivityRepository.get_workout_draft(user_id)
-        if existing is not None and not ActivityRepository.get_session_sets(existing.id, user_id):
-            await _show_new_workout_categories(message, state)
-        else:
-            await _show_legacy_workout_actions(
-                message,
-                user_id,
-                prefix="Продолжаем незавершённую тренировку.",
-            )
-        return
-    await _show_new_workout_categories(message, state)
 
 
 @router.callback_query(F.data == "act:workout_start_back")

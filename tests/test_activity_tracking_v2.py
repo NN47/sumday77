@@ -7,6 +7,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import SendMessage
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import Message
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -14,6 +21,8 @@ from sqlalchemy.pool import StaticPool
 from database.models import Base
 import database.repositories.activity_repository as repository_module
 from database.repositories.activity_repository import ActivityRepository
+from handlers import activity_tracking
+from states.user_states import ActivityTrackingStates
 from services.activity_energy_service import (
     ActivityValidationError,
     calculate_met_energy,
@@ -45,6 +54,7 @@ from handlers.activity_tracking import (
     _timed_search_matches,
     format_activity_overview,
     receive_set_repetitions,
+    start_workout,
 )
 from utils.keyboards import (
     TRAINING_BUTTON_TEXT,
@@ -121,6 +131,82 @@ def test_main_activity_navigation_uses_new_russian_process_names():
 def test_workout_button_is_not_handled_as_activity_section_entry():
     assert WORKOUT_BUTTON_TEXT == "🏋️ Тренировка"
     assert WORKOUT_BUTTON_TEXT not in ACTIVITY_BUTTON_ALIASES
+
+
+def test_start_workout_creates_draft_and_opens_categories(activity_store):
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=1), bot=SimpleNamespace(),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(clear=AsyncMock(), update_data=AsyncMock())
+    with patch("handlers.activity_tracking.WeightRepository.get_last_weight", return_value=70):
+        asyncio.run(start_workout(message, state))
+
+    draft = ActivityRepository.get_workout_draft("1")
+    assert draft is not None
+    assert draft.weight_kg_snapshot == 70
+    assert "Выбери категорию упражнения" in message.answer.await_args.args[0]
+    keyboard = message.answer.await_args.kwargs["reply_markup"]
+    assert keyboard.inline_keyboard[-1][0].callback_data == "act:workout_start_back"
+    assert all(len(button.callback_data.encode("utf-8")) <= 64 for row in keyboard.inline_keyboard for button in row)
+
+
+@pytest.mark.parametrize("previous_state", [None, ActivityTrackingStates.entering_timed_duration])
+def test_workout_reply_button_opens_workout_even_with_unfinished_input(activity_store, previous_state):
+    async def scenario():
+        bot = Bot("12345:test-token")
+        storage = MemoryStorage()
+        state = FSMContext(storage, StorageKey(bot.id, 1, 1))
+        await state.set_state(previous_state)
+        await state.update_data(activity_code="running", entry_date=date.today().isoformat())
+        message = Message.model_validate({
+            "message_id": 1, "date": 0, "chat": {"id": 1, "type": "private"},
+            "from": {"id": 1, "is_bot": False, "first_name": "Test"},
+            "text": WORKOUT_BUTTON_TEXT,
+        }, context={"bot": bot})
+        with patch.object(Message, "answer", new_callable=AsyncMock) as answer, patch(
+            "handlers.activity_tracking.WeightRepository.get_last_weight", return_value=70,
+        ):
+            await activity_tracking.router.propagate_event(
+                "message", message, state=state, raw_state=await state.get_state(),
+            )
+        assert ActivityRepository.get_workout_draft("1") is not None
+        assert "Выбери категорию упражнения" in answer.await_args.args[0]
+        assert await state.get_state() is None
+        await storage.close()
+        await bot.session.close()
+
+    asyncio.run(scenario())
+
+
+def test_workout_opens_if_service_keyboard_message_is_rejected(activity_store):
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=1), bot=SimpleNamespace(),
+        answer=AsyncMock(side_effect=[
+            TelegramBadRequest(method=SendMessage(chat_id=1, text="test"), message="Bad Request"),
+            None,
+        ]),
+    )
+    state = SimpleNamespace(clear=AsyncMock(), update_data=AsyncMock())
+    with patch("handlers.activity_tracking.WeightRepository.get_last_weight", return_value=70):
+        asyncio.run(start_workout(message, state))
+    assert "Выбери категорию упражнения" in message.answer.await_args.args[0]
+    assert ActivityRepository.get_workout_draft("1") is not None
+
+
+def test_reentering_empty_workout_reuses_draft_and_back_restores_activity(activity_store):
+    message = SimpleNamespace(from_user=SimpleNamespace(id=1), bot=SimpleNamespace(), answer=AsyncMock())
+    state = SimpleNamespace(clear=AsyncMock(), update_data=AsyncMock())
+    with patch("handlers.activity_tracking.WeightRepository.get_last_weight", return_value=70):
+        asyncio.run(start_workout(message, state))
+        draft_id = ActivityRepository.get_workout_draft("1").id
+        asyncio.run(start_workout(message, state))
+    assert ActivityRepository.get_workout_draft("1").id == draft_id
+    callback = SimpleNamespace(from_user=message.from_user, message=message, answer=AsyncMock())
+    with patch("handlers.activity_tracking._replace_with_activity_main", new_callable=AsyncMock) as show_main:
+        asyncio.run(activity_tracking.leave_new_workout(callback, state))
+    assert ActivityRepository.get_workout_draft("1") is None
+    show_main.assert_awaited_once_with(message, "1", date.today())
 
 
 def test_timed_and_exercise_search_find_russian_names():
@@ -246,6 +332,14 @@ def test_repetition_save_uses_previous_confirmation_in_active_flow(activity_stor
     call = message.answer.await_args
     assert "✅ Записал! 👍" in call.args[0]
     assert call.kwargs["reply_markup"] is add_another_set_menu
+
+    asyncio.run(start_workout(message, state))
+    assert ActivityRepository.get_workout_draft("1").id == session.id
+    saved_sets = ActivityRepository.get_session_sets(session.id, "1")
+    assert len(saved_sets) == 1
+    assert saved_sets[0].repetitions == 15
+    assert "Продолжаем незавершённую тренировку" in message.answer.await_args.args[0]
+    assert message.answer.await_args.kwargs["reply_markup"] is add_another_set_menu
 
 
 def test_back_from_activity_calendar_renders_activity_overview():
