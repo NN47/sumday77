@@ -16,7 +16,7 @@ from utils.keyboards import (
 )
 from database.account_deletion import delete_user_account
 from database.repositories import SupportRepository, AnalyticsRepository, ErrorLogRepository
-from states.user_states import AccountDeletionStates, SupportStates
+from states.user_states import AccountDeletionStates, LegalStates, SupportStates
 from user_operation_guard import user_operation_guard
 from services.user_process_cleanup import clear_user_fsm_states, clear_user_process_caches
 from config import ADMIN_ID
@@ -61,29 +61,37 @@ async def settings(message: Message, state: FSMContext):
     
     push_menu_stack(message.bot, settings_menu)
     await message.answer(
-        "⚙️ Настройки\n\nВыбери действие:",
+        "⚙️ Настройки\n\nВыбери действие.\n\n"
+        "Чтобы прекратить использование бота и удалить записи, выбери «🗑 Удалить аккаунт». "
+        "Вместе с аккаунтом удалятся сохранённые отметки принятия условий и ознакомления с политикой.",
         reply_markup=settings_menu,
     )
 
 
 @account_deletion_router.message(lambda m: m.text == "🗑 Удалить аккаунт")
-async def delete_account_start(message: Message, state: FSMContext):
+async def delete_account_start(message: Message, state: FSMContext, *, return_to_legal: bool = False):
     """Начинает процесс удаления аккаунта."""
     reset_user_state(message)
+    current_state = await state.get_state()
+    legal_return_data = await state.get_data() if current_state == LegalStates.reviewing.state else {}
     await state.clear()
     await state.set_state(AccountDeletionStates.waiting_for_button_confirmation)
+    if return_to_legal or current_state == LegalStates.reviewing.state:
+        await state.update_data(legal_return_data=legal_return_data)
     logger.warning("Account deletion initiated")
     
     push_menu_stack(message.bot, delete_account_confirm_menu)
     await message.answer(
         "⚠️ <b>ВНИМАНИЕ!</b>\n\n"
         "Вы уверены, что хотите удалить аккаунт?\n\n"
-        "При удалении аккаунта будут <b>безвозвратно удалены</b> все ваши данные:\n"
+        "При удалении аккаунта из основной базы бота будут <b>безвозвратно удалены</b> ваши записи:\n"
         "• Все тренировки\n"
         "• Все записи веса и замеров\n"
         "• Все записи КБЖУ\n"
         "• Все добавки и их история\n"
-        "• Настройки КБЖУ\n\n"
+        "• Настройки КБЖУ\n"
+        "• Отметки принятия условий и ознакомления с политикой\n\n"
+        "Использование бота прекратится. Если вернёшься через /start, потребуется заново принять условия.\n\n"
         "Это действие нельзя отменить!",
         reply_markup=delete_account_confirm_menu,
         parse_mode="HTML",
@@ -138,8 +146,8 @@ async def delete_account_text_confirm(message: Message, state: FSMContext):
             clear_user_process_caches(message.bot, user_id)
         await message.answer(
             "✅ Аккаунт успешно удалён.\n\n"
-            "Все ваши данные были удалены из базы данных.\n\n"
-            "Если захотите вернуться, просто нажмите /start",
+            "Записи аккаунта и отметки принятия условий удалены из основной базы данных.\n\n"
+            "Если захотите вернуться, нажмите /start и заново подтвердите условия.",
             reply_markup=ReplyKeyboardMarkup(
                 keyboard=[[KeyboardButton(text="/start")]],
                 resize_keyboard=True
@@ -165,7 +173,15 @@ async def delete_account_text_confirm(message: Message, state: FSMContext):
 )
 async def delete_account_cancel(message: Message, state: FSMContext):
     """Отменяет удаление аккаунта."""
+    data = await state.get_data()
     await state.clear()
+    if "legal_return_data" in data:
+        from handlers.legal import show_legal_gate
+        await state.set_state(LegalStates.reviewing)
+        await state.set_data(data["legal_return_data"])
+        await message.answer("❌ Удаление аккаунта отменено.")
+        await show_legal_gate(message, state)
+        return
     push_menu_stack(message.bot, settings_menu)
     await message.answer(
         "❌ Удаление аккаунта отменено.",

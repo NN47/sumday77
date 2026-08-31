@@ -22,12 +22,15 @@ from database.repositories import UserRepository
 from handlers import legal, settings
 from middlewares.legal import LegalAcceptanceMiddleware
 from middlewares.onboarding import OnboardingMiddleware
+from middlewares.user_activity import UserActivityMiddleware
 from states.user_states import AccountDeletionStates, KbjuTestStates, LegalStates
 from utils.legal_documents import LEGAL_DOCUMENTS, LEGAL_VERSION, SUPPORT_CONTACT
+from user_operation_guard import user_operation_guard
 
 
 @pytest.fixture
 def legal_db(monkeypatch):
+    user_operation_guard.reset_for_testing()
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -45,6 +48,7 @@ def legal_db(monkeypatch):
     monkeypatch.setattr("database.repositories.user_repository.get_db_session", session_provider)
     monkeypatch.setattr("database.repositories.support_repository.get_db_session", session_provider)
     yield engine, session_provider
+    user_operation_guard.reset_for_testing()
     engine.dispose()
 
 
@@ -62,6 +66,19 @@ def fake_callback(data, user_id=101):
 
 def fsm(user_id=101):
     return FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=999, chat_id=user_id, user_id=user_id))
+
+
+async def current_button(state, prefix):
+    keyboard = legal.gate_keyboard(await state.get_data())
+    return next(button.callback_data for row in keyboard.inline_keyboard for button in row
+                if (button.callback_data or "").startswith(prefix))
+
+
+async def select_both(state):
+    for key in ("terms", "privacy"):
+        callback = fake_callback(await current_button(state, f"legal:toggle:{key}:"))
+        await legal.toggle_legal_choice(callback, state)
+    return await current_button(state, "legal:accept:")
 
 
 def test_legacy_migration_clears_profile_metadata_without_touching_messages_or_diary():
@@ -120,7 +137,7 @@ def test_accept_callback_uses_actual_actor_and_preserves_start_payload(legal_db)
     async def scenario():
         state = fsm()
         await legal.show_legal_gate(fake_message(text="/start recommendations"), state)
-        callback = fake_callback(f"legal:accept:{LEGAL_VERSION}")
+        callback = fake_callback(await select_both(state))
         with patch("handlers.start.continue_start", new=AsyncMock()) as resume:
             await legal.accept_terms(callback, state)
         assert UserRepository.has_current_legal_acceptance("101")
@@ -137,9 +154,9 @@ def test_stale_or_declined_accept_buttons_do_not_write_consent(legal_db, case):
     async def scenario():
         state = fsm()
         await legal.show_legal_gate(fake_message(), state)
-        data = f"legal:accept:{LEGAL_VERSION}"
+        data = await select_both(state)
         if case == "old_version":
-            data = "legal:accept:old"
+            data = data.replace(LEGAL_VERSION, "old")
         elif case == "wrong_state":
             await state.set_state(KbjuTestStates.entering_weight)
         else:
@@ -180,6 +197,136 @@ def test_document_back_restores_gate_without_acceptance(legal_db):
     asyncio.run(scenario())
 
 
+def test_checkboxes_are_independent_and_only_final_button_records_acceptance(legal_db):
+    async def scenario():
+        state = fsm()
+        message = fake_message()
+        await legal.show_legal_gate(message, state)
+        keyboard = message.answer.await_args.kwargs["reply_markup"]
+        assert [b.text for row in keyboard.inline_keyboard[:2] for b in row] == [
+            "📄 Соглашение", "☐ Принимаю", "🔒 Политика", "☐ Ознакомлен",
+        ]
+        assert not any(b.text == "Принять условия" for row in keyboard.inline_keyboard for b in row)
+        accept_data = await select_both(state)
+        assert not UserRepository.has_current_legal_acceptance("101")
+        _, provider = legal_db
+        with provider() as session:
+            assert session.query(User).count() == 0
+
+        await legal.toggle_legal_choice(fake_callback(await current_button(state, "legal:toggle:terms:")), state)
+        keyboard = legal.gate_keyboard(await state.get_data())
+        assert not any(b.text == "Принять условия" for row in keyboard.inline_keyboard for b in row)
+        with patch("handlers.start.continue_start", new=AsyncMock()) as resume:
+            await legal.accept_terms(fake_callback(accept_data), state)
+            # Even a fabricated current button must not bypass an unchecked box.
+            data = await state.get_data()
+            await legal.accept_terms(fake_callback(
+                f"legal:accept:{LEGAL_VERSION}:{data['legal_nonce']}:{data['legal_revision']}"
+            ), state)
+            resume.assert_not_awaited()
+        assert not UserRepository.has_current_legal_acceptance("101")
+        assert (await state.get_data())["legal_choices"] == {"terms": False, "privacy": True}
+        assert all(len(b.callback_data.encode()) <= 64 for row in keyboard.inline_keyboard for b in row if b.callback_data)
+    asyncio.run(scenario())
+
+
+def test_reading_and_pagination_preserve_selection_without_auto_checking(legal_db):
+    async def scenario():
+        state = fsm()
+        await legal.show_legal_gate(fake_message(text="/start recommendations"), state)
+        await legal.toggle_legal_choice(fake_callback(await current_button(state, "legal:toggle:terms:")), state)
+        before = await state.get_data()
+        for key in ("terms", "privacy"):
+            for page in (0, 1):
+                await legal.document_page(fake_callback(f"legal:doc:{key}:gate:{page}"))
+            await legal.back_to_legal_origin(fake_callback("legal:back:gate"), state)
+            assert await state.get_data() == before
+        assert not UserRepository.has_current_legal_acceptance("101")
+    asyncio.run(scenario())
+
+
+def test_old_single_accept_button_opens_checkboxes_without_accepting(legal_db):
+    async def scenario():
+        state = fsm()
+        # MemoryStorage can be empty after a restart with an old message still visible.
+        callback = fake_callback(f"legal:accept:{LEGAL_VERSION}")
+        with patch("handlers.start.continue_start", new=AsyncMock()) as resume:
+            await legal.accept_terms(callback, state)
+            resume.assert_not_awaited()
+        assert await state.get_state() == LegalStates.reviewing.state
+        assert (await state.get_data())["legal_choices"] == {"terms": False, "privacy": False}
+        assert not UserRepository.has_current_legal_acceptance("101")
+        callback.message.edit_text.assert_awaited_once()
+    asyncio.run(scenario())
+
+
+def test_restart_invalidates_previous_buttons_and_decline_clears_draft(legal_db):
+    async def scenario():
+        state = fsm()
+        await legal.show_legal_gate(fake_message(), state)
+        accept_data = await select_both(state)
+        toggle_data = await current_button(state, "legal:toggle:terms:")
+        await legal.show_legal_gate(fake_message(), state)
+        new_data = await state.get_data()
+        await legal.toggle_legal_choice(fake_callback(toggle_data), state)
+        with patch("handlers.start.continue_start", new=AsyncMock()) as resume:
+            await legal.accept_terms(fake_callback(accept_data), state)
+            resume.assert_not_awaited()
+        assert await state.get_data() == new_data
+        assert not UserRepository.has_current_legal_acceptance("101")
+        await legal.decline_terms(fake_callback(await current_button(state, "legal:decline:")), state)
+        assert await state.get_state() is None
+        assert await state.get_data() == {}
+        await legal.back_to_legal_origin(fake_callback("legal:home"), state)
+        assert (await state.get_data())["legal_choices"] == {"terms": False, "privacy": False}
+    asyncio.run(scenario())
+
+
+def test_repeat_accept_and_old_document_back_do_not_restart_onboarding(legal_db):
+    async def scenario():
+        state = fsm()
+        await legal.show_legal_gate(fake_message(), state)
+        callback = fake_callback(await select_both(state))
+        with patch("handlers.start.continue_start", new=AsyncMock()) as resume:
+            await legal.accept_terms(callback, state)
+            await state.set_state(KbjuTestStates.entering_weight)
+            _, provider = legal_db
+            with provider() as session:
+                accepted_at = session.query(User).one().terms_accepted_at
+            await legal.accept_terms(callback, state)
+            await legal.back_to_legal_origin(fake_callback("legal:back:gate"), state)
+            resume.assert_awaited_once()
+            with provider() as session:
+                assert session.query(User).one().terms_accepted_at == accepted_at
+        assert await state.get_state() == KbjuTestStates.entering_weight.state
+    asyncio.run(scenario())
+
+
+def test_settings_document_returns_to_settings_without_changing_acceptance(legal_db):
+    async def scenario():
+        UserRepository.accept_legal_documents("101")
+        state = fsm()
+        with patch.object(settings, "settings", new=AsyncMock()) as show_settings:
+            await legal.back_to_legal_origin(fake_callback("legal:back:settings"), state)
+            show_settings.assert_awaited_once()
+        assert UserRepository.has_current_legal_acceptance("101")
+    asyncio.run(scenario())
+
+
+def test_cancel_deletion_from_old_gate_returns_accepted_user_to_settings(legal_db):
+    async def scenario():
+        UserRepository.accept_legal_documents("101")
+        state = fsm()
+        await state.set_state(KbjuTestStates.entering_weight)
+        await legal.delete_from_legal_gate(fake_callback("legal:delete"), state)
+        message = fake_message(text="❌ Отмена")
+        await settings.delete_account_cancel(message, state)
+        assert await state.get_state() is None
+        assert message.answer.await_args.kwargs["reply_markup"] == settings.settings_menu
+        assert UserRepository.has_current_legal_acceptance("101")
+    asyncio.run(scenario())
+
+
 def test_stale_decline_does_not_clear_an_accepted_users_current_scenario(legal_db):
     async def scenario():
         UserRepository.accept_legal_documents("101")
@@ -213,6 +360,8 @@ def test_dispatcher_gate_age_and_deletion_cannot_be_bypassed(legal_db):
     async def scenario():
         dp = Dispatcher(storage=MemoryStorage())
         bot = Bot(token="999:test-token")
+        dp.message.outer_middleware(UserActivityMiddleware())
+        dp.callback_query.outer_middleware(UserActivityMiddleware())
         dp.message.outer_middleware(LegalAcceptanceMiddleware())
         dp.callback_query.outer_middleware(LegalAcceptanceMiddleware())
         dp.message.outer_middleware(OnboardingMiddleware())
@@ -260,6 +409,10 @@ def test_dispatcher_gate_age_and_deletion_cannot_be_bypassed(legal_db):
             await send("legal:doc:privacy:gate:0", callback=True)
             assert not UserRepository.has_current_legal_acceptance("101")
             await send("legal:back:gate", callback=True)
+            terms_choice = await current_button(state, "legal:toggle:terms:")
+            # The real user-operation middleware serializes duplicate Telegram taps.
+            await asyncio.gather(send(terms_choice, callback=True), send(terms_choice, callback=True))
+            assert (await state.get_data())["legal_choices"] == {"terms": True, "privacy": False}
             await send("legal:delete", callback=True)
             assert await state.get_state() == AccountDeletionStates.waiting_for_button_confirmation.state
             await send("🏠 Главное меню")
@@ -269,9 +422,12 @@ def test_dispatcher_gate_age_and_deletion_cannot_be_bypassed(legal_db):
             await send("wrong confirmation")
             assert await state.get_state() == AccountDeletionStates.waiting_for_text_confirmation.state
             await send("❌ Отмена")
-            assert await state.get_state() is None
+            assert await state.get_state() == LegalStates.reviewing.state
+            assert (await state.get_data())["legal_choices"] == {"terms": True, "privacy": False}
             await send("/start")
-            await send(f"legal:accept:{LEGAL_VERSION}", callback=True)
+            for key in ("terms", "privacy"):
+                await send(await current_button(state, f"legal:toggle:{key}:"), callback=True)
+            await send(await current_button(state, "legal:accept:"), callback=True)
             assert UserRepository.has_current_legal_acceptance("101")
             assert await state.get_state() == KbjuTestStates.entering_gender.state
             # Acceptance does not bypass the age gate.
@@ -281,6 +437,18 @@ def test_dispatcher_gate_age_and_deletion_cannot_be_bypassed(legal_db):
             with patch("middlewares.onboarding.MealRepository.get_kbju_settings", return_value=object()):
                 await send("🍱 Дневник питания")
                 business.assert_awaited_once()
+                await send("🗑 Удалить аккаунт")
+                await send("Да, удалить аккаунт")
+                _, provider = legal_db
+                with patch("handlers.settings.delete_user_account",
+                           side_effect=lambda user_id: delete_user_account(user_id, session_provider=provider)):
+                    await send("Я удаляю аккаунт Sumday77")
+                assert not UserRepository.has_current_legal_acceptance("101")
+                await send("🍱 Дневник питания")
+                business.assert_awaited_once()
+                await send("/start")
+                assert await state.get_state() == LegalStates.reviewing.state
+                assert (await state.get_data())["legal_choices"] == {"terms": False, "privacy": False}
         await bot.session.close()
         await dp.storage.close()
     asyncio.run(scenario())
