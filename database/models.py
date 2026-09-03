@@ -203,6 +203,10 @@ class WorkoutSession(Base):
     user_id = Column(String, nullable=False, index=True)
     entry_date = Column(Date, nullable=False, default=date.today, index=True)
     status = Column(String(24), nullable=False, default="draft")  # draft | completed
+    # Старые базы требуют эти NOT NULL поля без SQL-default. Оставляем их
+    # только для совместимости INSERT; ручной дневник не использует таймер.
+    _legacy_session_kind = Column("session_kind", String(24), nullable=False, default="workout", server_default="workout")
+    _legacy_paused_seconds = Column("paused_seconds", Integer, nullable=False, default=0, server_default="0")
     duration_seconds = Column(Integer, nullable=True)
     duration_source = Column(String(24), nullable=False, default="estimated")
     intensity = Column(String(16), nullable=True)
