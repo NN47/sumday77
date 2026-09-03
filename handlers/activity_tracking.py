@@ -52,8 +52,9 @@ from utils.keyboards import (
     count_menu,
     MAIN_MENU_BUTTON_ALIASES,
     PREVIOUS_TRAINING_BUTTON_TEXT,
+    steps_menu,
     TRAINING_BUTTON_TEXT,
-    WORKOUT_BUTTON_TEXT,
+    WORKOUT_BUTTON_ALIASES,
     working_weight_menu,
     push_menu_stack,
     training_menu,
@@ -135,14 +136,8 @@ def _minutes_keyboard() -> ReplyKeyboardMarkup:
 
 
 def _steps_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="5 000"), KeyboardButton(text="8 000"), KeyboardButton(text="10 000")],
-            [KeyboardButton(text="12 000"), KeyboardButton(text="15 000"), KeyboardButton(text="20 000")],
-            [KeyboardButton(text="⬅️ Назад")],
-        ],
-        resize_keyboard=True,
-    )
+    """Возвращает прежнюю расширенную сетку значений шагов."""
+    return steps_menu
 
 
 def _number_keyboard(values: tuple[str, ...]) -> ReplyKeyboardMarkup:
@@ -275,7 +270,7 @@ async def open_activity(message: Message, state: FSMContext) -> None:
 
 
 # Reply-навигация регистрируется раньше обработчиков ввода FSM.
-@router.message(F.text == WORKOUT_BUTTON_TEXT)
+@router.message(lambda message: (message.text or "").strip() in WORKOUT_BUTTON_ALIASES)
 async def start_workout(message: Message, state: FSMContext) -> None:
     await state.clear()
     await _hide_section_reply_keyboard(message)
@@ -755,6 +750,12 @@ async def start_steps_flow(message: Message, state: FSMContext, user_id: str | N
 async def save_steps(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     user_id = str(data.get("activity_user_id") or message.from_user.id)
+    if (message.text or "").strip() == "✍️ Ввести вручную":
+        await message.answer(
+            "Введи общее количество шагов за день целым числом:",
+            reply_markup=_steps_keyboard(),
+        )
+        return
     raw = (message.text or "").replace(" ", "")
     try:
         steps = int(raw)

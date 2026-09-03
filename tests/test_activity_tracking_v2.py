@@ -51,16 +51,20 @@ from handlers.activity_tracking import (
     _load_prompt,
     _show_legacy_workout_actions,
     _show_repetitions_input,
+    _steps_keyboard,
     _timed_search_matches,
     format_activity_overview,
     receive_set_repetitions,
+    save_steps,
     start_workout,
 )
 from utils.keyboards import (
     TRAINING_BUTTON_TEXT,
+    WORKOUT_BUTTON_ALIASES,
     WORKOUT_BUTTON_TEXT,
     add_another_set_menu,
     count_menu,
+    steps_menu,
     training_menu,
 )
 
@@ -131,6 +135,13 @@ def test_main_activity_navigation_uses_new_russian_process_names():
 def test_workout_button_is_not_handled_as_activity_section_entry():
     assert WORKOUT_BUTTON_TEXT == "🏋️ Тренировка"
     assert WORKOUT_BUTTON_TEXT not in ACTIVITY_BUTTON_ALIASES
+    assert {
+        "🏋️ Тренировка",
+        "🏋 Тренировка",
+        "🏋️ Начать тренировку",
+        "💪 Тренировка",
+        "Тренировка",
+    } <= WORKOUT_BUTTON_ALIASES
 
 
 def test_start_workout_creates_draft_and_opens_categories(activity_store):
@@ -152,7 +163,17 @@ def test_start_workout_creates_draft_and_opens_categories(activity_store):
 
 
 @pytest.mark.parametrize("previous_state", [None, ActivityTrackingStates.entering_timed_duration])
-def test_workout_reply_button_opens_workout_even_with_unfinished_input(activity_store, previous_state):
+@pytest.mark.parametrize(
+    "button_text",
+    [
+        WORKOUT_BUTTON_TEXT,
+        "🏋️ Тренировка ",
+        "🏋 Тренировка",
+        "🏋️ Начать тренировку",
+        "💪 Тренировка",
+    ],
+)
+def test_workout_reply_button_opens_workout_even_with_unfinished_input(activity_store, previous_state, button_text):
     async def scenario():
         bot = Bot("12345:test-token")
         storage = MemoryStorage()
@@ -162,7 +183,7 @@ def test_workout_reply_button_opens_workout_even_with_unfinished_input(activity_
         message = Message.model_validate({
             "message_id": 1, "date": 0, "chat": {"id": 1, "type": "private"},
             "from": {"id": 1, "is_bot": False, "first_name": "Test"},
-            "text": WORKOUT_BUTTON_TEXT,
+            "text": button_text,
         }, context={"bot": bot})
         with patch.object(Message, "answer", new_callable=AsyncMock) as answer, patch(
             "handlers.activity_tracking.WeightRepository.get_last_weight", return_value=70,
@@ -177,6 +198,36 @@ def test_workout_reply_button_opens_workout_even_with_unfinished_input(activity_
         await bot.session.close()
 
     asyncio.run(scenario())
+
+
+def test_steps_flow_reuses_previous_extended_value_keyboard():
+    assert _steps_keyboard() is steps_menu
+    numeric_rows = [
+        [button.text for button in row]
+        for row in steps_menu.keyboard
+        if all(button.text.isdigit() for button in row)
+    ]
+    assert len(numeric_rows) == 10
+    assert numeric_rows[0] == ["500", "1000", "1500", "2000"]
+    assert numeric_rows[-1] == ["18500", "19000", "19500", "20000"]
+
+
+def test_steps_manual_button_prompts_for_number_without_saving(activity_store):
+    message = SimpleNamespace(
+        text="✍️ Ввести вручную",
+        from_user=SimpleNamespace(id=1),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(
+        get_data=AsyncMock(return_value={"activity_user_id": "1"}),
+    )
+
+    with patch("handlers.activity_tracking.ActivityRepository.upsert_steps") as save:
+        asyncio.run(save_steps(message, state))
+
+    save.assert_not_called()
+    assert "Введи общее количество шагов" in message.answer.await_args.args[0]
+    assert message.answer.await_args.kwargs["reply_markup"] is steps_menu
 
 
 def test_workout_opens_if_service_keyboard_message_is_rejected(activity_store):

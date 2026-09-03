@@ -15,6 +15,14 @@ TRAINING_BUTTON_TEXT = "🏃 Активность"
 PREVIOUS_TRAINING_BUTTON_TEXT = "🚴 Активность"
 LEGACY_TRAINING_BUTTON_TEXT = "🏋️ Тренировка"
 WORKOUT_BUTTON_TEXT = "🏋️ Тренировка"
+WORKOUT_BUTTON_ALIASES = {
+    WORKOUT_BUTTON_TEXT,
+    LEGACY_TRAINING_BUTTON_TEXT,
+    "🏋 Тренировка",
+    "🏋️ Начать тренировку",
+    "💪 Тренировка",
+    "Тренировка",
+}
 MEALS_BUTTON_TEXT = "🍱 Дневник питания"
 LEGACY_MEALS_BUTTON_TEXT = "🍱 КБЖУ"
 MEALS_BUTTON_ALIASES = {
