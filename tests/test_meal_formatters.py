@@ -218,6 +218,42 @@ class MealFormatterTests(unittest.TestCase):
         self.assertIn(f"• <b>{escaped_name}</b> (100 г)", edit_details)
         self.assertEqual(products[0]["name"], original_name)
 
+    def test_current_meal_keeps_dish_portions_and_separately_added_products(self):
+        ingredients = [{"name": "Хлеб", "grams": 120}, {"name": "Сыр", "weight": 30}]
+        dish = SimpleNamespace(
+            entry_kind="dish",
+            dish_name_snapshot='Бутерброд <с сыром> & "соусом"',
+            description="Хлеб, сыр",
+            products_json=json.dumps(ingredients, ensure_ascii=False),
+            calories=400,
+            protein=15,
+            fat=20,
+            carbs=40,
+            is_manually_corrected=True,
+        )
+        bread = SimpleNamespace(
+            products_json='[{"name":"Хлеб","grams":20,"kcal":50,"protein":2,"fat":1,"carbs":10}]',
+            calories=50,
+            protein=2,
+            fat=1,
+            carbs=10,
+        )
+
+        details = format_meal_details("lunch", [dish, bread, dish])
+
+        title = '• <b>Бутерброд &lt;с сыром&gt; &amp; &quot;соусом&quot;</b> (150 г)'
+        self.assertEqual(details.count(title), 2)
+        self.assertEqual(details.count("• <b>Хлеб</b>"), 1)
+        self.assertIn("• <b>Хлеб</b> (20 г)", details)
+        self.assertNotIn("• <b>Сыр</b>", details)
+        self.assertIn("<b>400 ккал</b> <i>(Б 15.0 / Ж 20.0 / У 40.0)</i>", details)
+        self.assertEqual(details.count("КБЖУ скорректированы вручную"), 2)
+        self.assertIn("🔥 <b>Калории:</b> 850 ккал", details)
+        self.assertIn("🥩 <b>Белки:</b> 32.0 г", details)
+        self.assertIn("🥑 <b>Жиры:</b> 41.0 г", details)
+        self.assertIn("🍚 <b>Углеводы:</b> 90.0 г", details)
+        self.assertEqual(json.loads(dish.products_json), ingredients)
+
     def test_long_name_is_bounded_in_summary_and_full_in_edit_details(self):
         long_name = "Очень длинное название продукта " * 12
         meal = SimpleNamespace(

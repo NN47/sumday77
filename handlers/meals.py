@@ -2108,24 +2108,6 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
             await message.answer(existing.comment_text, parse_mode="HTML", reply_markup=_meal_comment_keyboard(meal.id, target_date))
         return
 
-    logical_existing = MealCompletionCommentRepository.get_for_logical_meal(
-        user_id,
-        target_date,
-        meal.meal_type,
-    )
-    if logical_existing and logical_existing.comment_text:
-        if logical_existing.status == "success" and logical_existing.quota_request_id:
-            try:
-                ai_quota_service.consume(logical_existing.quota_request_id, outcome="success", result_ref=f"meal_comment:{logical_existing.id}")
-            except Exception:
-                logger.warning("Logical meal comment quota repair failed meal_id=%s", logical_existing.meal_id)
-        await message.answer(
-            logical_existing.comment_text,
-            parse_mode="HTML",
-            reply_markup=_meal_comment_keyboard(meal.id, target_date),
-        )
-        return
-
     if not hasattr(message.bot, "meal_comment_in_progress"):
         message.bot.meal_comment_in_progress = set()
     in_progress_key = (user_id, meal.id)
@@ -2143,8 +2125,7 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
     quota_request_id = build_quota_request_id(
         "meal_comment",
         user_id,
-        target_date.isoformat(),
-        meal.meal_type,
+        meal.id,
     )
     reservation = None
     try:

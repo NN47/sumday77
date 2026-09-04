@@ -70,7 +70,7 @@ FREE_PLAN = PlanDefinition(
             AI_DAILY_ANALYSIS_ATTEMPT_LIMIT_PER_DAY,
         ),
         AIFeature.MEAL_COMPLETION_COMMENT: FeatureEntitlement(
-            8,
+            17,
             "meal_completion_comment",
             AI_MEAL_COMMENT_ATTEMPT_LIMIT_PER_DAY,
         ),
@@ -985,6 +985,7 @@ def format_free_ai_status_block(user_id: str | int, *, compact: bool = False) ->
                 AIFeature.MEAL_TEXT,
                 AIFeature.MEAL_PHOTO,
                 AIFeature.NUTRITION_LABEL,
+                AIFeature.MEAL_COMPLETION_COMMENT,
                 AIFeature.DAILY_ANALYSIS,
             ),
         )
@@ -1002,12 +1003,14 @@ def format_free_ai_status_block(user_id: str | int, *, compact: bool = False) ->
                 AIFeature.MEAL_TEXT,
                 AIFeature.MEAL_PHOTO,
                 AIFeature.NUTRITION_LABEL,
+                AIFeature.MEAL_COMPLETION_COMMENT,
                 AIFeature.DAILY_ANALYSIS,
             )
         }
     text = statuses[AIFeature.MEAL_TEXT]
     photo = statuses[AIFeature.MEAL_PHOTO]
     label = statuses[AIFeature.NUTRITION_LABEL]
+    comment = statuses[AIFeature.MEAL_COMPLETION_COMMENT]
     daily = statuses[AIFeature.DAILY_ANALYSIS]
     from database.repositories.activity_analysis_repository import ActivityAnalysisRepository
 
@@ -1024,6 +1027,7 @@ def format_free_ai_status_block(user_id: str | int, *, compact: bool = False) ->
             f"📝 Текст: {text.remaining}/{text.limit}",
             f"📷 Фото еды: {photo.remaining}/{photo.limit}",
             f"📋 Этикетки: {label.remaining}/{label.limit}",
+            f"💬 Советы после еды: {comment.remaining}/{comment.limit}",
         ]
         lines.append(f"🧠 Анализ дня: {daily_value}")
         return "\n".join(lines)
@@ -1032,5 +1036,6 @@ def format_free_ai_status_block(user_id: str | int, *, compact: bool = False) ->
         f"📝 Текст: осталось {text.remaining} из {text.limit}\n"
         f"📷 Фото еды: осталось {photo.remaining} из {photo.limit}\n"
         f"📋 Этикетки: осталось {label.remaining} из {label.limit}\n"
+        f"💬 Советы после еды: осталось {comment.remaining} из {comment.limit}\n"
         f"🧠 Анализ дня: {daily_value}"
     )

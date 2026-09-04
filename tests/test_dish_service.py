@@ -19,7 +19,7 @@ from database.repositories.meal_repository import MealSaveStatus
 from handlers import meals
 from services.dish_service import DishService, scale_dish_snapshot
 from services.photo_food_validator import validate_photo_food_payload
-from utils.meal_formatters import format_meal_message
+from utils.meal_formatters import format_meal_edit_details, format_meal_message
 
 
 @pytest.fixture
@@ -80,6 +80,10 @@ def test_photo_save_creates_one_dish_and_one_diary_snapshot_atomically(dish_db):
         assert meal.dish_name_snapshot == "Бутерброд с бужениной"
         assert meal.calories == pytest.approx(480)
         assert [item["name"] for item in json.loads(meal.products_json)] == ["Хлеб", "Буженина"]
+        current = meals._format_current_meal_after_save_message("lunch", [meal], meal.date)
+        assert "• <b>Бутерброд с бужениной</b> (190 г)" in current
+        assert "• <b>Хлеб</b>" not in current
+        assert "• <b>Буженина</b>" not in current
 
 
 def test_same_photo_save_token_does_not_duplicate_dish_or_meal(dish_db):
@@ -128,9 +132,14 @@ def test_repeat_add_uses_scaled_snapshot_without_creating_another_template(dish_
         snapshot = json.loads(second.products_json)
         assert sum(item["grams"] for item in snapshot) == pytest.approx(95)
         assert second.calories == pytest.approx(240)
+        current = meals._format_current_meal_after_save_message("breakfast", [second], second.date)
+        assert "• <b>Бутерброд</b> (95 г)" in current
+        assert "<b>240 ккал</b> <i>(Б 15.0 / Ж 7.5 / У 27.5)</i>" in current
+        assert "• <b>Хлеб</b>" not in current
+        assert "• <b>Буженина</b>" not in current
 
 
-def test_compact_diary_uses_dish_title_while_details_keep_ingredients():
+def test_diary_and_current_meal_use_dish_title_while_editor_keeps_ingredients():
     entry = SimpleNamespace(
         entry_kind="dish",
         dish_name_snapshot="Бутерброд с бужениной",
@@ -146,6 +155,15 @@ def test_compact_diary_uses_dish_title_while_details_keep_ingredients():
     assert "Бутерброд с бужениной" in compact
     assert "Хлеб" not in compact
     assert "Буженина" not in compact
+    current = meals._format_current_meal_after_save_message("lunch", [entry], date(2026, 8, 16))
+    assert "• <b>Бутерброд с бужениной</b> (190 г)" in current
+    assert "Хлеб" not in current
+    assert "Буженина" not in current
+    editable = meals._extract_products_for_edit(entry)
+    assert editable == _items()
+    editor = format_meal_edit_details("lunch", editable)
+    assert "• <b>Хлеб</b> (120 г)" in editor
+    assert "• <b>Буженина</b> (70 г)" in editor
 
 
 def test_new_dish_entries_are_not_expanded_as_my_products_but_legacy_photo_rows_are():

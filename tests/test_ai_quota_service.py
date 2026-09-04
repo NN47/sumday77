@@ -113,16 +113,17 @@ class AIQuotaServiceTests(unittest.TestCase):
                 self.assertEqual(status.used, 1)
                 self.assertEqual(status.reserved, 0)
 
-    def test_meal_completion_comment_daily_limit_is_eight(self):
+    def test_meal_completion_comment_daily_limit_is_seventeen(self):
         entitlement = FREE_PLAN.features[AIFeature.MEAL_COMPLETION_COMMENT]
-        self.assertEqual(entitlement.limit, 8)
-        self.assertEqual(entitlement.attempt_limit, 8)
+        self.assertEqual(entitlement.limit, 17)
+        self.assertEqual(entitlement.attempt_limit, 17)
 
     def test_user_status_does_not_show_internal_image_attempt_limit(self):
         statuses = {
             AIFeature.MEAL_TEXT: SimpleNamespace(remaining=15, limit=15),
             AIFeature.MEAL_PHOTO: SimpleNamespace(remaining=5, limit=5),
             AIFeature.NUTRITION_LABEL: SimpleNamespace(remaining=10, limit=10),
+            AIFeature.MEAL_COMPLETION_COMMENT: SimpleNamespace(remaining=16, limit=17),
             AIFeature.DAILY_ANALYSIS: SimpleNamespace(
                 remaining=1,
                 limit=1,
@@ -141,6 +142,10 @@ class AIQuotaServiceTests(unittest.TestCase):
         ):
             full = format_free_ai_status_block("status-user")
             compact = format_free_ai_status_block("status-user", compact=True)
+
+        self.assertIn("💬 Советы после еды: осталось 16 из 17", full)
+        self.assertIn("💬 Советы после еды: 16/17", compact)
+        self.assertLessEqual(len(compact), 200)
 
         get_attempt_status.assert_not_called()
         self.assertIn("📷 Фото еды: осталось 5 из 5", full)

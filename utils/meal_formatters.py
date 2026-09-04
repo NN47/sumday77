@@ -238,19 +238,25 @@ def _extract_products(meal: Meal) -> list[dict]:
     return products
 
 
+def _dish_display_name(meal: Meal) -> str:
+    """Возвращает сохранённое название блюда для всех экранов приёма пищи."""
+    return " ".join(
+        _safe_product_name(
+            getattr(meal, "dish_name_snapshot", None)
+            or getattr(meal, "description", None)
+            or getattr(meal, "raw_query", None),
+            fallback="Блюдо",
+        ).split()
+    )
+
+
 def _collect_product_names(items: list[Meal]) -> list[str]:
     """Собирает уникальные названия продуктов в порядке записей дневника."""
     names: list[str] = []
     seen: set[str] = set()
     for meal in items:
         if getattr(meal, "entry_kind", "products") == "dish":
-            meal_names = [
-                _safe_product_name(
-                    getattr(meal, "dish_name_snapshot", None)
-                    or getattr(meal, "description", None)
-                    or getattr(meal, "raw_query", None)
-                )
-            ]
+            meal_names = [_dish_display_name(meal)]
         else:
             products = _extract_products(meal)
             meal_names = (
@@ -354,19 +360,25 @@ def _format_product_detail_block(product: dict) -> str:
 
 
 def _collect_meal_detail_products(items: list[Meal]) -> list[dict]:
-    """Собирает полные продукты для подробного показа, не объединяя записи."""
+    """Собирает позиции приёма пищи: блюда целиком, продукты по отдельности."""
     products: list[dict] = []
     for meal in items:
         stored_products = _extract_products(meal)
-        if stored_products:
+        is_dish = getattr(meal, "entry_kind", "products") == "dish"
+        if stored_products and not is_dish:
             products.extend(stored_products)
             continue
 
         products.append(
             {
-                "name": _safe_product_name(
-                    getattr(meal, "description", None) or getattr(meal, "raw_query", None)
+                "name": (
+                    _dish_display_name(meal)
+                    if is_dish
+                    else _safe_product_name(
+                        getattr(meal, "description", None) or getattr(meal, "raw_query", None)
+                    )
                 ),
+                "grams": sum(extract_product_weight(product) for product in stored_products),
                 "calories": getattr(meal, "calories", 0),
                 "protein": getattr(meal, "protein", 0),
                 "fat": getattr(meal, "fat", 0),
@@ -486,7 +498,7 @@ def format_meal_totals(meal_type: str, totals: dict[str, float]) -> list[str]:
 
 
 def format_meal_details(meal_type: str, items: list[Meal]) -> str:
-    """Форматирует полный состав текущего приёма пищи для add-сценария."""
+    """Форматирует блюда и продукты текущего приёма пищи для add-сценария."""
     normalized_meal_type = normalize_meal_type(meal_type)
     meal_ui = MEAL_UI.get(normalized_meal_type, MEAL_UI["snack"])
     totals = _collect_meal_totals(items)
@@ -504,14 +516,7 @@ def format_meal_block(meal_type: str, items: list[Meal]) -> list[str]:
     meal_ui = MEAL_UI.get(meal_type, MEAL_UI["snack"])
     totals = _collect_meal_totals(items)
     dish_titles = {
-        " ".join(
-            str(
-                getattr(meal, "dish_name_snapshot", None)
-                or getattr(meal, "description", None)
-                or getattr(meal, "raw_query", None)
-                or "Блюдо"
-            ).split()
-        )
+        _dish_display_name(meal)
         for meal in items
         if getattr(meal, "entry_kind", "products") == "dish"
     }
