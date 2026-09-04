@@ -4,7 +4,14 @@ from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from handlers import meals
+
+
+@pytest.fixture(autouse=True)
+def empty_saved_dish_catalog(monkeypatch):
+    monkeypatch.setattr(meals.DishRepository, "list_active", lambda *args, **kwargs: [])
 
 
 class _DummyState:
@@ -1286,7 +1293,7 @@ def test_my_product_meals_keyboard_has_search_button():
         carbs=3,
     )
 
-    keyboard = meals._build_my_products_keyboard([item], meal_type="snack", page=1, has_prev=False, has_next=False)
+    keyboard = meals._build_my_products_keyboard([item], meal_type="snack", page=1, total_pages=1)
 
     assert keyboard.inline_keyboard[-1][0].text == "🔎 Поиск продукта"
     assert keyboard.inline_keyboard[-1][0].callback_data == "my_products_search_start:snack"
@@ -1345,12 +1352,12 @@ def test_my_products_search_query_uses_full_user_history_not_my_product_page():
         carbs=2,
     )
 
-    with patch("handlers.meals.MealRepository.get_user_meal_history", return_value=[meal]) as history, patch(
+    with patch("handlers.meals.MealRepository.get_user_meal_history_page", return_value=[meal]) as history, patch(
         "handlers.meals.MealRepository.get_recent_unique_meals", return_value=[]
     ) as recent:
         asyncio.run(meals.handle_my_products_search_query(message, state))
 
-    history.assert_called_once_with("12345")
+    history.assert_called_once_with("12345", offset=0, limit=meals.MY_PRODUCTS_HISTORY_BATCH_SIZE)
     recent.assert_not_called()
     assert message.answer.await_args.kwargs["parse_mode"] == "HTML"
     assert "Плавленый сыр сливочный" in message.answer.await_args.args[0]
@@ -1361,7 +1368,7 @@ def test_my_products_search_empty_result_shows_retry_and_back_buttons():
     message.from_user = SimpleNamespace(id=12345)
     state = _DummyState()
 
-    with patch("handlers.meals.MealRepository.get_user_meal_history", return_value=[]):
+    with patch("handlers.meals.MealRepository.get_user_meal_history_page", return_value=[]):
         asyncio.run(
             meals._show_my_products_search_results(
                 message,
@@ -1391,7 +1398,7 @@ def test_my_product_meals_keyboard_uses_full_emoji_numbers_on_later_pages():
     ]
 
     keyboard = meals._build_my_products_keyboard(
-        items, meal_type="snack", page=2, has_prev=True, has_next=True
+        items, meal_type="snack", page=2, total_pages=5
     )
 
     assert keyboard.inline_keyboard[0][0].text.startswith("9️⃣ ")
@@ -1400,7 +1407,7 @@ def test_my_product_meals_keyboard_uses_full_emoji_numbers_on_later_pages():
     assert keyboard.inline_keyboard[3][0].text.startswith("1️⃣2️⃣ ")
     assert [button.text for button in keyboard.inline_keyboard[4]] == [
         "⬅️ Предыдущая",
-        "2/3",
+        "2/5",
         "Следующая ➡️",
     ]
     assert keyboard.inline_keyboard[-1][0].text == "🔎 Поиск продукта"
@@ -1412,13 +1419,13 @@ def test_my_products_keyboard_shows_start_button_only_from_third_page():
     ]
 
     first_page = meals._build_my_products_keyboard(
-        items, meal_type="snack", page=1, has_prev=False, has_next=True, back_callback_data="old_back"
+        items, meal_type="snack", page=1, total_pages=3, back_callback_data="old_back"
     )
     second_page = meals._build_my_products_keyboard(
-        items, meal_type="snack", page=2, has_prev=True, has_next=True, back_callback_data="old_back"
+        items, meal_type="snack", page=2, total_pages=5, back_callback_data="old_back"
     )
     third_page = meals._build_my_products_keyboard(
-        items, meal_type="snack", page=3, has_prev=True, has_next=False, back_callback_data="old_back"
+        items, meal_type="snack", page=3, total_pages=3, back_callback_data="old_back"
     )
 
     assert all(row[0].text != "⬅️ Назад" for row in first_page.inline_keyboard)
@@ -1450,11 +1457,10 @@ def test_get_my_products_page_items_loads_history_in_batches_beyond_old_limit():
     with patch("handlers.meals.MY_PRODUCTS_HISTORY_BATCH_SIZE", 20), patch(
         "handlers.meals.MealRepository.get_user_meal_history_page", side_effect=get_page
     ) as get_history_page:
-        page_items, has_prev, has_next, normalized_page = meals._get_my_products_page_items("12345", 9)
+        page_items, normalized_page, total_pages = meals._get_my_products_page_items("12345", 9)
 
     assert normalized_page == 9
-    assert has_prev is True
-    assert has_next is True
+    assert total_pages == 10
     assert [item.title for item in page_items] == [f"Продукт {i}" for i in range(65, 73)]
     assert get_history_page.call_count > 1
 
@@ -1472,7 +1478,7 @@ def test_my_products_search_results_keyboard_marks_pick_origin_as_search():
     )
 
     keyboard = meals._build_my_products_search_results_keyboard(
-        [item], meal_type="dinner", page=1, has_prev=False, has_next=False
+        [item], meal_type="dinner", page=1, total_pages=1
     )
 
     assert keyboard.inline_keyboard[0][0].callback_data == "my_product_pick:dinner:1:7:2:search"
@@ -1485,7 +1491,7 @@ def test_my_products_search_results_keyboard_uses_absolute_numbers_on_later_page
     ]
 
     keyboard = meals._build_my_products_search_results_keyboard(
-        items, meal_type="dinner", page=3, has_prev=True, has_next=True
+        items, meal_type="dinner", page=3, total_pages=5
     )
 
     assert keyboard.inline_keyboard[0][0].text.startswith("1️⃣7️⃣ ")

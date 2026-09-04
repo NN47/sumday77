@@ -28,17 +28,18 @@ class DishRepository:
             return query.first()
 
     @staticmethod
-    def list_active(user_id: str, *, offset: int = 0, limit: int = 50) -> list[Dish]:
+    def list_active(user_id: str, *, offset: int = 0, limit: int | None = 50) -> list[Dish]:
         with get_db_session() as session:
-            return (
+            query = (
                 session.query(Dish)
                 .options(selectinload(Dish.ingredients))
                 .filter(Dish.user_id == str(user_id), Dish.archived_at.is_(None))
                 .order_by(Dish.updated_at.desc(), Dish.id.desc())
                 .offset(max(0, int(offset)))
-                .limit(max(1, int(limit)))
-                .all()
             )
+            if limit is not None:
+                query = query.limit(max(1, int(limit)))
+            return query.all()
 
     @staticmethod
     def count_active(user_id: str) -> int:

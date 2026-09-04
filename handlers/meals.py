@@ -11,8 +11,8 @@ from datetime import date
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.exceptions import TelegramBadRequest
-from utils.pagination import build_pagination_keyboard
-from typing import Optional
+from utils.pagination import build_pagination_keyboard, clamp_page, total_pages_for
+from typing import Iterable, Optional
 from aiogram.fsm.context import FSMContext
 from states.user_states import MealEntryStates
 from utils.calendar_utils import show_calendar_back_button
@@ -1143,9 +1143,9 @@ def _format_emoji_number(number: int) -> str:
 
 @dataclass(frozen=True)
 class MyProductItem:
-    """Один продукт для отображения в списке моих продуктов."""
+    """Продукт из истории или целое сохранённое блюдо для выбора из каталога."""
 
-    source_meal_id: int
+    source_meal_id: int | None
     product_index: int | None
     title: str
     amount_g: int
@@ -1157,6 +1157,7 @@ class MyProductItem:
     unit_name: str | None = None
     package_weight_g: float | None = None
     package_units: int | None = None
+    dish_id: int | None = None
 
 
 def _truncate_my_product_name(name: str, limit: int = 22) -> str:
@@ -1290,12 +1291,30 @@ def _product_matches_source_filter(product: dict, source_filter: str | None) -> 
     return _get_product_source(product) == source_filter
 
 
-def _expand_my_products(my_product_meals: list, limit: int = 64, source_filter: str | None = None) -> list[MyProductItem]:
-    """Разворачивает записи истории в отдельные продукты для выбора по одному."""
-    items: list[MyProductItem] = []
-    seen: set[str] = set()
+def _build_my_product_item_from_dish(dish) -> MyProductItem:
+    snapshot = dish_to_snapshot(dish)
+    totals = calculate_dish_totals(snapshot)
+    return MyProductItem(
+        source_meal_id=None,
+        product_index=None,
+        title=dish.name,
+        amount_g=max(1, round(calculate_dish_weight(snapshot))),
+        **totals,
+        dish_id=dish.id,
+    )
+
+
+def _iter_my_product_items(
+    my_product_meals: Iterable,
+    source_filter: str | None,
+    saved_dishes: dict | None = None,
+) -> Iterable[MyProductItem]:
+    remaining_dishes = dict(saved_dishes or {})
     for meal in my_product_meals:
         if getattr(meal, "entry_kind", "products") == "dish":
+            dish = remaining_dishes.pop(getattr(meal, "dish_id", None), None)
+            if dish is not None:
+                yield _build_my_product_item_from_dish(dish)
             continue
         products = _parse_my_products(meal)
         meal_items = [
@@ -1307,32 +1326,37 @@ def _expand_my_products(my_product_meals: list, limit: int = 64, source_filter: 
         if not meal_items and (not products) and (not source_filter or source_filter == "all"):
             meal_items = [_build_my_product_item_from_meal(meal)]
 
-        for item in meal_items:
-            key = item.title.strip().lower()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            items.append(item)
-            if len(items) >= limit:
-                return items
+        yield from meal_items
+    # Templates remain reusable even after their original diary entry is deleted.
+    for dish in remaining_dishes.values():
+        yield _build_my_product_item_from_dish(dish)
+
+
+def _expand_my_products(
+    my_product_meals: Iterable,
+    limit: int | None = None,
+    source_filter: str | None = None,
+    *,
+    saved_dishes: dict | None = None,
+) -> list[MyProductItem]:
+    """Собирает уникальные продукты и целые блюда, сохраняя порядок истории."""
+    items: list[MyProductItem] = []
+    seen: set[tuple] = set()
+    for item in _iter_my_product_items(my_product_meals, source_filter, saved_dishes):
+        key = ("dish", item.dish_id) if item.dish_id is not None else ("product", item.title.strip().casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(item)
+        if limit is not None and len(items) >= limit:
+            break
     return items
 
 
-def _get_my_products_page_items(
-    user_id: str,
-    page: int,
-    *,
-    source_filter: str | None = None,
-) -> tuple[list[MyProductItem], bool, bool, int]:
-    """Возвращает нужную страницу моих продуктов, подгружая историю порциями."""
-    page = max(1, page)
-    start = (page - 1) * MY_PRODUCTS_PAGE_SIZE
-    needed = start + MY_PRODUCTS_PAGE_SIZE + 1
-    items: list[MyProductItem] = []
-    seen: set[str] = set()
+def _iter_my_products_history(user_id: str) -> Iterable:
+    """Читает всю историю порциями: точный счётчик учитывает и старые записи."""
     offset = 0
-
-    while len(items) < needed:
+    while True:
         meals_batch = MealRepository.get_user_meal_history_page(
             user_id,
             offset=offset,
@@ -1341,33 +1365,34 @@ def _get_my_products_page_items(
         if not meals_batch:
             break
 
-        batch_items = _expand_my_products(
-            meals_batch,
-            limit=MY_PRODUCTS_HISTORY_BATCH_SIZE * 10,
-            source_filter=source_filter,
-        )
-        for item in batch_items:
-            key = item.title.strip().lower()
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            items.append(item)
-            if len(items) >= needed:
-                break
-
+        yield from meals_batch
         offset += len(meals_batch)
         if len(meals_batch) < MY_PRODUCTS_HISTORY_BATCH_SIZE:
             break
 
-    if not items:
-        return [], False, False, 1
 
-    if start >= len(items):
-        last_page = max(1, math.ceil(len(items) / MY_PRODUCTS_PAGE_SIZE))
-        return _get_my_products_page_items(user_id, last_page, source_filter=source_filter)
+def _get_my_products_catalog(user_id: str, source_filter: str | None = None) -> list[MyProductItem]:
+    dishes = {
+        dish.id: dish
+        for dish in DishRepository.list_active(user_id, limit=None)
+        if _product_matches_source_filter({"source": dish.source}, source_filter)
+    }
+    return _expand_my_products(
+        _iter_my_products_history(user_id), source_filter=source_filter, saved_dishes=dishes,
+    )
 
-    page_items = items[start : start + MY_PRODUCTS_PAGE_SIZE]
-    return page_items, page > 1, len(items) > start + MY_PRODUCTS_PAGE_SIZE, page
+
+def _get_my_products_page_items(
+    user_id: str,
+    page: int,
+    *,
+    source_filter: str | None = None,
+) -> tuple[list[MyProductItem], int, int]:
+    items = _get_my_products_catalog(user_id, source_filter)
+    total_pages = total_pages_for(len(items), MY_PRODUCTS_PAGE_SIZE)
+    page = clamp_page(page - 1, total_pages) + 1
+    start = (page - 1) * MY_PRODUCTS_PAGE_SIZE
+    return items[start : start + MY_PRODUCTS_PAGE_SIZE], page, total_pages
 
 
 def _is_custom_product_meal(meal) -> bool:
@@ -1375,11 +1400,9 @@ def _is_custom_product_meal(meal) -> bool:
     return any(_get_product_source(product) == "manual" for product in _parse_my_products(meal))
 
 
-def _get_custom_product_items(user_id: str, limit: int = 64) -> list[MyProductItem]:
+def _get_custom_product_items(user_id: str, limit: int | None = None) -> list[MyProductItem]:
     """Возвращает только продукты, созданные пользователем через кнопку «Внести вручную»."""
-    source_meals = MealRepository.get_user_meal_history(user_id)
-    custom_meals = [meal for meal in source_meals if _is_custom_product_meal(meal)]
-    return _expand_my_products(custom_meals, limit=limit)
+    return _expand_my_products(_iter_my_products_history(user_id), limit=limit, source_filter="manual")
 
 
 def _format_my_products_text(my_product_meals: list[MyProductItem], page: int, *, title: str = "🕒 <b>Недавние продукты") -> str:
@@ -1420,12 +1443,19 @@ def _search_my_products(items: list[MyProductItem], query: str) -> list[MyProduc
     return [item for item in items if normalized_query in (item.title or "").casefold()]
 
 
+def _my_product_pick_callback(item: MyProductItem, meal_type: str, page: int, *, origin: str = "products") -> str:
+    if item.dish_id is not None:
+        return f"my_dish_pick:{meal_type}:{page}:{item.dish_id}:{origin}"
+    product_idx = "" if item.product_index is None else str(item.product_index)
+    suffix = ":search" if origin == "search" else ""
+    return f"my_product_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}{suffix}"
+
+
 def _build_my_products_keyboard(
     my_product_meals: list[MyProductItem],
     meal_type: str,
     page: int,
-    has_prev: bool,
-    has_next: bool,
+    total_pages: int,
     *,
     back_callback_data: str | None = None,
 ) -> InlineKeyboardMarkup:
@@ -1433,17 +1463,15 @@ def _build_my_products_keyboard(
     for offset, item in enumerate(my_product_meals, start=1):
         title = _truncate_my_product_name(item.title)
         number = (page - 1) * MY_PRODUCTS_PAGE_SIZE + offset
-        product_idx = "" if item.product_index is None else str(item.product_index)
         rows.append(
             [
                 InlineKeyboardButton(
                     text=f"{_format_emoji_number(number)} {title}",
-                    callback_data=f"my_product_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}",
+                    callback_data=_my_product_pick_callback(item, meal_type, page),
                 )
             ]
         )
 
-    total_pages = page + (1 if has_next else 0)
     keyboard = build_pagination_keyboard(page - 1, total_pages, f"my_products_page:{meal_type}", rows, page_base=1)
     keyboard.inline_keyboard.append([InlineKeyboardButton(text="🔎 Поиск продукта", callback_data=f"my_products_search_start:{meal_type}")])
     if page >= 3:
@@ -1455,8 +1483,7 @@ def _build_custom_products_keyboard(
     products: list[MyProductItem],
     meal_type: str,
     page: int,
-    has_prev: bool,
-    has_next: bool,
+    total_pages: int,
 ) -> InlineKeyboardMarkup:
     """Inline-выбор своих продуктов в визуальном стиле списка моих."""
     rows: list[list[InlineKeyboardButton]] = []
@@ -1473,7 +1500,6 @@ def _build_custom_products_keyboard(
             ]
         )
 
-    total_pages = page + (1 if has_next else 0)
     return build_pagination_keyboard(page - 1, total_pages, f"custom_product_page:{meal_type}", rows, page_base=1)
 
 
@@ -1481,25 +1507,22 @@ def _build_my_products_search_results_keyboard(
     items: list[MyProductItem],
     meal_type: str,
     page: int,
-    has_prev: bool,
-    has_next: bool,
+    total_pages: int,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     start_idx = (page - 1) * MY_PRODUCTS_PAGE_SIZE
     for offset, item in enumerate(items, start=1):
         title = _truncate_my_product_name(item.title)
         number = start_idx + offset
-        product_idx = "" if item.product_index is None else str(item.product_index)
         rows.append(
             [
                 InlineKeyboardButton(
                     text=f"{_format_emoji_number(number)} {title}",
-                    callback_data=f"my_product_pick:{meal_type}:{page}:{item.source_meal_id}:{product_idx}:search",
+                    callback_data=_my_product_pick_callback(item, meal_type, page, origin="search"),
                 )
             ]
         )
 
-    total_pages = page + (1 if has_next else 0)
     keyboard = build_pagination_keyboard(page - 1, total_pages, f"my_products_search_page:{meal_type}", rows, page_base=1)
     keyboard.inline_keyboard.append([InlineKeyboardButton(text="🔎 Искать ещё", callback_data=f"my_products_search_start:{meal_type}")])
     keyboard.inline_keyboard.append([InlineKeyboardButton(text="⬅️ К моим продуктам", callback_data=f"my_products_search_back:{meal_type}")])
@@ -2872,27 +2895,26 @@ async def _show_my_products_page(
     show_source_filter_block: bool = False,
 ) -> bool:
     user_id = user_id or str(message.from_user.id)
-    page_items, has_prev, has_next, page = _get_my_products_page_items(
+    page_items, page, total_pages = _get_my_products_page_items(
         user_id,
         page,
         source_filter=source_filter,
     )
-    if not page_items:
-        return False
     await state.update_data(
         my_products_page=page,
         meal_type=meal_type,
         my_products_source_filter=source_filter,
         in_my_products_section=True,
     )
+    if not page_items:
+        return False
     title = MY_PRODUCTS_SOURCE_FILTERS.get(source_filter or "", {}).get("title", "🕒 <b>Недавние продукты")
     text = _format_my_products_text(page_items, page, title=title)
     reply_markup = _build_my_products_keyboard(
         page_items,
         meal_type,
         page,
-        has_prev,
-        has_next,
+        total_pages,
         back_callback_data=back_callback_data,
     )
     if edit_message:
@@ -2950,8 +2972,7 @@ def _build_meal_entry_edit_keyboard(meal_type: str, entry_date: date) -> InlineK
     )
 
 def _get_all_my_products_for_search(user_id: str, source_filter: str | None = None) -> list[MyProductItem]:
-    source_meals = MealRepository.get_user_meal_history(user_id)
-    return _expand_my_products(source_meals, limit=10_000, source_filter=source_filter)
+    return _get_my_products_catalog(user_id, source_filter)
 
 
 async def _show_my_products_search_results(
@@ -2971,15 +2992,16 @@ async def _show_my_products_search_results(
     await state.update_data(my_products_search_query=query, meal_type=meal_type, my_products_source_filter=source_filter)
 
     if not matched_items:
-        await message.answer(
+        send = message.edit_text if edit_message else message.answer
+        await send(
             "Ничего не нашёл 😕\n"
             "Попробуй ввести другое название или часть названия.",
             reply_markup=_build_my_products_search_empty_keyboard(meal_type),
         )
         return
 
-    total_pages = max(1, math.ceil(len(matched_items) / MY_PRODUCTS_PAGE_SIZE))
-    page = min(max(1, page), total_pages)
+    total_pages = total_pages_for(len(matched_items), MY_PRODUCTS_PAGE_SIZE)
+    page = clamp_page(page - 1, total_pages) + 1
     start = (page - 1) * MY_PRODUCTS_PAGE_SIZE
     page_items = matched_items[start : start + MY_PRODUCTS_PAGE_SIZE]
     await state.update_data(my_products_search_page=page)
@@ -2988,8 +3010,7 @@ async def _show_my_products_search_results(
         page_items,
         meal_type,
         page,
-        has_prev=page > 1,
-        has_next=page < total_pages,
+        total_pages,
     )
     if edit_message:
         await message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
@@ -3374,19 +3395,9 @@ def _build_saved_dishes_keyboard(
         ]
         for index, dish in enumerate(dishes, start=1)
     ]
-    navigation = []
-    if page > 1:
-        navigation.append(
-            InlineKeyboardButton(text="⬅️", callback_data=f"meal_entry_my_dishes:{meal_type}:{page - 1}")
-        )
-    if page < total_pages:
-        navigation.append(
-            InlineKeyboardButton(text="➡️", callback_data=f"meal_entry_my_dishes:{meal_type}:{page + 1}")
-        )
-    if navigation:
-        rows.append(navigation)
-    rows.append([InlineKeyboardButton(text="⬅️ К приёму пищи", callback_data="my_dishes_back_to_current_meal")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    keyboard = build_pagination_keyboard(page - 1, total_pages, f"meal_entry_my_dishes:{meal_type}", rows, page_base=1)
+    keyboard.inline_keyboard.append([InlineKeyboardButton(text="⬅️ К приёму пищи", callback_data="my_dishes_back_to_current_meal")])
+    return keyboard
 
 
 def _format_saved_dish_card(dish, items: list[dict]) -> str:
@@ -3414,13 +3425,18 @@ def _format_saved_dish_card(dish, items: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _build_saved_dish_card_keyboard(meal_type: str, page: int, dish_id: int) -> InlineKeyboardMarkup:
+def _build_saved_dish_card_keyboard(
+    meal_type: str, page: int, dish_id: int, *, return_to_products: bool = False,
+) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Добавить порцию", callback_data=f"my_dish_add:{dish_id}")],
             [InlineKeyboardButton(text="⚖️ Изменить общий вес", callback_data=f"my_dish_weight:{dish_id}")],
             [InlineKeyboardButton(text="🗑 Убрать из моих блюд", callback_data=f"my_dish_archive_ask:{dish_id}")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"meal_entry_my_dishes:{meal_type}:{page}")],
+            [InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data="my_dish_catalog_back" if return_to_products else f"meal_entry_my_dishes:{meal_type}:{page}",
+            )],
         ]
     )
 
@@ -3472,8 +3488,8 @@ async def _show_saved_dishes_page(
     total = DishRepository.count_active(user_id)
     if total <= 0:
         return False
-    total_pages = max(1, math.ceil(total / MY_DISHES_PAGE_SIZE))
-    page = min(max(1, page), total_pages)
+    total_pages = total_pages_for(total, MY_DISHES_PAGE_SIZE)
+    page = clamp_page(page - 1, total_pages) + 1
     dishes = DishRepository.list_active(
         user_id,
         offset=(page - 1) * MY_DISHES_PAGE_SIZE,
@@ -3491,7 +3507,7 @@ async def _show_saved_dishes_page(
 
 @router.callback_query(lambda c: c.data.startswith("meal_entry_my_dishes:"))
 async def meal_entry_my_dishes(callback: CallbackQuery, state: FSMContext):
-    """Открывает отдельный каталог блюд, не смешивая их с обычными продуктами."""
+    """Открывает отдельный каталог сохранённых блюд."""
     await callback.answer()
     parts = callback.data.split(":")
     meal_type = normalize_meal_type(parts[1] if len(parts) > 1 else None, fallback=MealType.SNACK.value)
@@ -3541,27 +3557,70 @@ async def my_dishes_back_to_current_meal(callback: CallbackQuery, state: FSMCont
 @router.callback_query(lambda c: c.data.startswith("my_dish_pick:"))
 async def my_dish_pick(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    _, meal_type, raw_page, raw_dish_id = callback.data.split(":", 3)
+    _, meal_type, raw_page, raw_dish_id, *origin_parts = callback.data.split(":")
+    origin = origin_parts[0] if origin_parts else "dishes"
+    data = await state.get_data()
+    return_context = {
+        "origin": origin,
+        "page": int(raw_page),
+        "source_filter": data.get("my_products_source_filter"),
+        "query": data.get("my_products_search_query"),
+    } if origin in {"products", "search"} else None
     dish = DishRepository.get_by_id(str(callback.from_user.id), int(raw_dish_id))
     if dish is None:
         await callback.answer("Блюдо не найдено", show_alert=True)
         return
     items = dish_to_snapshot(dish)
     save_token = _new_meal_save_token()
+    return_date_key = "my_products_return_entry_date" if return_context else "my_dishes_return_entry_date"
     await state.update_data(
         my_dish_id=dish.id,
         my_dish_items=items,
         my_dish_original_items=items,
         my_dish_save_token=save_token,
+        my_dish_return_context=return_context,
+        my_dish_weight_draft=None,
+        my_dishes_return_entry_date=data.get(return_date_key) or data.get("entry_date"),
         my_dishes_page=int(raw_page),
         meal_type=meal_type,
     )
     await _edit_or_send_photo_analysis_message(
         callback.message,
         _format_saved_dish_card(dish, items),
-        reply_markup=_build_saved_dish_card_keyboard(meal_type, int(raw_page), dish.id),
+        reply_markup=_build_saved_dish_card_keyboard(
+            meal_type, int(raw_page), dish.id, return_to_products=bool(return_context),
+        ),
         parse_mode="HTML",
     )
+
+
+async def _show_my_dish_catalog_origin(message: Message, state: FSMContext, *, user_id: str) -> None:
+    data = await state.get_data()
+    context = data.get("my_dish_return_context") or {}
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(my_products_source_filter=context.get("source_filter"))
+    if context.get("origin") == "search" and context.get("query"):
+        await _show_my_products_search_results(
+            message, state, user_id=user_id, meal_type=meal_type,
+            query=context["query"], page=context["page"], edit_message=True,
+        )
+        return
+    shown = await _show_my_products_page(
+        message, state, user_id=user_id, meal_type=meal_type,
+        page=int(context.get("page") or 1), source_filter=context.get("source_filter"), edit_message=True,
+    )
+    if not shown:
+        await message.edit_text(
+            "В этом фильтре пока нет продуктов и блюд.",
+            reply_markup=_build_my_products_search_empty_keyboard(meal_type),
+        )
+
+
+@router.callback_query(lambda c: c.data == "my_dish_catalog_back")
+async def my_dish_catalog_back(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await _show_my_dish_catalog_origin(callback.message, state, user_id=str(callback.from_user.id))
 
 
 @router.callback_query(lambda c: c.data.startswith("my_dish_weight:"))
@@ -3631,6 +3690,7 @@ async def my_dish_weight_manual_apply(message: Message, state: FSMContext):
                     normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
                     int(data.get("my_dishes_page") or 1),
                     dish_id,
+                    return_to_products=bool(data.get("my_dish_return_context")),
                 ),
                 parse_mode="HTML",
             )
@@ -3679,6 +3739,7 @@ async def my_dish_weight_save(callback: CallbackQuery, state: FSMContext):
             normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
             int(data.get("my_dishes_page") or 1),
             dish_id,
+            return_to_products=bool(data.get("my_dish_return_context")),
         ),
         parse_mode="HTML",
     )
@@ -3701,6 +3762,7 @@ async def my_dish_weight_back(callback: CallbackQuery, state: FSMContext):
             normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
             int(data.get("my_dishes_page") or 1),
             dish_id,
+            return_to_products=bool(data.get("my_dish_return_context")),
         ),
         parse_mode="HTML",
     )
@@ -3749,7 +3811,7 @@ async def my_dish_archive_ask(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     dish_id = int(callback.data.split(":", 1)[1])
     await callback.message.edit_text(
-        "Убрать блюдо из «Моих блюд»? Уже добавленные записи дневника сохранятся.",
+        "Убрать сохранённое блюдо из каталогов? Уже добавленные записи дневника сохранятся.",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🗑 Убрать", callback_data=f"my_dish_archive:{dish_id}")],
@@ -3767,6 +3829,9 @@ async def my_dish_archive(callback: CallbackQuery, state: FSMContext):
         return
     await callback.answer("Блюдо убрано")
     data = await state.get_data()
+    if data.get("my_dish_return_context"):
+        await _show_my_dish_catalog_origin(callback.message, state, user_id=str(callback.from_user.id))
+        return
     shown = await _show_saved_dishes_page(
         callback.message,
         state,
@@ -4780,14 +4845,14 @@ async def custom_product_page(callback: CallbackQuery, state: FSMContext):
     """Переключает страницы списка своих продуктов."""
     await callback.answer()
     _, meal_type, page_str = callback.data.split(":", maxsplit=2)
-    products = _get_custom_product_items(str(callback.from_user.id), limit=64)
+    products = _get_custom_product_items(str(callback.from_user.id))
     if not products:
         await callback.message.answer(
             "Здесь ты можешь сам внести свой продукт. Нажми «➕ Создать продукт», чтобы добавить первый."
         )
         return
-    total_pages = max(1, math.ceil(len(products) / MY_PRODUCTS_PAGE_SIZE))
-    page = min(max(1, int(page_str)), total_pages)
+    total_pages = total_pages_for(len(products), MY_PRODUCTS_PAGE_SIZE)
+    page = clamp_page(int(page_str) - 1, total_pages) + 1
     start = (page - 1) * MY_PRODUCTS_PAGE_SIZE
     page_items = products[start : start + MY_PRODUCTS_PAGE_SIZE]
     await state.update_data(my_products_page=page, meal_type=meal_type, in_my_product_menu=True)
@@ -4797,8 +4862,7 @@ async def custom_product_page(callback: CallbackQuery, state: FSMContext):
             page_items,
             meal_type,
             page,
-            has_prev=page > 1,
-            has_next=page < total_pages,
+            total_pages,
         ),
         parse_mode="HTML",
     )

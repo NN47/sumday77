@@ -14,6 +14,11 @@ from handlers import meals
 from states.user_states import MealEntryStates
 
 
+@pytest.fixture(autouse=True)
+def empty_saved_dish_catalog(monkeypatch):
+    monkeypatch.setattr(meals.DishRepository, "list_active", lambda *args, **kwargs: [])
+
+
 @pytest.mark.parametrize("button_text", [
     "📷 Из анализа еды по фото",
     "🗂 Старые продукты из фотоанализа",
