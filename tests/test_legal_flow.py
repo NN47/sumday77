@@ -185,6 +185,11 @@ def test_documents_are_readable_before_acceptance_and_fit_telegram(legal_db):
         assert "Google Gemini" in policy
         assert "/delete_account" not in policy and "24 час" not in policy
         assert "оперативной памяти" not in policy and "не используется для её обучения" not in policy
+        terms = LEGAL_DOCUMENTS["terms"].read()
+        assert "любые поля ввода Бота" in terms and "номера паспортов" in terms
+        assert "нецензурную лексику" in terms and "призывы к нарушению законов РФ" in terms
+        assert "угрозой жизни, здоровью или психологическому благополучию" in terms
+        assert "Бот не является сервисом психологической или экстренной помощи" in terms
     asyncio.run(scenario())
 
 

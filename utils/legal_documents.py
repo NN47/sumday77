@@ -2,8 +2,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-LEGAL_VERSION = "2026-08-31"
-LEGAL_UPDATED_DATE = "31 августа 2026 года"
+LEGAL_VERSION = "2026-09-05"
+LEGAL_UPDATED_DATE = "5 сентября 2026 года"
 SUPPORT_CONTACT = "@nik_nickname7"
 SUPPORT_URL = f"https://t.me/{SUPPORT_CONTACT.lstrip('@')}"
 TERMS_BUTTON = "⚖️ Пользовательское соглашение"
