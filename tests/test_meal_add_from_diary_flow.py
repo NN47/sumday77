@@ -128,7 +128,7 @@ def test_shared_image_attempt_limit_offers_text_ai_but_not_other_image_mode():
 def test_meal_entry_ai_limits_shows_current_status_in_alert():
     callback = _build_callback("meal_entry_ai_limits")
     status_text = (
-        "Бесплатные AI-возможности до 02:00 МСК:\n\n"
+        "Бесплатные AI-возможности до 03:00 МСК:\n\n"
         "📝 Текст: осталось 12 из 15\n"
         "📷 Фото еды: осталось 3 из 5\n"
         "📋 Этикетки: осталось 0 из 10\n"

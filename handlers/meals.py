@@ -74,6 +74,10 @@ from services.yandex_ai_service import (
 )
 from services.ai_food_parser import FoodAnalysisStatus, parse_kbju_json
 from services.ai_usage_logger import log_ai_usage
+from services.openai_token_budget_service import (
+    OpenAIDailyTokenLimitExceeded,
+    openai_token_budget_service,
+)
 from services.ai_quota_service import (
     AIFeature,
     AIAttemptLimitExceeded,
@@ -192,7 +196,7 @@ def _quota_limit_text(
     }
     message = (
         f"Лимит бесплатного {titles.get(feature, 'AI-анализа')} на сегодня закончился.\n"
-        "Он обновится в 02:00 МСК."
+        "Он обновится в 03:00 МСК."
     )
     if any(remaining > 0 for remaining in (available_ai_quotas or {}).values()):
         return message + "\nДругие способы AI-анализа ещё доступны — выбери подходящий ниже."
@@ -249,12 +253,12 @@ def _attempt_limit_text(
             "Общий дневной запас запросов для фото еды и этикеток закончился.\n"
             "Он расходуется при каждой отправке изображения, даже если AI не смог его распознать. "
             "Поэтому в отдельных лимитах фото или этикеток ещё может оставаться запас.\n"
-            "Новые запросы изображений будут доступны после 02:00 МСК."
+            "Новые запросы изображений будут доступны после 03:00 МСК."
         )
     else:
         message = (
             "Общий дневной запас попыток текстового AI-анализа закончился.\n"
-            "Новые запросы будут доступны после 02:00 МСК."
+            "Новые запросы будут доступны после 03:00 МСК."
         )
     if any(remaining > 0 for remaining in (available_ai_quotas or {}).values()):
         return message + "\nДругие способы AI-анализа ещё доступны — выбери подходящий ниже."
@@ -2705,33 +2709,59 @@ async def _run_openai_image_with_yandex_fallback(
     success_validator=None,
     comment: str | None = None,
     quota_request_id: str | None = None,
+    openai_is_additional_attempt: bool = False,
 ) -> ProviderAnalysisResult:
     """Вызывает OpenAI и использует Yandex только при ошибке или непригодном ответе."""
+    fallback_reason: str | None = None
     try:
-        openai_kwargs = {
-            "user_id": user_id,
-            "feature": feature,
-            "operation_log_name": operation_log_name,
-        }
-        if comment:
-            openai_kwargs["comment"] = comment
-        openai_result = await _analyze_image_with_openai(
-            openai_analyzer,
-            image_data,
-            **openai_kwargs,
-        )
+        with openai_token_budget_service.reservation(
+            user_id=user_id,
+            feature=feature,
+        ):
+            if quota_request_id and openai_is_additional_attempt:
+                ai_quota_service.register_additional_provider_attempt(quota_request_id)
+            openai_kwargs = {
+                "user_id": user_id,
+                "feature": feature,
+                "operation_log_name": operation_log_name,
+            }
+            if comment:
+                openai_kwargs["comment"] = comment
+            openai_result = await _analyze_image_with_openai(
+                openai_analyzer,
+                image_data,
+                **openai_kwargs,
+            )
         if success_validator is None or success_validator(openai_result):
             return ProviderAnalysisResult(payload=openai_result, provider="openai")
-        logger.warning("OpenAI returned no usable result for %s", operation_log_name)
+        fallback_reason = "openai_no_usable_data"
+        logger.warning(
+            "OpenAI returned no usable result for %s fallback_reason=%s",
+            operation_log_name,
+            fallback_reason,
+        )
+    except OpenAIDailyTokenLimitExceeded:
+        fallback_reason = "openai_daily_token_limit"
+        logger.info(
+            "OpenAI skipped for %s fallback_reason=%s",
+            operation_log_name,
+            fallback_reason,
+        )
     except Exception as openai_error:
+        fallback_reason = "openai_error"
         logger.error(
-            "OpenAI error for %s error_type=%s",
+            "OpenAI error for %s error_type=%s fallback_reason=%s",
             operation_log_name,
             safe_exception_summary(openai_error),
+            fallback_reason,
             exc_info=True,
         )
 
-    logger.info("Fallback: переход на Yandex AI Studio для %s", operation_log_name)
+    logger.info(
+        "Fallback: переход на Yandex AI Studio для %s fallback_reason=%s",
+        operation_log_name,
+        fallback_reason,
+    )
     if quota_request_id:
         ai_quota_service.register_additional_provider_attempt(quota_request_id)
     try:
@@ -2790,9 +2820,10 @@ async def _run_image_analysis_with_openai_fallback(
             exc_info=True,
         )
 
-    logger.info("Fallback: переход на OpenAI для %s", operation_type)
-    if quota_request_id:
-        ai_quota_service.register_additional_provider_attempt(quota_request_id)
+    logger.info(
+        "Fallback: переход после Gemini для %s fallback_reason=gemini_refusal",
+        operation_type,
+    )
     try:
         fallback_result = await _run_openai_image_with_yandex_fallback(
             openai_analyzer,
@@ -2804,6 +2835,7 @@ async def _run_image_analysis_with_openai_fallback(
             success_validator=success_validator,
             comment=comment,
             quota_request_id=quota_request_id,
+            openai_is_additional_attempt=True,
         )
         logger.info("%s completed successfully via %s", operation_type, fallback_result.provider)
         return fallback_result
@@ -2829,25 +2861,33 @@ async def _run_label_analysis_with_openai_fallback(
 ):
     """Запускает цепочку Gemini → OpenAI → Yandex для анализа этикетки."""
     try:
-        return await _run_gemini_task(analyzer, image_data)
+        gemini_result = await _run_gemini_task(analyzer, image_data)
+        if gemini_result and "kbju_per_100g" in gemini_result:
+            return gemini_result
+        logger.warning(
+            "Gemini returned no usable result for label analysis "
+            "fallback_reason=gemini_refusal"
+        )
     except Exception as gemini_error:
         logger.error(
-            "Gemini error for label analysis error_type=%s",
+            "Gemini error for label analysis error_type=%s fallback_reason=gemini_refusal",
             safe_exception_summary(gemini_error),
             exc_info=True,
         )
-        logger.info("[Fallback] All Gemini keys failed. Switching to OpenAI.")
-        if quota_request_id:
-            ai_quota_service.register_additional_provider_attempt(quota_request_id)
-        try:
-            return await _run_openai_label_with_yandex_fallback(
-                image_data,
-                user_id=user_id,
-                quota_request_id=quota_request_id,
-            )
-        except AllProvidersUnavailableError as fallback_error:
-            logger.error("[Error] All providers unavailable")
-            raise AllProvidersUnavailableError("All providers unavailable") from fallback_error
+    logger.info(
+        "[Fallback] Gemini label result unavailable. Switching provider. "
+        "fallback_reason=gemini_refusal"
+    )
+    try:
+        return await _run_openai_label_with_yandex_fallback(
+            image_data,
+            user_id=user_id,
+            quota_request_id=quota_request_id,
+            openai_is_additional_attempt=True,
+        )
+    except AllProvidersUnavailableError as fallback_error:
+        logger.error("[Error] All providers unavailable")
+        raise AllProvidersUnavailableError("All providers unavailable") from fallback_error
 
 
 async def _run_openai_label_with_yandex_fallback(
@@ -2855,21 +2895,44 @@ async def _run_openai_label_with_yandex_fallback(
     *,
     user_id: str | int | None = None,
     quota_request_id: str | None = None,
+    openai_is_additional_attempt: bool = False,
 ) -> Optional[dict]:
     """Вызывает OpenAI для этикетки и переключается на Yandex при любом непригодном ответе."""
+    fallback_reason: str | None = None
     try:
-        openai_result = await _analyze_label_with_openai(image_data, user_id=user_id)
+        with openai_token_budget_service.reservation(
+            user_id=user_id,
+            feature="label_analysis_fallback",
+        ):
+            if quota_request_id and openai_is_additional_attempt:
+                ai_quota_service.register_additional_provider_attempt(quota_request_id)
+            openai_result = await _analyze_label_with_openai(image_data, user_id=user_id)
         if openai_result and "kbju_per_100g" in openai_result:
             return openai_result
-        logger.warning("OpenAI returned no usable result for label analysis")
+        fallback_reason = "openai_no_usable_data"
+        logger.warning(
+            "OpenAI returned no usable result for label analysis fallback_reason=%s",
+            fallback_reason,
+        )
+    except OpenAIDailyTokenLimitExceeded:
+        fallback_reason = "openai_daily_token_limit"
+        logger.info(
+            "OpenAI skipped for label analysis fallback_reason=%s",
+            fallback_reason,
+        )
     except Exception as openai_error:
+        fallback_reason = "openai_error"
         logger.error(
-            "OpenAI error for label analysis error_type=%s",
+            "OpenAI error for label analysis error_type=%s fallback_reason=%s",
             safe_exception_summary(openai_error),
+            fallback_reason,
             exc_info=True,
         )
 
-    logger.info("[Fallback] Switching from OpenAI to Yandex for label analysis")
+    logger.info(
+        "[Fallback] Switching from OpenAI to Yandex for label analysis fallback_reason=%s",
+        fallback_reason,
+    )
     if quota_request_id:
         ai_quota_service.register_additional_provider_attempt(quota_request_id)
     try:

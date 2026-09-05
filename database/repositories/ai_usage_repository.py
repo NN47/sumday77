@@ -5,7 +5,7 @@ from sqlalchemy import func
 
 from database.models import AIUsageLog
 from database.session import get_db_session
-from time_utils import UTC_TZ, now_moscow
+from time_utils import sumday_period_start_utc
 
 
 class AIUsageRepository:
@@ -14,8 +14,7 @@ class AIUsageRepository:
     @staticmethod
     def get_provider_metrics(provider: str, *, limit: int = 10) -> dict:
         with get_db_session() as session:
-            today_start_msk = now_moscow().replace(hour=0, minute=0, second=0, microsecond=0)
-            today_start = today_start_msk.astimezone(UTC_TZ)
+            today_start = sumday_period_start_utc()
 
             base_today = session.query(AIUsageLog).filter(
                 AIUsageLog.provider == provider,

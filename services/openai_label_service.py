@@ -8,7 +8,7 @@ from typing import Optional
 
 from openai import APITimeoutError, OpenAI, OpenAIError
 
-from config import OPENAI_API_KEY
+from config import OPENAI_API_KEY, OPENAI_VISION_MODEL
 from services.ai_usage_logger import calculate_ai_cost, log_ai_usage
 from services.label_product_metadata import normalize_label_product_metadata
 from services.photo_food_validator import (
@@ -120,7 +120,7 @@ class OpenAILabelServiceTimeoutError(OpenAILabelServiceError):
 class OpenAILabelService:
     """Extracts product label nutrition data with OpenAI vision models."""
 
-    def __init__(self, api_key: str | None = OPENAI_API_KEY, *, model: str = "gpt-4.1-mini"):
+    def __init__(self, api_key: str | None = OPENAI_API_KEY, *, model: str = OPENAI_VISION_MODEL):
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = 45.0
@@ -170,6 +170,7 @@ class OpenAILabelService:
                             {
                                 "type": "input_image",
                                 "image_url": f"data:{mime_type};base64,{image_base64}",
+                                "detail": "high",
                             },
                         ],
                     }
@@ -280,6 +281,7 @@ class OpenAILabelService:
                             {
                                 "type": "input_image",
                                 "image_url": f"data:{mime_type};base64,{image_base64}",
+                                "detail": "high",
                             },
                         ],
                     }

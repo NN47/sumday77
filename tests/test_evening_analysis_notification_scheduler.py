@@ -300,3 +300,18 @@ def test_evening_analysis_start_keyboard_contains_only_start_button():
     assert len(keyboard.inline_keyboard) == 1
     assert keyboard.inline_keyboard[0][0].text == "🧠 Проверить данные и начать"
     assert keyboard.inline_keyboard[0][0].callback_data == "evening_analysis_start:2026-04-08"
+
+
+def test_evening_analysis_reminder_cutoff_matches_03_msk_day_boundary():
+    scheduler = NotificationScheduler(SimpleNamespace())
+    msk = ZoneInfo("Europe/Moscow")
+    target_date = date(2026, 4, 8)
+
+    assert scheduler._is_before_evening_analysis_cutoff(
+        datetime(2026, 4, 9, 2, 59, 59, tzinfo=msk),
+        target_date,
+    )
+    assert not scheduler._is_before_evening_analysis_cutoff(
+        datetime(2026, 4, 9, 3, 0, 0, tzinfo=msk),
+        target_date,
+    )

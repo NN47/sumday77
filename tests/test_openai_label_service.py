@@ -173,6 +173,10 @@ def test_extract_label_uses_label_prompt_without_comment_name_error(monkeypatch)
     result = OpenAILabelService(api_key="test-key").extract_kbju_from_label(b"fake-image")
 
     prompt_text = captured["input"][0]["content"][0]["text"]
+    image_input = captured["input"][0]["content"][1]
+    assert captured["model"] == "gpt-5.4-2026-03-05"
+    assert image_input["type"] == "input_image"
+    assert image_input["detail"] == "high"
     assert "Проанализируй фото этикетки" in prompt_text
     assert "Проанализируй фото блюда" not in prompt_text
     assert result["product_name"] == "Йогурт"

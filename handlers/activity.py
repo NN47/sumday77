@@ -1183,7 +1183,7 @@ async def analyze_activity(message: Message):
         "Доступные действия:\n"
         "• 🧠 Подробный AI-анализ — полный разбор дня по дневнику питания, активности, воде, весу и заметкам.\n"
         "• 🗓 Календарь — история сохранённых анализов.\n\n"
-        f"Бесплатные AI-возможности до 02:00 МСК:\n🧠 Анализ дня: {daily_status}",
+        f"Бесплатные AI-возможности до 03:00 МСК:\n🧠 Анализ дня: {daily_status}",
         reply_markup=activity_analysis_menu,
     )
 
@@ -1571,14 +1571,14 @@ async def run_detailed_activity_analysis(
         await _daily_analysis_denied(
             message,
             "Подробный анализ этого лимитного дня уже был создан и не может быть сгенерирован повторно. "
-            "Удаление результата не возвращает лимит. Лимит обновится в 02:00 МСК.",
+            "Удаление результата не возвращает лимит. Лимит обновится в 03:00 МСК.",
         )
         return False
     except AIQuotaExceeded:
         await _daily_analysis_denied(
             message,
             "Лимит бесплатного подробного AI-анализа на сегодня закончился. "
-            "Лимит обновится в 02:00 МСК.",
+            "Лимит обновится в 03:00 МСК.",
         )
         return False
     except (AIAttemptLimitExceeded, AIGlobalLimitExceeded):

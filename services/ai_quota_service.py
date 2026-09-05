@@ -30,6 +30,7 @@ from database.models import (
     UserPlanAssignment,
 )
 from database.session import get_db_session
+from time_utils import next_sumday_reset, sumday_period_key
 
 
 MSK_TZ = ZoneInfo("Europe/Moscow")
@@ -156,26 +157,13 @@ class AIQuotaAlreadyConsumed(AIQuotaError):
 
 
 def quota_period_key(now: datetime | None = None) -> date:
-    """Дата лимитного дня 02:00–01:59 МСК."""
-    moment = now or datetime.now(MSK_TZ)
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=MSK_TZ)
-    else:
-        moment = moment.astimezone(MSK_TZ)
-    return (moment - timedelta(hours=2)).date()
+    """Дата лимитного дня 03:00–02:59 МСК."""
+    return sumday_period_key(now)
 
 
 def next_quota_reset(now: datetime | None = None) -> datetime:
-    """Следующие 02:00 МСК."""
-    moment = now or datetime.now(MSK_TZ)
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=MSK_TZ)
-    else:
-        moment = moment.astimezone(MSK_TZ)
-    reset = moment.replace(hour=2, minute=0, second=0, microsecond=0)
-    if moment >= reset:
-        reset += timedelta(days=1)
-    return reset
+    """Следующие 03:00 МСК."""
+    return next_sumday_reset(now)
 
 
 def feature_period_key(entitlement: FeatureEntitlement, now: datetime | None = None) -> date:
@@ -1023,7 +1011,7 @@ def format_free_ai_status_block(user_id: str | int, *, compact: bool = False) ->
     daily_value = "готов" if daily.used or existing_daily else "доступен" if daily.remaining else "лимит исчерпан"
     if compact:
         lines = [
-            "AI-лимиты до 02:00 МСК:",
+            "AI-лимиты до 03:00 МСК:",
             f"📝 Текст: {text.remaining}/{text.limit}",
             f"📷 Фото еды: {photo.remaining}/{photo.limit}",
             f"📋 Этикетки: {label.remaining}/{label.limit}",
@@ -1032,7 +1020,7 @@ def format_free_ai_status_block(user_id: str | int, *, compact: bool = False) ->
         lines.append(f"🧠 Анализ дня: {daily_value}")
         return "\n".join(lines)
     return (
-        "Бесплатные AI-возможности до 02:00 МСК:\n\n"
+        "Бесплатные AI-возможности до 03:00 МСК:\n\n"
         f"📝 Текст: осталось {text.remaining} из {text.limit}\n"
         f"📷 Фото еды: осталось {photo.remaining} из {photo.limit}\n"
         f"📋 Этикетки: осталось {label.remaining} из {label.limit}\n"

@@ -33,7 +33,7 @@ EVENING_ANALYSIS_BUSY_RESCHEDULE_MAX_DELAY = timedelta(minutes=15)
 EVENING_ANALYSIS_RECENT_ACTIVITY_WINDOW = timedelta(minutes=5)
 SUPPLEMENT_BUSY_RESCHEDULE_MIN_DELAY = timedelta(minutes=10)
 SUPPLEMENT_BUSY_RESCHEDULE_MAX_DELAY = timedelta(minutes=15)
-EVENING_ANALYSIS_REMINDER_CUTOFF_TIME = time(2, 0)
+EVENING_ANALYSIS_REMINDER_CUTOFF_TIME = time(3, 0)
 EVENING_ANALYSIS_MAX_REMINDERS = 7
 EVENING_ANALYSIS_START_PREFIX = "evening_analysis_start"
 EVENING_ANALYSIS_REMIND_PREFIX = "evening_analysis_remind"
@@ -297,7 +297,7 @@ class NotificationScheduler:
         )
 
     def _is_before_evening_analysis_cutoff(self, local_now: datetime, target_date) -> bool:
-        """Возвращает True, если напоминания за target_date ещё можно отправлять до 02:00 МСК."""
+        """Возвращает True, если напоминания за target_date ещё можно отправлять до 03:00 МСК."""
         cutoff_at = datetime.combine(target_date + timedelta(days=1), EVENING_ANALYSIS_REMINDER_CUTOFF_TIME, tzinfo=MSK_TZ)
         return local_now < cutoff_at
 

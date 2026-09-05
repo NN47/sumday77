@@ -6,6 +6,7 @@ from typing import Any
 
 from database.models import AIUsageLog
 from database.session import get_db_session
+from services.openai_token_budget_service import finalize_active_openai_usage
 from utils.log_sanitizer import (
     safe_error_code,
     safe_exception_summary,
@@ -79,23 +80,24 @@ def log_ai_usage(
 ) -> None:
     """Безопасно пишет AI usage в БД; сбой логирования не ломает основной сценарий."""
     try:
+        values = {
+            "user_id": sanitize_user_id(user_id),
+            "provider": sanitize_log_label(provider, fallback="unknown") or "unknown",
+            "feature": sanitize_log_label(feature, fallback="unknown") or "unknown",
+            "model": sanitize_identifier(model, fallback="unknown") or "unknown",
+            "status": sanitize_log_label(status, fallback="unknown") or "unknown",
+            "latency_ms": _to_int_or_none(latency_ms),
+            "input_tokens": _to_int_or_none(input_tokens),
+            "output_tokens": _to_int_or_none(output_tokens),
+            "total_tokens": _to_int_or_none(total_tokens),
+            "estimated_cost_usd": _to_float_or_none(estimated_cost_usd),
+            "error_message": safe_error_code(error_message),
+            "raw_metadata": sanitize_metadata(raw_metadata),
+        }
+        if values["provider"] == "openai" and finalize_active_openai_usage(**values):
+            return
         with get_db_session() as session:
-            session.add(
-                AIUsageLog(
-                    user_id=sanitize_user_id(user_id),
-                    provider=sanitize_log_label(provider, fallback="unknown") or "unknown",
-                    feature=sanitize_log_label(feature, fallback="unknown") or "unknown",
-                    model=sanitize_identifier(model, fallback="unknown") or "unknown",
-                    status=sanitize_log_label(status, fallback="unknown") or "unknown",
-                    latency_ms=_to_int_or_none(latency_ms),
-                    input_tokens=_to_int_or_none(input_tokens),
-                    output_tokens=_to_int_or_none(output_tokens),
-                    total_tokens=_to_int_or_none(total_tokens),
-                    estimated_cost_usd=_to_float_or_none(estimated_cost_usd),
-                    error_message=safe_error_code(error_message),
-                    raw_metadata=sanitize_metadata(raw_metadata),
-                )
-            )
+            session.add(AIUsageLog(**values))
     except Exception as exc:  # pragma: no cover - защитное логирование
         logger.warning(
             "Failed to log AI usage provider=%s feature=%s status=%s error_type=%s",

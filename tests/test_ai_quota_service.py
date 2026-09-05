@@ -85,25 +85,45 @@ class AIQuotaServiceTests(unittest.TestCase):
         self.assertTrue(self.service.consume(request_id, result_ref=f"result:{index}"))
         return reservation
 
-    def test_quota_day_changes_exactly_at_02_msk(self):
+    def test_quota_day_changes_exactly_at_03_msk(self):
         self.assertEqual(
-            quota_period_key(datetime(2026, 8, 24, 1, 59, 59, tzinfo=MSK)),
+            quota_period_key(datetime(2026, 8, 24, 2, 59, 59, tzinfo=MSK)),
             date(2026, 8, 23),
         )
         self.assertEqual(
-            quota_period_key(datetime(2026, 8, 24, 2, 0, 0, tzinfo=MSK)),
+            quota_period_key(datetime(2026, 8, 24, 3, 0, 0, tzinfo=MSK)),
             date(2026, 8, 24),
         )
 
     def test_quota_day_handles_month_and_year_boundaries(self):
         self.assertEqual(
-            quota_period_key(datetime(2027, 1, 1, 1, 59, tzinfo=MSK)),
+            quota_period_key(datetime(2027, 1, 1, 2, 59, tzinfo=MSK)),
             date(2026, 12, 31),
         )
         self.assertEqual(
-            quota_period_key(datetime(2026, 3, 1, 1, 59, tzinfo=MSK)),
+            quota_period_key(datetime(2026, 3, 1, 2, 59, tzinfo=MSK)),
             date(2026, 2, 28),
         )
+
+    def test_daily_counter_resets_at_03_msk(self):
+        before_reset = datetime(2026, 8, 24, 2, 59, 59, tzinfo=MSK)
+        after_reset = datetime(2026, 8, 24, 3, 0, 0, tzinfo=MSK)
+        request_id = "boundary:before"
+
+        self.service.reserve(
+            "boundary-user",
+            AIFeature.MEAL_TEXT,
+            request_id,
+            now=before_reset,
+        )
+        self.service.consume(request_id)
+
+        assert self.service.get_status(
+            "boundary-user", AIFeature.MEAL_TEXT, now=before_reset
+        ).used == 1
+        assert self.service.get_status(
+            "boundary-user", AIFeature.MEAL_TEXT, now=after_reset
+        ).used == 0
 
     def test_every_feature_can_be_reserved_and_consumed_once(self):
         for index, feature in enumerate(AIFeature):

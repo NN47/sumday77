@@ -8,7 +8,7 @@ from sqlalchemy import func, case
 
 from database.models import GeminiAccount, GeminiRequestLog
 from database.session import get_db_session
-from time_utils import UTC_TZ, now_moscow, to_moscow
+from time_utils import sumday_period_start_utc, to_moscow
 from utils.log_sanitizer import safe_error_code
 
 
@@ -522,9 +522,9 @@ class GeminiRepository:
 
     @staticmethod
     def get_metrics() -> dict:
-        now_msk = now_moscow()
-        today_start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_start_utc = today_start_msk.astimezone(UTC_TZ).replace(tzinfo=None)
+        # GeminiRequestLog stores naive UTC timestamps; admin "today" follows
+        # the same 03:00 MSK business-day boundary as user AI quotas.
+        today_start_utc = sumday_period_start_utc().replace(tzinfo=None)
 
         with get_db_session() as session:
             accounts = (

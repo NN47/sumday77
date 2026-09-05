@@ -1,9 +1,12 @@
 import asyncio
+from contextlib import contextmanager
 from datetime import date
+import logging
 from unittest.mock import AsyncMock, Mock
 
 from handlers import meals
 from services.deepseek_service import DeepSeekServiceTemporaryError
+from services.openai_token_budget_service import OpenAIDailyTokenLimitExceeded
 from services.extended_activity_analysis_service import (
     AnalysisPeriod,
     ExtendedActivityAnalysisService,
@@ -112,6 +115,89 @@ def test_label_falls_back_from_openai_to_yandex(monkeypatch):
         user_id="42",
         feature="label_analysis",
     )
+
+
+def test_food_photo_skips_openai_when_daily_budget_is_unavailable(monkeypatch, caplog):
+    expected = _food_result("Гречка")
+    caplog.set_level(logging.INFO, logger="handlers.meals")
+
+    @contextmanager
+    def denied_reservation(**_kwargs):
+        raise OpenAIDailyTokenLimitExceeded("daily limit")
+        yield  # pragma: no cover
+
+    openai_call = AsyncMock()
+    yandex_call = AsyncMock(return_value=expected)
+    monkeypatch.setattr(meals.openai_token_budget_service, "reservation", denied_reservation)
+    monkeypatch.setattr(meals, "_analyze_image_with_openai", openai_call)
+    monkeypatch.setattr(meals, "_run_yandex_task", yandex_call)
+
+    result = asyncio.run(
+        meals._run_openai_image_with_yandex_fallback(
+            meals.openai_label_service.analyze_food_photo_openai,
+            meals.yandex_ai_service.analyze_food_photo,
+            b"image",
+            user_id="42",
+            feature="food_photo_analysis",
+            operation_log_name="анализа еды по фото",
+            success_validator=meals._has_food_photo_result,
+        )
+    )
+
+    assert result.provider == "yandex"
+    openai_call.assert_not_awaited()
+    yandex_call.assert_awaited_once()
+    assert "fallback_reason=openai_daily_token_limit" in caplog.text
+
+
+def test_openai_no_usable_data_falls_back_to_yandex(monkeypatch, caplog):
+    expected = _food_result("Суп")
+    monkeypatch.setattr(meals, "_analyze_image_with_openai", AsyncMock(return_value=None))
+    yandex_call = AsyncMock(return_value=expected)
+    monkeypatch.setattr(meals, "_run_yandex_task", yandex_call)
+
+    result = asyncio.run(
+        meals._run_openai_image_with_yandex_fallback(
+            meals.openai_label_service.analyze_food_photo_openai,
+            meals.yandex_ai_service.analyze_food_photo,
+            b"image",
+            user_id="42",
+            feature="food_photo_analysis",
+            operation_log_name="анализа еды по фото",
+            success_validator=meals._has_food_photo_result,
+        )
+    )
+
+    assert result.provider == "yandex"
+    yandex_call.assert_awaited_once()
+    assert "fallback_reason=openai_no_usable_data" in caplog.text
+
+
+def test_label_skips_openai_when_daily_budget_is_unavailable(monkeypatch):
+    expected = {
+        "product_name": "Творог",
+        "kbju_per_100g": {"kcal": 121},
+        "source": "yandex",
+    }
+
+    @contextmanager
+    def denied_reservation(**_kwargs):
+        raise OpenAIDailyTokenLimitExceeded("daily limit")
+        yield  # pragma: no cover
+
+    openai_call = AsyncMock()
+    yandex_call = AsyncMock(return_value=expected)
+    monkeypatch.setattr(meals.openai_token_budget_service, "reservation", denied_reservation)
+    monkeypatch.setattr(meals, "_analyze_label_with_openai", openai_call)
+    monkeypatch.setattr(meals, "_run_yandex_task", yandex_call)
+
+    result = asyncio.run(
+        meals._run_openai_label_with_yandex_fallback(b"image", user_id="42")
+    )
+
+    assert result == expected
+    openai_call.assert_not_awaited()
+    yandex_call.assert_awaited_once()
 
 
 def test_text_food_falls_back_from_deepseek_to_yandex(monkeypatch):

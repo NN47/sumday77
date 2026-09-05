@@ -14,6 +14,7 @@ os.environ.setdefault("GEMINI_API_KEY", "test-gemini-key")
 
 from database.models import Base
 import services.ai_quota_service as quota_module
+import services.openai_token_budget_service as openai_budget_module
 
 
 @pytest.fixture(autouse=True)
@@ -40,5 +41,6 @@ def isolated_default_ai_quota_store(monkeypatch):
             session.close()
 
     monkeypatch.setattr(quota_module, "get_db_session", get_test_session)
+    monkeypatch.setattr(openai_budget_module, "get_db_session", get_test_session)
     yield
     engine.dispose()
