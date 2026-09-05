@@ -61,12 +61,73 @@ class DailyAnalysisPreflightSummaryTests(unittest.TestCase):
         text = build_daily_preflight_text(data)
         self.assertFalse(data.is_empty)
         self.assertIn("Проверь, всё ли внесено за 23 августа", text)
-        self.assertIn("Питание: 1 приём, 420 ккал", text)
+        self.assertIn("Питание: 420 ккал", text)
         self.assertIn("Шаги: 8 240", text)
         self.assertIn("Активность: бег 30 мин", text)
         self.assertIn("Вес: 78,4 кг", text)
         self.assertIn("Заметка дня: добавлена", text)
         self.assertEqual(len(data.snapshot_hash), 64)
+
+    def test_food_summary_does_not_present_product_rows_as_meals(self):
+        meals = [
+            SimpleNamespace(
+                id=index,
+                meal_type="breakfast",
+                calories=2014 / 17,
+                protein=0,
+                fat=0,
+                carbs=0,
+            )
+            for index in range(1, 18)
+        ]
+
+        text = build_daily_preflight_text(self._collect(meals=meals))
+
+        self.assertIn("Питание: 2 014 ккал", text)
+        self.assertNotIn("17 приём", text)
+
+    def test_completed_workout_shows_exercise_repetitions_instead_of_estimated_duration(self):
+        session = SimpleNamespace(
+            id=7,
+            status="completed",
+            duration_seconds=720,
+            intensity="moderate",
+        )
+        exercise = SimpleNamespace(
+            id=11,
+            exercise_code="parallel_bar_dips",
+            exercise_name_snapshot="Отжимания на брусьях",
+        )
+        workout_sets = [
+            SimpleNamespace(
+                id=index,
+                session_exercise_id=exercise.id,
+                repetitions=20,
+                duration_seconds=None,
+                distance_meters=None,
+                load_kg=None,
+                load_kind=None,
+            )
+            for index in range(1, 6)
+        ]
+        with (
+            patch("services.daily_analysis_preflight_service.MealRepository.get_meals_for_date", return_value=[]),
+            patch("services.daily_analysis_preflight_service.MealRepository.get_daily_totals", return_value={"calories": 0}),
+            patch("services.daily_analysis_preflight_service.WaterRepository.get_daily_total", return_value=0),
+            patch("services.daily_analysis_preflight_service.ActivityRepository.get_timed_activities_for_day", return_value=[]),
+            patch("services.daily_analysis_preflight_service.ActivityRepository.get_workout_sessions_for_day", return_value=[session]),
+            patch("services.daily_analysis_preflight_service.ActivityRepository.get_steps_for_day", return_value=None),
+            patch("services.daily_analysis_preflight_service.ActivityRepository.get_session_exercises", return_value=[exercise]),
+            patch("services.daily_analysis_preflight_service.ActivityRepository.get_session_sets", return_value=workout_sets),
+            patch("services.daily_analysis_preflight_service.WeightRepository.get_weight_for_date", return_value=None),
+            patch("services.daily_analysis_preflight_service.NoteRepository.get_note_for_date", return_value=None),
+        ):
+            data = collect_daily_preflight("123", TARGET)
+
+        text = build_daily_preflight_text(data)
+        self.assertIn("Активность: Отжимания на брусьях — 100 раз (5 подходов)", text)
+        self.assertNotIn("тренировка 12 мин", text.casefold())
+        self.assertFalse(data.is_empty)
 
     def test_keyboard_has_context_actions_and_one_back_button(self):
         keyboard = build_daily_preflight_keyboard(TARGET)

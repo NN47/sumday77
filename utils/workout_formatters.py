@@ -1,5 +1,6 @@
 """Функции форматирования для тренировок."""
 import logging
+from dataclasses import dataclass
 from html import escape
 from datetime import date
 from types import SimpleNamespace
@@ -31,6 +32,123 @@ def _format_number(value: float | int) -> str:
     if number.is_integer():
         return str(int(number))
     return f"{number:g}".replace(".", ",")
+
+
+def _format_grouped_number(value: float | int) -> str:
+    number = float(value)
+    if number.is_integer():
+        return f"{int(number):,}".replace(",", " ")
+    return f"{number:g}".replace(".", ",")
+
+
+def format_approach_count(count: int) -> str:
+    if count % 10 == 1 and count % 100 != 11:
+        word = "подход"
+    elif count % 10 in {2, 3, 4} and count % 100 not in {12, 13, 14}:
+        word = "подхода"
+    else:
+        word = "подходов"
+    return f"{count} {word}"
+
+
+def _format_session_duration(seconds: int) -> str:
+    hours, remainder = divmod(max(int(seconds), 0), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts: list[str] = []
+    if hours:
+        parts.append(f"{hours} ч")
+    if minutes:
+        parts.append(f"{minutes} мин")
+    if seconds:
+        parts.append(f"{seconds} сек")
+    return " ".join(parts) or "0 сек"
+
+
+@dataclass(frozen=True)
+class WorkoutExerciseSummary:
+    """Фактические параметры одного упражнения внутри тренировочной сессии."""
+
+    exercise_code: str
+    name: str
+    set_count: int
+    repetitions: int | None
+    duration_seconds: int | None
+    distance_meters: float | None
+    loads: tuple[tuple[str, float], ...]
+
+
+def summarize_workout_session_exercises(exercises: list, workout_sets: list) -> list[WorkoutExerciseSummary]:
+    """Суммирует подходы по стабильному идентификатору упражнения в сессии."""
+    sets_by_exercise: dict[int, list] = {}
+    for item in workout_sets:
+        sets_by_exercise.setdefault(item.session_exercise_id, []).append(item)
+
+    summaries: list[WorkoutExerciseSummary] = []
+    for exercise in exercises:
+        items = sets_by_exercise.get(exercise.id, [])
+        if not items:
+            continue
+        repetitions = [int(item.repetitions) for item in items if item.repetitions is not None]
+        durations = [int(item.duration_seconds) for item in items if item.duration_seconds is not None]
+        distances = [float(item.distance_meters) for item in items if item.distance_meters is not None]
+        loads: list[tuple[str, float]] = []
+        for item in items:
+            if item.load_kg is None:
+                continue
+            load = (str(item.load_kind or "working"), float(item.load_kg))
+            if load not in loads:
+                loads.append(load)
+        summaries.append(WorkoutExerciseSummary(
+            exercise_code=str(exercise.exercise_code),
+            name=str(exercise.exercise_name_snapshot),
+            set_count=len(items),
+            repetitions=sum(repetitions) if repetitions else None,
+            duration_seconds=sum(durations) if durations else None,
+            distance_meters=sum(distances) if distances else None,
+            loads=tuple(loads),
+        ))
+    return summaries
+
+
+def format_workout_exercise_summary(summary: WorkoutExerciseSummary) -> str:
+    """Форматирует упражнение только по параметрам, которые есть в подходах."""
+    params: list[str] = []
+    if summary.repetitions is not None:
+        params.append(f"{_format_grouped_number(summary.repetitions)} раз")
+    if summary.duration_seconds is not None:
+        params.append(_format_session_duration(summary.duration_seconds))
+    if summary.distance_meters is not None:
+        params.append(f"{_format_grouped_number(summary.distance_meters)} м")
+
+    if summary.set_count > 1 and params:
+        params[0] += f" ({format_approach_count(summary.set_count)})"
+    elif not params:
+        params.append(format_approach_count(summary.set_count))
+
+    if len(summary.loads) == 1:
+        load_kind, load_kg = summary.loads[0]
+        formatted_load = _format_grouped_number(load_kg)
+        if load_kind == "additional":
+            params.append(f"+{formatted_load} кг")
+        elif load_kind == "assistance":
+            params.append(f"помощь {formatted_load} кг")
+        else:
+            params.append(f"{formatted_load} кг")
+    elif summary.loads:
+        load_values = [load_kg for _, load_kg in summary.loads]
+        params.append(
+            f"вес {_format_grouped_number(min(load_values))}–{_format_grouped_number(max(load_values))} кг"
+        )
+
+    return f"{summary.name} — {', '.join(params)}"
+
+
+def format_workout_session_exercise_summaries(exercises: list, workout_sets: list) -> list[str]:
+    """Возвращает компактные строки всех заполненных упражнений сессии."""
+    return [
+        format_workout_exercise_summary(summary)
+        for summary in summarize_workout_session_exercises(exercises, workout_sets)
+    ]
 
 
 def _positive_attr(activity: Workout, *names: str) -> float | int | None:

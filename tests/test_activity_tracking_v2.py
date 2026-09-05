@@ -647,6 +647,10 @@ def test_manual_workout_uses_estimated_duration_and_session_level_calories(activ
     assert completed.set_count == 3
     assert completed.training_volume_kg == 0
 
+    text, _ = format_activity_overview("1", date(2026, 8, 23))
+    assert "Отжимания — 28 раз (3 подхода)" in text
+    assert "Силовая тренировка — 3 подх." not in text
+
 
 def test_repository_keeps_individual_sets_and_repeats_previous(activity_store):
     workout = ActivityRepository.create_workout_session(

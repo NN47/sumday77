@@ -5,6 +5,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import date
+from html import escape
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.exc import SQLAlchemyError
@@ -21,6 +22,11 @@ from database.repositories.daily_analysis_preparation_repository import (
     daily_analysis_preparation_repository,
 )
 from services.ai_quota_service import quota_period_key
+from utils.workout_formatters import (
+    format_approach_count,
+    format_workout_exercise_summary,
+    summarize_workout_session_exercises,
+)
 
 
 PREFLIGHT_CALLBACK_PREFIX = "day_pf"
@@ -45,14 +51,6 @@ def _format_number(value: float | int) -> str:
     return f"{round(float(value)):,}".replace(",", " ")
 
 
-def _plural_meals(count: int) -> str:
-    if count % 10 == 1 and count % 100 != 11:
-        return "приём"
-    if count % 10 in {2, 3, 4} and count % 100 not in {12, 13, 14}:
-        return "приёма"
-    return "приёмов"
-
-
 def _activity_line(workouts: list) -> tuple[int, str]:
     steps = 0
     activity_parts: list[str] = []
@@ -72,7 +70,17 @@ def _activity_line(workouts: list) -> tuple[int, str]:
         else:
             value = "внесена"
         activity_parts.append(f"{exercise.lower()} {value}")
-    return steps, ", ".join(activity_parts[:3]) or "не внесена"
+    return steps, _join_activity_parts(activity_parts)
+
+
+def _join_activity_parts(parts: list[str], limit: int = 5) -> str:
+    if not parts:
+        return "не внесена"
+    visible = parts[:limit]
+    hidden_count = len(parts) - len(visible)
+    if hidden_count:
+        visible.append(f"ещё {hidden_count}")
+    return "; ".join(visible)
 
 
 def collect_daily_preflight(user_id: str, target_date: date) -> DailyAnalysisPreflight:
@@ -83,6 +91,7 @@ def collect_daily_preflight(user_id: str, target_date: date) -> DailyAnalysisPre
     water_ml = int(WaterRepository.get_daily_total(user_id, target_date) or 0)
     # Новая модель является основной. Legacy fallback нужен только на период,
     # когда тестовые/старые базы ещё не содержат новых таблиц.
+    session_snapshots: list[dict] = []
     try:
         timed_entries = ActivityRepository.get_timed_activities_for_day(user_id, target_date)
         workout_sessions = [
@@ -90,19 +99,52 @@ def collect_daily_preflight(user_id: str, target_date: date) -> DailyAnalysisPre
             if item.status == "completed"
         ]
         daily_steps = ActivityRepository.get_steps_for_day(user_id, target_date)
+        workout_session_parts: list[str] = []
+        for workout_session in workout_sessions:
+            exercises = ActivityRepository.get_session_exercises(workout_session.id, user_id)
+            workout_sets = ActivityRepository.get_session_sets(workout_session.id, user_id)
+            summaries = summarize_workout_session_exercises(exercises, workout_sets)
+            summary_lines = [format_workout_exercise_summary(summary) for summary in summaries]
+            if summary_lines:
+                workout_session_parts.extend(summary_lines)
+            elif getattr(workout_session, "set_count", 0):
+                workout_session_parts.append(
+                    f"Силовая тренировка — {format_approach_count(workout_session.set_count)}"
+                )
+            elif workout_session.duration_seconds:
+                workout_session_parts.append(
+                    f"Силовая тренировка — {_format_number(workout_session.duration_seconds / 60)} мин"
+                )
+            else:
+                workout_session_parts.append("Силовая тренировка")
+            session_snapshots.append({
+                "id": workout_session.id,
+                "duration_seconds": workout_session.duration_seconds,
+                "intensity": workout_session.intensity,
+                "exercises": [
+                    {
+                        "code": summary.exercise_code,
+                        "name": summary.name,
+                        "set_count": summary.set_count,
+                        "repetitions": summary.repetitions,
+                        "duration_seconds": summary.duration_seconds,
+                        "distance_meters": summary.distance_meters,
+                        "loads": summary.loads,
+                    }
+                    for summary in summaries
+                ],
+            })
     except SQLAlchemyError:
         timed_entries, workout_sessions, daily_steps = [], [], None
+        workout_session_parts, session_snapshots = [], []
     if timed_entries or workout_sessions or daily_steps is not None:
         steps = int(getattr(daily_steps, "steps", 0) or 0)
         activity_parts = [
-            f"{entry.activity_name_snapshot.lower()} {_format_number(entry.duration_minutes)} мин"
+            f"{entry.activity_name_snapshot} — {_format_number(entry.duration_minutes)} мин"
             for entry in timed_entries
         ]
-        activity_parts.extend(
-            f"тренировка {_format_number((session.duration_seconds or 0) / 60)} мин"
-            for session in workout_sessions
-        )
-        activity_text = ", ".join(activity_parts[:3]) or "не внесена"
+        activity_parts.extend(workout_session_parts)
+        activity_text = _join_activity_parts(activity_parts)
         workouts = []
     else:
         workouts = WorkoutRepository.get_workouts_for_day(user_id, target_date)
@@ -144,14 +186,7 @@ def collect_daily_preflight(user_id: str, target_date: date) -> DailyAnalysisPre
             }
             for entry in timed_entries
         ],
-        "workout_sessions": [
-            {
-                "id": session.id,
-                "duration_seconds": session.duration_seconds,
-                "intensity": session.intensity,
-            }
-            for session in workout_sessions
-        ],
+        "workout_sessions": session_snapshots,
         "steps": steps,
         "weight": getattr(weight, "value", None),
         "note": {
@@ -200,15 +235,14 @@ def build_daily_preflight_text(data: DailyAnalysisPreflight) -> str:
     )
     formatted_date = f"{data.target_date.day} {months[data.target_date.month]}"
     activity = (
-        data.activity_text
+        escape(data.activity_text)
         if data.activity_text != "не внесена"
         else "не внесена. Если её не было, ничего добавлять не нужно"
     )
     return (
         "🧠 <b>Перед анализом дня</b>\n\n"
         f"Проверь, всё ли внесено за {formatted_date}:\n\n"
-        f"🍱 Питание: {data.meal_count} {_plural_meals(data.meal_count)}, "
-        f"{_format_number(data.calories)} ккал\n"
+        f"🍱 Питание: {_format_number(data.calories)} ккал\n"
         f"💧 В дневнике воды: {_format_number(data.water_ml)} мл\n"
         f"👣 Шаги: {_format_number(data.steps)}\n"
         f"🏃 Активность: {activity}\n"

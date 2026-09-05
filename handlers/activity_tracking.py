@@ -60,6 +60,10 @@ from utils.keyboards import (
     training_menu,
 )
 from utils.calendar_utils import build_activity_calendar_keyboard, show_calendar_back_button
+from utils.workout_formatters import (
+    format_approach_count,
+    format_workout_session_exercise_summaries,
+)
 
 
 router = Router(name="activity_tracking")
@@ -207,11 +211,17 @@ def format_activity_overview(
         )
 
     for session in sessions:
-        title = "Силовая тренировка"
-        lines.extend([
-            f"🏋️ {title} — {_format_duration(session.duration_seconds or 0)}",
-            f"   {session.exercise_count} упр. · {session.set_count} подх. · ~{session.gross_calories:.0f} ккал",
-        ])
+        exercises = ActivityRepository.get_session_exercises(session.id, user_id)
+        workout_sets = ActivityRepository.get_session_sets(session.id, user_id)
+        exercise_lines = format_workout_session_exercise_summaries(exercises, workout_sets)
+        if exercise_lines:
+            lines.extend(f"🏋️ {html.escape(item)}" for item in exercise_lines)
+            lines.append(f"   За тренировку: ~{session.gross_calories:.0f} ккал")
+        else:
+            lines.append(
+                f"🏋️ Силовая тренировка — {format_approach_count(session.set_count)} · "
+                f"~{session.gross_calories:.0f} ккал"
+            )
 
     if not timed and not sessions and steps is None:
         lines.extend(["", "Пока ничего не добавлено."])

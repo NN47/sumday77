@@ -14,6 +14,7 @@ from utils.formatters import get_kbju_goal_label
 from utils.meal_types import display_meal_type
 from utils.progress_formatters import LIFESTYLE_ACTIVITY_COEFFICIENTS
 from utils.note_factors import normalize_note_rating, sanitize_note_factors
+from utils.workout_formatters import summarize_workout_session_exercises
 from utils.workout_utils import calculate_workout_calories
 from services.activity_energy_service import get_daily_activity_energy_summary
 
@@ -471,16 +472,30 @@ class ExtendedActivityAnalysisService:
             for item in timed_entries
         ]
         for session in sessions:
-            exercise_names = [
-                exercise.exercise_name_snapshot
-                for exercise in ActivityRepository.get_session_exercises(session.id, user_id)
-            ]
+            exercises = ActivityRepository.get_session_exercises(session.id, user_id)
+            workout_sets = ActivityRepository.get_session_sets(session.id, user_id)
+            exercise_summaries = summarize_workout_session_exercises(exercises, workout_sets)
             workout_items.append({
                 "date": session.entry_date.isoformat(),
                 "kind": "workout",
                 "duration_minutes": round((session.duration_seconds or 0) / 60, 1),
                 "intensity": session.intensity,
-                "exercises": exercise_names,
+                "exercises": [summary.name for summary in exercise_summaries],
+                "exercise_details": [
+                    {
+                        "code": summary.exercise_code,
+                        "name": summary.name,
+                        "set_count": summary.set_count,
+                        "repetitions": summary.repetitions,
+                        "duration_seconds": summary.duration_seconds,
+                        "distance_meters": summary.distance_meters,
+                        "loads": [
+                            {"kind": load_kind, "kg": load_kg}
+                            for load_kind, load_kg in summary.loads
+                        ],
+                    }
+                    for summary in exercise_summaries
+                ],
                 "estimated_kcal": round(session.gross_calories),
             })
         steps = sum(item.steps for item in step_entries)
