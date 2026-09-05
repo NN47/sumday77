@@ -172,6 +172,6 @@ class AdminStatsService:
         metrics["fallbacks"] = int((metrics.get("operations") or {}).get("fallbacks") or 0)
         metrics["provider_usage"] = {
             provider: AIUsageRepository.get_provider_metrics(provider)
-            for provider in ("gemini", "openai", "deepseek")
+            for provider in ("gemini", "openai", "deepseek", "yandex")
         }
         return metrics

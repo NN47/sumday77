@@ -524,6 +524,10 @@ def format_deepseek_ai(metrics: dict, *, key_configured: bool) -> str:
     return _format_ai_usage(metrics, title="🧠 DeepSeek / AI", key_configured=key_configured)
 
 
+def format_yandex_ai(metrics: dict, *, key_configured: bool) -> str:
+    return _format_ai_usage(metrics, title="🟡 Yandex AI Studio", key_configured=key_configured)
+
+
 def format_ai_quotas(metrics: dict) -> str:
     """Форматирует квотные операции без пользовательского содержимого."""
     feature_labels = {

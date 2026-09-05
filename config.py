@@ -36,6 +36,22 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
+YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
+YANDEX_AI_BASE_URL = os.getenv("YANDEX_AI_BASE_URL", "https://ai.api.cloud.yandex.net/v1")
+YANDEX_TEXT_MODEL = os.getenv("YANDEX_TEXT_MODEL", "aliceai-llm-flash")
+YANDEX_ANALYSIS_MODEL = os.getenv("YANDEX_ANALYSIS_MODEL", "aliceai-llm")
+YANDEX_VISION_MODEL = os.getenv("YANDEX_VISION_MODEL", "qwen3.6-35b-a3b")
+YANDEX_AI_TIMEOUT_SECONDS = float(os.getenv("YANDEX_AI_TIMEOUT_SECONDS", "45"))
+YANDEX_VISION_TIMEOUT_SECONDS = float(os.getenv("YANDEX_VISION_TIMEOUT_SECONDS", "90"))
+YANDEX_AI_MAX_RETRIES = int(os.getenv("YANDEX_AI_MAX_RETRIES", "2"))
+YANDEX_AI_RETRY_BACKOFF_SECONDS = [
+    float(part.strip())
+    for part in os.getenv("YANDEX_AI_RETRY_BACKOFF_SECONDS", "1,3").split(",")
+    if part.strip()
+]
+if not YANDEX_AI_RETRY_BACKOFF_SECONDS:
+    YANDEX_AI_RETRY_BACKOFF_SECONDS = [1.0, 3.0]
 
 # Keep-alive сервер
 KEEPALIVE_PORT = 10000

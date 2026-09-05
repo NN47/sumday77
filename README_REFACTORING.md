@@ -83,7 +83,12 @@ DATABASE_URL=sqlite:///fitness_bot.db
 GEMINI_API_KEY=your_gemini_api_key
 DEEPSEEK_API_KEY=your_deepseek_api_key
 OPENAI_API_KEY=your_openai_api_key
+YANDEX_API_KEY=your_yandex_api_key
+YANDEX_FOLDER_ID=your_yandex_cloud_folder_id
 ```
+
+Yandex AI Studio используется как резервный провайдер для анализа еды по
+тексту/фото, этикеток, рекомендаций после приёма пищи и анализа дня.
 
 ## ⚠️ Важно!
 

@@ -66,8 +66,11 @@ from services.openai_label_service import (
 )
 from services.deepseek_service import (
     deepseek_service,
-    DeepSeekServiceConfigError,
     DeepSeekServiceError,
+)
+from services.yandex_ai_service import (
+    yandex_ai_service,
+    YandexAIServiceError,
 )
 from services.ai_food_parser import FoodAnalysisStatus, parse_kbju_json
 from services.ai_usage_logger import log_ai_usage
@@ -108,7 +111,7 @@ from utils.meal_types import (
 )
 from utils.emoji_map import EMOJI_MAP
 from database.repositories.meal_completion_comment_repository import MealCompletionCommentRepository
-from config import DEEPSEEK_MODEL
+from config import DEEPSEEK_MODEL, YANDEX_TEXT_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -2064,6 +2067,45 @@ def _build_meal_completion_prompt(user_id: str, meal, target_date: date, product
     )
 
 
+async def _generate_meal_completion_comment_with_yandex_fallback(
+    prompt: str,
+    *,
+    user_id: str,
+    quota_request_id: str | None = None,
+) -> tuple[str, dict]:
+    """Генерирует рекомендацию через DeepSeek, а при сбое — через Yandex."""
+    try:
+        raw_text, metadata = await asyncio.wait_for(
+            asyncio.to_thread(
+                deepseek_service.generate_meal_completion_comment,
+                prompt,
+                user_id=user_id,
+                system_prompt=MEAL_COMPLETION_COMMENT_SYSTEM_PROMPT,
+            ),
+            timeout=75.0,
+        )
+        if not (raw_text or "").strip():
+            raise DeepSeekServiceError("DeepSeek returned empty meal comment")
+        return raw_text, {**(metadata or {}), "provider": "deepseek"}
+    except Exception as deepseek_error:
+        logger.warning(
+            "Meal completion comment switching from DeepSeek to Yandex error_type=%s",
+            safe_exception_summary(deepseek_error),
+        )
+
+    if quota_request_id:
+        ai_quota_service.register_additional_provider_attempt(quota_request_id)
+    raw_text, metadata = await _run_yandex_task(
+        yandex_ai_service.generate_meal_completion_comment,
+        prompt,
+        user_id=user_id,
+        system_prompt=MEAL_COMPLETION_COMMENT_SYSTEM_PROMPT,
+    )
+    if not (raw_text or "").strip():
+        raise YandexAIServiceError("Yandex AI Studio returned empty meal comment")
+    return raw_text, {**(metadata or {}), "provider": "yandex"}
+
+
 async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMContext) -> None:
     """Завершает заполнение текущего приёма пищи и показывает короткий комментарий перед дневником."""
     data = await state.get_data()
@@ -2159,7 +2201,11 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
             len(products),
             len(prompt),
         )
-        raw_text, metadata = await asyncio.wait_for(asyncio.to_thread(deepseek_service.generate_meal_completion_comment, prompt, user_id=user_id, system_prompt=MEAL_COMPLETION_COMMENT_SYSTEM_PROMPT), timeout=75.0)
+        raw_text, metadata = await _generate_meal_completion_comment_with_yandex_fallback(
+            prompt,
+            user_id=user_id,
+            quota_request_id=quota_request_id,
+        )
         text = _sanitize_meal_comment_html(raw_text)
         status = "success"
     except Exception as exc:  # не блокируем завершение приёма пищи
@@ -2182,7 +2228,8 @@ async def _finish_current_meal_and_return_to_diary(message: Message, state: FSMC
             status,
         )
     try:
-        saved_comment = MealCompletionCommentRepository.save(user_id, meal.id, target_date, meal.meal_type, comment_text=text, model=metadata.get("model") or DEEPSEEK_MODEL, status=status, input_tokens=metadata.get("input_tokens"), output_tokens=metadata.get("output_tokens"), total_tokens=metadata.get("total_tokens"), estimated_cost_usd=metadata.get("estimated_cost_usd"), error_message=error_message, quota_request_id=quota_request_id if status == "success" else None)
+        default_model = YANDEX_TEXT_MODEL if metadata.get("provider") == "yandex" else DEEPSEEK_MODEL
+        saved_comment = MealCompletionCommentRepository.save(user_id, meal.id, target_date, meal.meal_type, comment_text=text, model=metadata.get("model") or default_model, status=status, input_tokens=metadata.get("input_tokens"), output_tokens=metadata.get("output_tokens"), total_tokens=metadata.get("total_tokens"), estimated_cost_usd=metadata.get("estimated_cost_usd"), error_message=error_message, quota_request_id=quota_request_id if status == "success" else None)
     except Exception as save_error:
         if reservation is not None:
             ai_quota_service.release(quota_request_id, outcome="comment_storage_error")
@@ -2517,6 +2564,9 @@ async def _send_ai_error_message(message: Message, error: Exception) -> None:
 
 
 async def _send_openai_label_error_message(message: Message, error: Exception) -> None:
+    if isinstance(error, AllProvidersUnavailableError):
+        await message.answer("⚠️ AI-сервисы анализа этикетки временно недоступны. Попробуй позже.")
+        return
     if isinstance(error, OpenAILabelServiceConfigError):
         await message.answer("OpenAI API key не настроен на сервере.")
         return
@@ -2533,6 +2583,9 @@ async def _send_openai_label_error_message(message: Message, error: Exception) -
 
 
 async def _send_openai_food_error_message(message: Message, error: Exception) -> None:
+    if isinstance(error, AllProvidersUnavailableError):
+        await message.answer("⚠️ AI-сервисы анализа фото временно недоступны. Попробуй позже.")
+        return
     if isinstance(error, OpenAILabelServiceConfigError):
         await message.answer("OpenAI API key не настроен на сервере.")
         return
@@ -2576,8 +2629,16 @@ async def _run_openai_label_task(func, *args, timeout_seconds: float = 45.0, **k
         raise OpenAILabelServiceTimeoutError("OpenAI API request timed out") from exc
 
 
+async def _run_yandex_task(func, *args, timeout_seconds: float = 95.0, **kwargs):
+    """Запускает асинхронный вызов Yandex AI Studio с внешним предохранительным timeout."""
+    try:
+        return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout_seconds)
+    except asyncio.TimeoutError as exc:
+        raise YandexAIServiceError("Yandex AI Studio request timed out") from exc
+
+
 class AllProvidersUnavailableError(RuntimeError):
-    """Все AI-провайдеры анализа изображения недоступны."""
+    """Все AI-провайдеры текущего сценария недоступны."""
 
 
 @dataclass(frozen=True)
@@ -2633,6 +2694,71 @@ async def _analyze_label_with_openai(image_data: bytes, *, user_id: str | int | 
     return result
 
 
+async def _run_openai_image_with_yandex_fallback(
+    openai_analyzer,
+    yandex_analyzer,
+    image_data: bytes,
+    *,
+    user_id: str | int | None = None,
+    feature: str,
+    operation_log_name: str,
+    success_validator=None,
+    comment: str | None = None,
+    quota_request_id: str | None = None,
+) -> ProviderAnalysisResult:
+    """Вызывает OpenAI и использует Yandex только при ошибке или непригодном ответе."""
+    try:
+        openai_kwargs = {
+            "user_id": user_id,
+            "feature": feature,
+            "operation_log_name": operation_log_name,
+        }
+        if comment:
+            openai_kwargs["comment"] = comment
+        openai_result = await _analyze_image_with_openai(
+            openai_analyzer,
+            image_data,
+            **openai_kwargs,
+        )
+        if success_validator is None or success_validator(openai_result):
+            return ProviderAnalysisResult(payload=openai_result, provider="openai")
+        logger.warning("OpenAI returned no usable result for %s", operation_log_name)
+    except Exception as openai_error:
+        logger.error(
+            "OpenAI error for %s error_type=%s",
+            operation_log_name,
+            safe_exception_summary(openai_error),
+            exc_info=True,
+        )
+
+    logger.info("Fallback: переход на Yandex AI Studio для %s", operation_log_name)
+    if quota_request_id:
+        ai_quota_service.register_additional_provider_attempt(quota_request_id)
+    try:
+        yandex_kwargs = {"user_id": user_id, "feature": feature}
+        if comment:
+            yandex_kwargs["comment"] = comment
+        yandex_result = await _run_yandex_task(
+            yandex_analyzer,
+            image_data,
+            **yandex_kwargs,
+        )
+        if success_validator is None or success_validator(yandex_result):
+            logger.info("%s completed successfully via Yandex", operation_log_name)
+            return ProviderAnalysisResult(payload=yandex_result, provider="yandex")
+        logger.error("Yandex returned no usable result for %s", operation_log_name)
+    except Exception as yandex_error:
+        logger.error(
+            "Yandex error for %s error_type=%s",
+            operation_log_name,
+            safe_exception_summary(yandex_error),
+            exc_info=True,
+        )
+        raise AllProvidersUnavailableError("All providers unavailable") from yandex_error
+
+    raise AllProvidersUnavailableError("All providers unavailable")
+
+
 async def _run_image_analysis_with_openai_fallback(
     gemini_analyzer,
     image_data: bytes,
@@ -2645,7 +2771,7 @@ async def _run_image_analysis_with_openai_fallback(
     comment: str | None = None,
     quota_request_id: str | None = None,
 ) -> ProviderAnalysisResult:
-    """Запускает анализ изображения через Gemini, а при недоступности/пустом ответе — через OpenAI."""
+    """Запускает цепочку Gemini → OpenAI → Yandex для анализа изображения."""
     logger.info("Gemini attempt for %s", operation_type)
     try:
         if comment:
@@ -2668,31 +2794,27 @@ async def _run_image_analysis_with_openai_fallback(
     if quota_request_id:
         ai_quota_service.register_additional_provider_attempt(quota_request_id)
     try:
-        openai_kwargs = {
-            "user_id": user_id,
-            "feature": openai_feature,
-            "operation_log_name": operation_type,
-        }
-        if comment:
-            openai_kwargs["comment"] = comment
-        openai_result = await _analyze_image_with_openai(
+        fallback_result = await _run_openai_image_with_yandex_fallback(
             openai_analyzer,
+            yandex_ai_service.analyze_food_photo,
             image_data,
-            **openai_kwargs,
+            user_id=user_id,
+            feature=openai_feature,
+            operation_log_name=operation_type,
+            success_validator=success_validator,
+            comment=comment,
+            quota_request_id=quota_request_id,
         )
-        if success_validator is None or success_validator(openai_result):
-            logger.info("OpenAI success for %s", operation_type)
-            logger.info("%s completed successfully via OpenAI", operation_type)
-            return ProviderAnalysisResult(payload=openai_result, provider="openai")
-        logger.error("OpenAI returned no usable result for %s", operation_type)
-    except Exception as openai_error:
+        logger.info("%s completed successfully via %s", operation_type, fallback_result.provider)
+        return fallback_result
+    except AllProvidersUnavailableError as fallback_error:
         logger.error(
-            "OpenAI error for %s error_type=%s",
+            "OpenAI and Yandex failed for %s error_type=%s",
             operation_type,
-            safe_exception_summary(openai_error),
+            safe_exception_summary(fallback_error),
             exc_info=True,
         )
-        raise AllProvidersUnavailableError("All providers unavailable") from openai_error
+        raise AllProvidersUnavailableError("All providers unavailable") from fallback_error
 
     logger.error("%s failed: all providers unavailable", operation_type)
     raise AllProvidersUnavailableError("All providers unavailable")
@@ -2705,7 +2827,7 @@ async def _run_label_analysis_with_openai_fallback(
     user_id: str | int | None = None,
     quota_request_id: str | None = None,
 ):
-    """Запускает анализ этикетки через Gemini, а при недоступности всех ключей — через OpenAI."""
+    """Запускает цепочку Gemini → OpenAI → Yandex для анализа этикетки."""
     try:
         return await _run_gemini_task(analyzer, image_data)
     except Exception as gemini_error:
@@ -2718,10 +2840,56 @@ async def _run_label_analysis_with_openai_fallback(
         if quota_request_id:
             ai_quota_service.register_additional_provider_attempt(quota_request_id)
         try:
-            return await _analyze_label_with_openai(image_data, user_id=user_id)
-        except Exception as openai_error:
+            return await _run_openai_label_with_yandex_fallback(
+                image_data,
+                user_id=user_id,
+                quota_request_id=quota_request_id,
+            )
+        except AllProvidersUnavailableError as fallback_error:
             logger.error("[Error] All providers unavailable")
-            raise AllProvidersUnavailableError("All providers unavailable") from openai_error
+            raise AllProvidersUnavailableError("All providers unavailable") from fallback_error
+
+
+async def _run_openai_label_with_yandex_fallback(
+    image_data: bytes,
+    *,
+    user_id: str | int | None = None,
+    quota_request_id: str | None = None,
+) -> Optional[dict]:
+    """Вызывает OpenAI для этикетки и переключается на Yandex при любом непригодном ответе."""
+    try:
+        openai_result = await _analyze_label_with_openai(image_data, user_id=user_id)
+        if openai_result and "kbju_per_100g" in openai_result:
+            return openai_result
+        logger.warning("OpenAI returned no usable result for label analysis")
+    except Exception as openai_error:
+        logger.error(
+            "OpenAI error for label analysis error_type=%s",
+            safe_exception_summary(openai_error),
+            exc_info=True,
+        )
+
+    logger.info("[Fallback] Switching from OpenAI to Yandex for label analysis")
+    if quota_request_id:
+        ai_quota_service.register_additional_provider_attempt(quota_request_id)
+    try:
+        yandex_result = await _run_yandex_task(
+            yandex_ai_service.extract_kbju_from_label,
+            image_data,
+            user_id=user_id,
+            feature="label_analysis",
+        )
+        if yandex_result and "kbju_per_100g" in yandex_result:
+            return yandex_result
+        logger.error("Yandex returned no usable result for label analysis")
+    except Exception as yandex_error:
+        logger.error(
+            "Yandex error for label analysis error_type=%s",
+            safe_exception_summary(yandex_error),
+            exc_info=True,
+        )
+        raise AllProvidersUnavailableError("All providers unavailable") from yandex_error
+    raise AllProvidersUnavailableError("All providers unavailable")
 
 
 def _has_food_photo_result(payload: Optional[dict]) -> bool:
@@ -5201,6 +5369,51 @@ async def _save_custom_product(
     return save_result
 
 
+async def _run_text_analysis_with_yandex_fallback(
+    analyzer,
+    user_text: str,
+    *,
+    user_id: str,
+    feature: str,
+    quota_request_id: str | None = None,
+) -> tuple[str, dict, str]:
+    """Возвращает валидный анализ текста, используя Yandex после сбоя DeepSeek."""
+    try:
+        raw = await asyncio.to_thread(
+            analyzer,
+            user_text,
+            user_id=user_id,
+            feature=feature,
+        )
+        kbju_data = parse_kbju_json(raw)
+        if kbju_data is None:
+            logger.error("DeepSeek parse error: empty or incompatible payload")
+            raise ValueError("invalid_deepseek_food_response")
+        return raw, kbju_data, "deepseek"
+    except (DeepSeekServiceError, ValueError, json.JSONDecodeError) as deepseek_error:
+        logger.warning(
+            "DeepSeek text meal analysis failed; switching to Yandex error_type=%s",
+            safe_exception_summary(deepseek_error),
+        )
+
+    if quota_request_id:
+        ai_quota_service.register_additional_provider_attempt(quota_request_id)
+    try:
+        raw = await _run_yandex_task(
+            yandex_ai_service.analyze_food_text,
+            user_text,
+            user_id=user_id,
+            feature=feature,
+        )
+        kbju_data = parse_kbju_json(raw)
+        if kbju_data is None:
+            raise ValueError("invalid_yandex_food_response")
+        logger.info("AI text meal analysis fallback completed provider=yandex")
+        return raw, kbju_data, "yandex"
+    except (YandexAIServiceError, ValueError, json.JSONDecodeError) as yandex_error:
+        raise AllProvidersUnavailableError("All providers unavailable") from yandex_error
+
+
 async def _handle_provider_food_input(
     message: Message,
     state: FSMContext,
@@ -5258,23 +5471,17 @@ async def _handle_provider_food_input(
         return
     await message.answer("Обрабатываю…", reply_markup=ReplyKeyboardRemove())
     try:
-        raw = await asyncio.to_thread(
+        _raw, kbju_data, final_provider = await _run_text_analysis_with_yandex_fallback(
             analyzer,
             user_text,
             user_id=user_id,
             feature=AIFeature.MEAL_TEXT.value,
+            quota_request_id=request_id,
         )
-        kbju_data = parse_kbju_json(raw)
-    except DeepSeekServiceConfigError:
-        ai_quota_service.release(request_id, outcome="provider_config_error")
-        logger.exception("%s: API key is not configured", provider_name)
-        await message.answer("⚠️ DeepSeek временно недоступен: не настроен DEEPSEEK_API_KEY.")
-        await message.answer("Можешь выбрать другой способ добавления или попробовать позже.")
-        return
-    except (DeepSeekServiceError, ValueError, json.JSONDecodeError):
+    except AllProvidersUnavailableError:
         ai_quota_service.release(request_id, outcome="provider_or_parse_error")
-        logger.exception("%s: failed to process user text", provider_name)
-        await message.answer(f"Не удалось обработать через {provider_name}: пустой ответ или ошибка API. Попробуй позже.")
+        logger.exception("%s and Yandex: failed to process user text", provider_name)
+        await message.answer("Не удалось обработать текст: AI-сервисы временно недоступны. Попробуй позже.")
         await message.answer("Можешь отправить текст ещё раз.")
         return
     except Exception:
@@ -5313,7 +5520,7 @@ async def _handle_provider_food_input(
     analysis_title = (
         provider_title
         if provider_title == "📝 AI-анализ приёма пищи"
-        else f"{provider_title}: оценка приёма пищи"
+        else f"{'🤖 Yandex' if final_provider == 'yandex' else provider_title}: оценка приёма пищи"
     )
     entry_date_str = data.get("entry_date")
     try:
@@ -5753,7 +5960,7 @@ async def _handle_food_photo_analysis(
     comment: str | None = None,
     user_id: str | None = None,
 ):
-    """Общая логика обработки фото еды для Gemini и OpenAI."""
+    """Общая логика обработки фото еды с резервными AI-провайдерами."""
     await _clear_photo_comment_fields(state)
     user_id = str(user_id or message.from_user.id)
     data = await state.get_data()
@@ -5810,15 +6017,19 @@ async def _handle_food_photo_analysis(
 
     try:
         if provider == "openai":
-            openai_kwargs = {"user_id": user_id, "feature": "food_photo_analysis"}
-            if comment:
-                openai_kwargs["comment"] = comment
-            kbju_data = await runner(
+            analysis_result = await _run_openai_image_with_yandex_fallback(
                 analyzer,
+                yandex_ai_service.analyze_food_photo,
                 image_data,
-                **openai_kwargs,
+                user_id=user_id,
+                feature="food_photo_analysis",
+                operation_log_name="анализа еды по фото",
+                success_validator=_has_food_photo_result,
+                comment=comment,
+                quota_request_id=request_id,
             )
-            final_provider = "openai"
+            kbju_data = analysis_result.payload
+            final_provider = analysis_result.provider
         elif provider == "gemini":
             analysis_result = await _run_food_photo_analysis_with_openai_fallback(
                 analyzer,
@@ -6657,7 +6868,7 @@ async def _handle_label_photo_analysis(
     runner,
     meal_source: str | None = None,
 ):
-    """Общая логика обработки фото этикетки для Gemini и OpenAI."""
+    """Общая логика обработки фото этикетки с резервными AI-провайдерами."""
     user_id = str(message.from_user.id)
     data = await state.get_data()
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
@@ -6709,7 +6920,11 @@ async def _handle_label_photo_analysis(
 
     try:
         if provider == "openai":
-            label_data = await runner(analyzer, image_data, user_id=user_id, feature="label_analysis")
+            label_data = await _run_openai_label_with_yandex_fallback(
+                image_data,
+                user_id=user_id,
+                quota_request_id=request_id,
+            )
         elif provider == "gemini_fallback":
             label_data = await runner(
                 analyzer,
@@ -6767,8 +6982,9 @@ async def _handle_label_photo_analysis(
         "package_weight": None,
         "package_weight_g": None,
     }
-    if meal_source:
-        update_payload["meal_source"] = meal_source
+    resolved_meal_source = label_data.get("source") or meal_source
+    if resolved_meal_source:
+        update_payload["meal_source"] = resolved_meal_source
 
     prompt_package_weight = None
     if found_weight and package_weight is not None:

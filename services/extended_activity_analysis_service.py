@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from datetime import date, timedelta
 from sqlalchemy.exc import SQLAlchemyError
@@ -10,6 +11,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from database.repositories import ActivityRepository, MealRepository, WeightRepository, WorkoutRepository, WaterRepository, NoteRepository
 from handlers.water import get_water_recommended
 from services.deepseek_service import deepseek_service
+from services.yandex_ai_service import yandex_ai_service
+from services.ai_quota_service import ai_quota_service
+from utils.log_sanitizer import safe_exception_summary
 from utils.formatters import get_kbju_goal_label
 from utils.meal_types import display_meal_type
 from utils.progress_formatters import LIFESTYLE_ACTIVITY_COEFFICIENTS
@@ -17,6 +21,8 @@ from utils.note_factors import normalize_note_rating, sanitize_note_factors
 from utils.workout_formatters import summarize_workout_session_exercises
 from utils.workout_utils import calculate_workout_calories
 from services.activity_energy_service import get_daily_activity_energy_summary
+
+logger = logging.getLogger(__name__)
 
 DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT = """# Роль
 
@@ -552,10 +558,51 @@ class ExtendedActivityAnalysisService:
     def build_prompt(self, context: dict) -> str:
         return "Проанализируй данные пользователя. Не выдумывай отсутствующие факты. Данные JSON:\n" + json.dumps(context, ensure_ascii=False, indent=2, default=str)
 
-    async def generate(self, user_id: str, period: AnalysisPeriod) -> str:
+    async def generate(
+        self,
+        user_id: str,
+        period: AnalysisPeriod,
+        *,
+        include_provider: bool = False,
+        quota_request_id: str | None = None,
+    ) -> str | tuple[str, str]:
         context = self.collect_period_context(user_id, period)
         prompt = self.build_prompt(context)
-        return await asyncio.wait_for(asyncio.to_thread(deepseek_service.analyze_activity_prompt, prompt, user_id=user_id, system_prompt=DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT, feature="detailed_activity_analysis"), timeout=90.0)
+        try:
+            analysis = await asyncio.wait_for(
+                asyncio.to_thread(
+                    deepseek_service.analyze_activity_prompt,
+                    prompt,
+                    user_id=user_id,
+                    system_prompt=DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT,
+                    feature="detailed_activity_analysis",
+                ),
+                timeout=90.0,
+            )
+            if not (analysis or "").strip():
+                raise ValueError("empty_deepseek_daily_analysis")
+            provider = "deepseek"
+        except Exception as deepseek_error:
+            logger.warning(
+                "Detailed daily analysis switching from DeepSeek to Yandex error_type=%s",
+                safe_exception_summary(deepseek_error),
+            )
+            if quota_request_id:
+                ai_quota_service.register_additional_provider_attempt(quota_request_id)
+            analysis = await asyncio.wait_for(
+                yandex_ai_service.analyze_activity_prompt(
+                    prompt,
+                    user_id=user_id,
+                    system_prompt=DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT,
+                    feature="detailed_activity_analysis",
+                    temperature=0.65,
+                ),
+                timeout=90.0,
+            )
+            if not (analysis or "").strip():
+                raise ValueError("empty_yandex_daily_analysis")
+            provider = "yandex"
+        return (analysis, provider) if include_provider else analysis
 
 
 extended_activity_analysis_service = ExtendedActivityAnalysisService()

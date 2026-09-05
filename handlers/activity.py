@@ -30,6 +30,7 @@ from services.deepseek_service import (
     deepseek_service,
     DeepSeekServiceTemporaryError,
 )
+from services.yandex_ai_service import yandex_ai_service
 from services.error_logging_service import log_app_error
 from utils.log_sanitizer import safe_exception_summary
 from services.extended_activity_analysis_service import AnalysisPeriod, extended_activity_analysis_service
@@ -1111,10 +1112,30 @@ async def generate_activity_analysis(
                 raise GeminiServiceTemporaryUnavailableError("Gemini service is not initialized")
             response = await asyncio.wait_for(asyncio.to_thread(gemini_service.analyze, prompt), timeout=60.0)
         elif backend == "deepseek":
-            response = await asyncio.wait_for(
-                asyncio.to_thread(deepseek_service.analyze_activity_prompt, prompt, user_id=user_id),
-                timeout=60.0,
-            )
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        deepseek_service.analyze_activity_prompt,
+                        prompt,
+                        user_id=user_id,
+                    ),
+                    timeout=60.0,
+                )
+                if not (response or "").strip():
+                    raise ValueError("empty_deepseek_activity_analysis")
+            except Exception as deepseek_error:
+                logger.warning(
+                    "Activity analysis switching from DeepSeek to Yandex error_type=%s",
+                    safe_exception_summary(deepseek_error),
+                )
+                response = await asyncio.wait_for(
+                    yandex_ai_service.analyze_activity_prompt(
+                        prompt,
+                        user_id=user_id,
+                        feature="activity_analysis",
+                    ),
+                    timeout=60.0,
+                )
         else:
             raise ValueError(f"Unknown activity analysis backend: {backend}")
         response = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', response)
@@ -1575,10 +1596,16 @@ async def run_detailed_activity_analysis(
     AnalyticsRepository.track_event(user_id, "daily_analysis_started", section="activity")
     await message.answer("🧠 Готовлю подробный AI-анализ дня...")
     try:
-        analysis = await extended_activity_analysis_service.generate(
+        generated_analysis = await extended_activity_analysis_service.generate(
             user_id,
             AnalysisPeriod(start_date=target_date, end_date=target_date, label="за день"),
+            include_provider=True,
+            quota_request_id=request_id,
         )
+        if isinstance(generated_analysis, tuple):
+            analysis, analysis_provider = generated_analysis
+        else:  # Совместимость с тестовыми/старыми реализациями сервиса.
+            analysis, analysis_provider = generated_analysis, "deepseek"
         if not (analysis or "").strip():
             raise ValueError("empty_daily_analysis")
         analyzed_at = datetime.utcnow()
@@ -1586,7 +1613,7 @@ async def run_detailed_activity_analysis(
             user_id,
             analysis,
             target_date,
-            source="detailed_deepseek",
+            source=f"detailed_{analysis_provider}",
             analyzed_at=analyzed_at,
             plan_key=reservation.plan_key,
             quota_request_id=request_id,
@@ -1596,7 +1623,7 @@ async def run_detailed_activity_analysis(
         ai_quota_service.release(request_id, outcome="technical_error")
         AnalyticsRepository.track_event(user_id, "daily_analysis_failed", section="activity")
         log_app_error(
-            source="deepseek",
+            source="deepseek_yandex_fallback",
             error=error,
             user_id=user_id,
             context="detailed_daily_analysis",
