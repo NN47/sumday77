@@ -183,6 +183,10 @@ def test_documents_are_readable_before_acceptance_and_fit_telegram(legal_db):
         assert not UserRepository.has_current_legal_acceptance("101")
         policy = LEGAL_DOCUMENTS["privacy"].read()
         assert "Google Gemini" in policy
+        assert "OpenAI / DeepSeek / Google Gemini / Яндекс ИИ" in policy
+        assert "параметры тегов самочувствия" in policy and "переданные медиафайлы" in policy
+        assert "обучения моделей искусственного интеллекта" in policy
+        assert "обязан использовать поля ввода Бота строго по целевому назначению" in policy
         assert "/delete_account" not in policy and "24 час" not in policy
         assert "оперативной памяти" not in policy and "не используется для её обучения" not in policy
         terms = LEGAL_DOCUMENTS["terms"].read()
