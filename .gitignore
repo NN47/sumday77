@@ -15,3 +15,4 @@ logs/
 .idea/
 tmp/
 output/
+SUPPORT_REPLY_TEMPLATE.md
