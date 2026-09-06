@@ -181,25 +181,44 @@ Examples include:
 * retention logic for technical logs
 * separation of operational AI usage data from primary user flows
 
+
 ## Testing
 
-The repository contains automated tests for major application flows including:
+The project has an extensive automated test suite covering major application flows and infrastructure-related logic.
+
+The current test suite includes more than 800 automated tests, with coverage of areas such as:
 
 * AI food parsing
 * food photo processing
 * OpenAI label analysis
-* AI quotas
+* AI quotas and usage limits
 * nutrition calculations
-* meals
-* workouts
-* activities
+* meals and saved products
+* workouts and activities
 * weight tracking
-* supplements
+* supplements and reminders
 * account deletion
 * privacy-related logging
 * notification scheduling
+* repository and data-layer behavior
 
-GitHub Actions currently performs Python syntax/import checks and verifies that the Docker image builds successfully.
+Current local test run:
+
+```text
+840 passed
+89 subtests passed
+
+```
+
+GitHub Actions runs automated checks on every push to `main`, including:
+
+* dependency installation
+* Python syntax compilation
+* automated test suite
+* application import sanity check
+* Docker image build
+
+This provides continuous verification that changes do not break the main application flows.
 
 ## Running locally
 
