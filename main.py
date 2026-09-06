@@ -61,6 +61,7 @@ from handlers import (
 from services.notification_scheduler import NotificationScheduler
 
 TELEGRAM_POLLING_LOCK_KEY = 8471265468
+POLLING_LOCK_RETRY_SECONDS = 7
 POLLING_LOCK_DB_ERRORS = (OperationalError, DBAPIError, PsycopgOperationalError)
 
 
@@ -94,6 +95,7 @@ def release_polling_lock_safely(connection) -> None:
             "соединение с БД уже закрыто или недоступно. "
             "PostgreSQL освободит lock автоматически при закрытии сессии."
         )
+        logger.info("Polling lock освобождён при закрытии соединения с БД")
         return
 
     try:
@@ -101,6 +103,7 @@ def release_polling_lock_safely(connection) -> None:
             text("SELECT pg_advisory_unlock(:lock_key)"),
             {"lock_key": TELEGRAM_POLLING_LOCK_KEY},
         )
+        logger.info("Polling lock освобождён")
     except POLLING_LOCK_DB_ERRORS as error:
         logger.warning(
             "Не удалось вручную освободить advisory lock для polling: %s. "
@@ -108,6 +111,7 @@ def release_polling_lock_safely(connection) -> None:
             "автоматически при закрытии сессии.",
             safe_exception_summary(error),
         )
+        logger.info("Polling lock освобождён при закрытии соединения с БД")
 
 
 def close_connection_safely(connection) -> None:
@@ -134,15 +138,48 @@ def acquire_polling_lock():
         )
         return None
 
-    connection = engine.connect()
-    acquired = connection.execute(
-        text("SELECT pg_try_advisory_lock(:lock_key)"),
-        {"lock_key": TELEGRAM_POLLING_LOCK_KEY},
-    ).scalar()
-    if not acquired:
-        connection.close()
+    connection = None
+    try:
+        connection = engine.connect()
+        acquired = connection.execute(
+            text("SELECT pg_try_advisory_lock(:lock_key)"),
+            {"lock_key": TELEGRAM_POLLING_LOCK_KEY},
+        ).scalar()
+        if not acquired:
+            close_connection_safely(connection)
+            return None
+        return connection
+    except POLLING_LOCK_DB_ERRORS as error:
+        logger.warning(
+            "Не удалось получить polling lock из-за ошибки БД: %s",
+            safe_exception_summary(error),
+        )
+        close_connection_safely(connection)
         return None
-    return connection
+
+
+async def wait_for_polling_lock():
+    """Ждёт advisory lock, повторяя попытки во время rolling deploy."""
+    attempt = 0
+    while True:
+        attempt += 1
+        if attempt == 1:
+            logger.info("Попытка получить polling lock")
+        else:
+            logger.info("Повторная попытка получить polling lock")
+
+        connection = acquire_polling_lock()
+        if connection is not None:
+            logger.info("Polling lock получен")
+            if attempt > 1:
+                logger.info("Переход standby → active")
+            return connection
+
+        logger.warning(
+            "Polling lock занят, standby. Повтор через %s секунд.",
+            POLLING_LOCK_RETRY_SECONDS,
+        )
+        await asyncio.sleep(POLLING_LOCK_RETRY_SECONDS)
 
 
 async def main():
@@ -184,39 +221,40 @@ async def main():
     register_calendar_handlers(dp)
     
     logger.info("🚀 Бот запущен и готов к работе!")
-    polling_lock_conn = acquire_polling_lock()
-    if polling_lock_conn is None:
-        logger.warning(
-            "Не удалось получить lock для polling. "
-            "Переходим в standby-режим без polling и планировщика."
-        )
-        while True:
-            await asyncio.sleep(60)
-
-    logger.info("Lock для polling получен. Запускаем long polling.")
-
-    # Запускаем планировщик уведомлений только в активном инстансе
-    logger.info("Запуск планировщика уведомлений...")
-    notification_scheduler = NotificationScheduler(bot, dp)
-    bot.sumday77_notification_scheduler = notification_scheduler
-    scheduler_task = asyncio.create_task(notification_scheduler.start())
-
+    polling_lock_conn = None
+    notification_scheduler = None
+    scheduler_task = None
     try:
+        polling_lock_conn = await wait_for_polling_lock()
+
+        # Запускаем планировщик уведомлений только в активном инстансе
+        logger.info("Запуск планировщика уведомлений...")
+        notification_scheduler = NotificationScheduler(bot, dp)
+        bot.sumday77_notification_scheduler = notification_scheduler
+        scheduler_task = asyncio.create_task(notification_scheduler.start())
+        logger.info("Polling и планировщик запущены")
+
         await bot.delete_webhook(drop_pending_updates=False)
         # Запускаем polling
         await dp.start_polling(bot)
     finally:
-        # Останавливаем планировщик при завершении
-        notification_scheduler.stop()
-        scheduler_task.cancel()
         try:
-            await scheduler_task
-        except asyncio.CancelledError:
-            pass
-        try:
-            release_polling_lock_safely(polling_lock_conn)
+            # Останавливаем планировщик при завершении
+            if notification_scheduler is not None:
+                notification_scheduler.stop()
+            if scheduler_task is not None:
+                scheduler_task.cancel()
+                try:
+                    await scheduler_task
+                except asyncio.CancelledError:
+                    pass
         finally:
-            close_connection_safely(polling_lock_conn)
+            try:
+                if polling_lock_conn is not None:
+                    release_polling_lock_safely(polling_lock_conn)
+            finally:
+                close_connection_safely(polling_lock_conn)
+                await bot.session.close()
 
 
 if __name__ == "__main__":
