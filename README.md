@@ -6,6 +6,38 @@ Sumday77 combines a Python backend, persistent user data, computer vision, OCR a
 
 The project is actively developed as a full software product rather than a single-purpose bot.
 
+## Product demo
+
+### AI-assisted nutrition workflows
+
+The application supports several AI-assisted input scenarios, including text-based meal analysis, food-photo analysis and nutrition-label recognition.
+
+<p align="center">
+  <img src="docs/screenshots/01-ai-features.jpg" width="250">
+  <img src="docs/screenshots/02-text-analysis.jpg" width="250">
+  <img src="docs/screenshots/03-label-input.jpg" width="250">
+</p>
+
+### Vision and structured extraction
+
+Nutrition-label analysis extracts structured calories and macronutrients from a photographed package, while food-photo analysis identifies dishes and estimates composition and portion-related nutrition data.
+
+<p align="center">
+  <img src="docs/screenshots/04-label-result.jpg" width="250">
+  <img src="docs/screenshots/05-food-photo-input.jpg" width="250">
+  <img src="docs/screenshots/06-food-photo-result.jpg" width="250">
+</p>
+
+### Product workflow and personal tracking
+
+Recognized data can be saved into the user's meal flow, summarized, analyzed and combined with daily nutrition and hydration tracking.
+
+<p align="center">
+  <img src="docs/screenshots/07-meal-summary.jpg" width="250">
+  <img src="docs/screenshots/08-ai-feedback.jpg" width="250">
+  <img src="docs/screenshots/09-dashboard.jpg" width="250">
+</p>
+
 ## What it can do
 
 ### AI-powered nutrition analysis
