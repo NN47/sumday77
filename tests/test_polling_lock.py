@@ -6,6 +6,30 @@ import pytest
 import main
 
 
+def test_keepalive_server_starts_in_named_daemon_thread(monkeypatch):
+    started_threads = []
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+            started_threads.append(self)
+
+        def start(self):
+            self.started = True
+
+    monkeypatch.setattr(main.threading, "Thread", FakeThread)
+
+    thread = main.start_keepalive_server_in_background()
+
+    assert thread is started_threads[0]
+    assert thread.target is main.start_keepalive_server
+    assert thread.name == "keepalive-server"
+    assert thread.daemon is True
+    assert thread.started is True
+
+
 def test_normal_start_acquires_lock_without_standby(monkeypatch, caplog):
     lock_connection = Mock()
     sleep = Mock()

@@ -36,11 +36,18 @@ def start_keepalive_server():
         httpd.serve_forever()
 
 
-# Запускаем keep-alive сервер СРАЗУ, до импорта handlers
-logger.info("Запуск keep-alive сервера...")
-threading.Thread(target=start_keepalive_server, daemon=True).start()
+def start_keepalive_server_in_background():
+    """Открывает health-check порт после подготовки приложения к polling."""
+    logger.info("Запуск keep-alive сервера...")
+    thread = threading.Thread(
+        target=start_keepalive_server,
+        name="keepalive-server",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
-# Теперь импортируем handlers
+
 logger.info("Импорт обработчиков...")
 from database.session import init_db
 from database.session import engine
@@ -250,6 +257,14 @@ async def main():
     register_admin_handlers(dp)
     from handlers.calendar import register_calendar_handlers
     register_calendar_handlers(dp)
+
+    # Render considers the instance deployable as soon as this port opens.
+    # Start it only after imports and handler registration have succeeded, so
+    # the old polling instance is not terminated in favour of a half-started
+    # replacement. It must still open before waiting for the advisory lock:
+    # during a rolling deploy that lock belongs to the old instance until
+    # Render sends it SIGTERM.
+    start_keepalive_server_in_background()
     
     polling_lock_conn = None
     notification_scheduler = None
