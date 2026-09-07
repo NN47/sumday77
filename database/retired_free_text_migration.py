@@ -1,4 +1,4 @@
-"""Удаление неиспользуемых свободных текстов старого раздела самочувствия."""
+"""Удаление неиспользуемых свободных текстов выведенных из эксплуатации функций."""
 from __future__ import annotations
 
 import json
@@ -23,8 +23,8 @@ def _sanitize_factors_payload(payload: object) -> str:
     return json.dumps(sanitize_note_factors(decoded), ensure_ascii=False)
 
 
-def migrate_retired_wellbeing_data(engine) -> None:
-    """Удаляет старый свободный текст, сохраняя структурированные заметки."""
+def migrate_retired_free_text_data(engine) -> None:
+    """Удаляет старые свободные тексты, сохраняя структурированные заметки."""
     with engine.begin() as connection:
         schema = inspect(connection)
         table_names = set(schema.get_table_names())
@@ -69,6 +69,10 @@ def migrate_retired_wellbeing_data(engine) -> None:
         if "wellbeing_entries" in table_names:
             connection.execute(text("DROP TABLE wellbeing_entries"))
             logger.info("Retired wellbeing_entries table dropped")
+
+        if "procedures" in table_names:
+            connection.execute(text("DROP TABLE procedures"))
+            logger.info("Retired procedures table dropped")
 
     # The content is already cleared above. Dropping the now-unmapped column is
     # best-effort for compatibility with older SQLite deployments.
