@@ -16,8 +16,8 @@ router = Router(name="legal")
 
 # Only presentation labels live here; document contents and versions stay unchanged.
 LEGAL_CHOICES = {
-    "terms": ("📄 Соглашение", "Принимаю"),
-    "privacy": ("🔒 Политика", "Ознакомлен"),
+    "terms": ("📄 Пользовательское соглашение", "Принимаю Пользовательское соглашение"),
+    "privacy": ("🔒 Политика обработки данных", "Ознакомлен с Политикой обработки данных"),
 }
 
 
@@ -39,23 +39,22 @@ def gate_keyboard(data: dict | None = None, *, can_accept: bool = True) -> Inlin
     rows = []
     if can_accept:
         suffix = _choice_suffix(data)
-        for key, (title, label) in LEGAL_CHOICES.items():
+        for key, (title, _) in LEGAL_CHOICES.items():
+            rows.append([InlineKeyboardButton(text=title, callback_data=f"legal:doc:{key}:gate:0")])
+        for key, (_, label) in LEGAL_CHOICES.items():
             selected = data.get("legal_choices", {}).get(key, False)
             rows.append([
-                InlineKeyboardButton(text=title, callback_data=f"legal:doc:{key}:gate:0"),
-                InlineKeyboardButton(text=f"{'✅' if selected else '☐'} {label}",
+                InlineKeyboardButton(text=f"{'☑️' if selected else '☐'} {label}",
                                      callback_data=f"legal:toggle:{key}:{suffix}"),
             ])
-        if _all_selected(data):
-            # Keep the exact button name used by the current agreement.
-            rows.append([InlineKeyboardButton(text="Принять условия",
-                         callback_data=f"legal:accept:{LEGAL_VERSION}:{suffix}")])
+        rows.append([InlineKeyboardButton(text="✅ Принять и продолжить",
+                     callback_data=f"legal:accept:{LEGAL_VERSION}:{suffix}")])
         rows.append([InlineKeyboardButton(text="Не принимаю", callback_data=f"legal:decline:{suffix}")])
     else:
         rows = document_buttons("gate")
         rows.append([InlineKeyboardButton(text="Вернуться к условиям", callback_data="legal:home")])
-    rows.append([InlineKeyboardButton(text="💬 Поддержка", url=SUPPORT_URL)])
-    rows.append([InlineKeyboardButton(text="🗑 Удалить аккаунт", callback_data="legal:delete")])
+        rows.append([InlineKeyboardButton(text="💬 Поддержка", url=SUPPORT_URL)])
+        rows.append([InlineKeyboardButton(text="🗑 Удалить аккаунт", callback_data="legal:delete")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -91,14 +90,9 @@ async def show_legal_gate(message: Message, state: FSMContext, *, edit: bool = F
         await message.answer("📄 Условия использования Sumday77", reply_markup=ReplyKeyboardRemove())
     await _render(
         message,
-        "📄 Перед началом работы\n\n"
-        "Открой документы слева и отдельно отметь оба пункта справа:\n"
-        "• принимаю пользовательское соглашение;\n"
-        "• ознакомлен с политикой обработки данных.\n\n"
-        "Кнопка «Принять условия» появится после двух отметок. "
-        "До её нажатия галочки можно снять; подтверждения сохранятся только после нажатия кнопки.\n\n"
-        "Без принятия условий тест и основные разделы недоступны. "
-        "Документы, поддержка и удаление аккаунта остаются доступны.",
+        "Для использования Sumday77 необходимо принять Пользовательское соглашение и подтвердить "
+        "ознакомление с Политикой обработки данных.\n\n"
+        "Ознакомьтесь с документами ниже и подтвердите оба пункта.",
         gate_keyboard(data), edit=edit,
     )
 
@@ -216,7 +210,7 @@ async def accept_terms(callback: CallbackQuery, state: FSMContext):
     if data is None:
         return
     if not _all_selected(data):
-        await callback.answer("Сначала отметь оба пункта.", show_alert=True)
+        await callback.answer("Сначала подтвердите оба пункта выше.", show_alert=True)
         return
     UserRepository.accept_legal_documents(user_id)
     await callback.answer("Условия приняты")

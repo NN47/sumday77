@@ -226,11 +226,26 @@ def test_checkboxes_are_independent_and_only_final_button_records_acceptance(leg
         message = fake_message()
         await legal.show_legal_gate(message, state)
         keyboard = message.answer.await_args.kwargs["reply_markup"]
-        assert [b.text for row in keyboard.inline_keyboard[:2] for b in row] == [
-            "📄 Соглашение", "☐ Принимаю", "🔒 Политика", "☐ Ознакомлен",
+        assert [row[0].text for row in keyboard.inline_keyboard] == [
+            "📄 Пользовательское соглашение",
+            "🔒 Политика обработки данных",
+            "☐ Принимаю Пользовательское соглашение",
+            "☐ Ознакомлен с Политикой обработки данных",
+            "✅ Принять и продолжить",
+            "Не принимаю",
         ]
-        assert not any(b.text == "Принять условия" for row in keyboard.inline_keyboard for b in row)
+        assert all(len(row) == 1 for row in keyboard.inline_keyboard)
+        assert "💬 Поддержка" not in {row[0].text for row in keyboard.inline_keyboard}
+        assert "🗑 Удалить аккаунт" not in {row[0].text for row in keyboard.inline_keyboard}
+        assert message.answer.await_args.args[0] == (
+            "Для использования Sumday77 необходимо принять Пользовательское соглашение и подтвердить "
+            "ознакомление с Политикой обработки данных.\n\n"
+            "Ознакомьтесь с документами ниже и подтвердите оба пункта."
+        )
         accept_data = await select_both(state)
+        selected_labels = {row[0].text for row in legal.gate_keyboard(await state.get_data()).inline_keyboard}
+        assert "☑️ Принимаю Пользовательское соглашение" in selected_labels
+        assert "☑️ Ознакомлен с Политикой обработки данных" in selected_labels
         assert not UserRepository.has_current_legal_acceptance("101")
         _, provider = legal_db
         with provider() as session:
@@ -238,15 +253,21 @@ def test_checkboxes_are_independent_and_only_final_button_records_acceptance(leg
 
         await legal.toggle_legal_choice(fake_callback(await current_button(state, "legal:toggle:terms:")), state)
         keyboard = legal.gate_keyboard(await state.get_data())
-        assert not any(b.text == "Принять условия" for row in keyboard.inline_keyboard for b in row)
+        assert any(b.text == "☐ Принимаю Пользовательское соглашение"
+                   for row in keyboard.inline_keyboard for b in row)
+        assert any(b.text == "✅ Принять и продолжить" for row in keyboard.inline_keyboard for b in row)
         with patch("handlers.start.continue_start", new=AsyncMock()) as resume:
             await legal.accept_terms(fake_callback(accept_data), state)
             # Even a fabricated current button must not bypass an unchecked box.
             data = await state.get_data()
-            await legal.accept_terms(fake_callback(
+            callback = fake_callback(
                 f"legal:accept:{LEGAL_VERSION}:{data['legal_nonce']}:{data['legal_revision']}"
-            ), state)
+            )
+            await legal.accept_terms(callback, state)
             resume.assert_not_awaited()
+            callback.answer.assert_awaited_once_with(
+                "Сначала подтвердите оба пункта выше.", show_alert=True
+            )
         assert not UserRepository.has_current_legal_acceptance("101")
         assert (await state.get_data())["legal_choices"] == {"terms": False, "privacy": True}
         assert all(len(b.callback_data.encode()) <= 64 for row in keyboard.inline_keyboard for b in row if b.callback_data)
