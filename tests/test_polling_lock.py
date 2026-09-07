@@ -57,6 +57,19 @@ def test_failed_advisory_lock_closes_session(monkeypatch):
     connection.close.assert_called_once_with()
 
 
+def test_acquired_advisory_lock_commits_implicit_transaction(monkeypatch):
+    connection = Mock()
+    connection.execute.return_value.scalar.return_value = True
+    test_engine = Mock()
+    test_engine.url.get_backend_name.return_value = "postgresql"
+    test_engine.connect.return_value = connection
+    monkeypatch.setattr(main, "engine", test_engine)
+
+    assert main.acquire_polling_lock() is connection
+    connection.commit.assert_called_once_with()
+    connection.close.assert_not_called()
+
+
 def test_release_unlocks_before_closing(monkeypatch):
     connection = Mock()
     connection.closed = False
