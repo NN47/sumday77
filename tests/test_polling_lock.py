@@ -1,5 +1,7 @@
 import asyncio
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 import main
 
@@ -67,3 +69,65 @@ def test_release_unlocks_before_closing(monkeypatch):
     sql = str(connection.execute.call_args.args[0])
     assert "pg_advisory_unlock" in sql
     connection.close.assert_called_once_with()
+
+
+def test_database_initialization_runs_after_postgresql_polling_lock(monkeypatch):
+    events = []
+    lock_connection = Mock()
+    test_engine = Mock()
+    test_engine.url.get_backend_name.return_value = "postgresql"
+
+    async def wait_for_lock():
+        events.append("lock")
+        return lock_connection
+
+    def initialize_database():
+        events.append("init_db")
+
+    monkeypatch.setattr(main, "engine", test_engine)
+    monkeypatch.setattr(main, "wait_for_polling_lock", wait_for_lock)
+    monkeypatch.setattr(main, "init_db", initialize_database)
+
+    result = asyncio.run(main.initialize_database_for_active_instance())
+
+    assert result is lock_connection
+    assert events == ["lock", "init_db"]
+
+
+def test_database_initialization_skips_advisory_lock_for_sqlite(monkeypatch):
+    test_engine = Mock()
+    test_engine.url.get_backend_name.return_value = "sqlite"
+    wait_for_lock = AsyncMock()
+    initialize_database = Mock()
+    monkeypatch.setattr(main, "engine", test_engine)
+    monkeypatch.setattr(main, "wait_for_polling_lock", wait_for_lock)
+    monkeypatch.setattr(main, "init_db", initialize_database)
+
+    result = asyncio.run(main.initialize_database_for_active_instance())
+
+    assert result is None
+    wait_for_lock.assert_not_awaited()
+    initialize_database.assert_called_once_with()
+
+
+def test_database_initialization_failure_releases_polling_lock(monkeypatch):
+    lock_connection = Mock()
+    test_engine = Mock()
+    test_engine.url.get_backend_name.return_value = "postgresql"
+    release_lock = Mock()
+    close_connection = Mock()
+    monkeypatch.setattr(main, "engine", test_engine)
+    monkeypatch.setattr(
+        main,
+        "wait_for_polling_lock",
+        AsyncMock(return_value=lock_connection),
+    )
+    monkeypatch.setattr(main, "init_db", Mock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(main, "release_polling_lock_safely", release_lock)
+    monkeypatch.setattr(main, "close_connection_safely", close_connection)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        asyncio.run(main.initialize_database_for_active_instance())
+
+    release_lock.assert_called_once_with(lock_connection)
+    close_connection.assert_called_once_with(lock_connection)

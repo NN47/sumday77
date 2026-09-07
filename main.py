@@ -182,12 +182,34 @@ async def wait_for_polling_lock():
         await asyncio.sleep(POLLING_LOCK_RETRY_SECONDS)
 
 
+async def initialize_database_for_active_instance():
+    """Run startup migrations only after this instance becomes active."""
+    polling_lock_conn = None
+    if engine.url.get_backend_name() == "postgresql":
+        polling_lock_conn = await wait_for_polling_lock()
+    else:
+        logger.warning(
+            "База данных %s не поддерживает advisory lock. "
+            "Инициализация выполняется без межпроцессной защиты.",
+            engine.url.get_backend_name(),
+        )
+
+    try:
+        logger.info("Инициализация базы данных...")
+        init_db()
+    except Exception:
+        try:
+            if polling_lock_conn is not None:
+                release_polling_lock_safely(polling_lock_conn)
+        finally:
+            close_connection_safely(polling_lock_conn)
+        raise
+
+    return polling_lock_conn
+
+
 async def main():
     """Основная функция запуска бота."""
-    # Инициализация БД
-    logger.info("Инициализация базы данных...")
-    init_db()
-    
     # Создаём бота и диспетчер с FSM storage
     bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     storage = MemoryStorage()
@@ -223,12 +245,12 @@ async def main():
     from handlers.calendar import register_calendar_handlers
     register_calendar_handlers(dp)
     
-    logger.info("🚀 Бот запущен и готов к работе!")
     polling_lock_conn = None
     notification_scheduler = None
     scheduler_task = None
     try:
-        polling_lock_conn = await wait_for_polling_lock()
+        polling_lock_conn = await initialize_database_for_active_instance()
+        logger.info("🚀 Бот запущен и готов к работе!")
 
         # Запускаем планировщик уведомлений только в активном инстансе
         logger.info("Запуск планировщика уведомлений...")

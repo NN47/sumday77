@@ -67,11 +67,11 @@ def migrate_retired_free_text_data(engine) -> None:
                 )
 
         if "wellbeing_entries" in table_names:
-            connection.execute(text("DROP TABLE wellbeing_entries"))
+            connection.execute(text("DROP TABLE IF EXISTS wellbeing_entries"))
             logger.info("Retired wellbeing_entries table dropped")
 
         if "procedures" in table_names:
-            connection.execute(text("DROP TABLE procedures"))
+            connection.execute(text("DROP TABLE IF EXISTS procedures"))
             logger.info("Retired procedures table dropped")
 
     # The content is already cleared above. Dropping the now-unmapped column is

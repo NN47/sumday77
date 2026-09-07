@@ -185,6 +185,9 @@ def test_documents_are_readable_before_acceptance_and_fit_telegram(legal_db):
         policy = LEGAL_DOCUMENTS["privacy"].read()
         assert "Google Gemini" in policy
         assert "OpenAI / DeepSeek / Google Gemini / Яндекс ИИ" in policy
+        assert "зарубежных провайдеров (OpenAI, DeepSeek, Google Gemini)" in policy
+        assert "подтверждение достижения возраста 18 лет" in policy
+        assert "указанный возраст" not in policy
         assert "структурированная оценка дня и выбранные факторы" in policy
         assert "переданные медиафайлы" in policy
         assert "самочувств" not in policy.casefold()

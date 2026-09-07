@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-LEGAL_VERSION = "2026-09-07"
+LEGAL_VERSION = "2026-09-07.1"
 LEGAL_UPDATED_DATE = "7 сентября 2026 года"
 SUPPORT_CONTACT = "@nik_nickname7"
 SUPPORT_URL = f"https://t.me/{SUPPORT_CONTACT.lstrip('@')}"
