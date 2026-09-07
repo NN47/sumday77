@@ -148,6 +148,12 @@ def acquire_polling_lock():
         if not acquired:
             close_connection_safely(connection)
             return None
+
+        # pg_advisory_lock is session-scoped, so it remains held after COMMIT.
+        # End SQLAlchemy's implicit transaction immediately: otherwise the
+        # dedicated connection remains "idle in transaction" for the whole
+        # polling lifetime and PostgreSQL/proxies may terminate it on timeout.
+        connection.commit()
         return connection
     except POLLING_LOCK_DB_ERRORS as error:
         logger.warning(
