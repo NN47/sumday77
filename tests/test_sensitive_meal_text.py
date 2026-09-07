@@ -9,6 +9,7 @@ from utils.sensitive_meal_text import (
     SensitiveDataType,
     check_sensitive_food_name,
     check_sensitive_meal_text,
+    check_sensitive_personal_data,
 )
 
 
@@ -133,6 +134,41 @@ def test_food_name_ner_blocks_confident_full_name_but_not_food_like_names():
     assert blocked.reason is SensitiveDataType.PERSONAL_IDENTITY
     assert check_sensitive_food_name("салат Цезарь").is_sensitive is False
     assert check_sensitive_food_name("молоко Простоквашино").is_sensitive is False
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_reason"),
+    [
+        ("+44 20 7946 0958", SensitiveDataType.PHONE),
+        ("user@example.com", SensitiveDataType.EMAIL),
+        ("паспорт: 45 01 123456", SensitiveDataType.DOCUMENT),
+        ("ФИО: Иванов Петр Иванович", SensitiveDataType.PERSONAL_IDENTITY),
+        ("Лев Николаевич Толстой", SensitiveDataType.PERSONAL_IDENTITY),
+        ("дата рождения: 01.02.1990", SensitiveDataType.PERSONAL_IDENTITY),
+        ("ул. Пушкина, д. 12, кв. 4", SensitiveDataType.ADDRESS),
+    ],
+)
+def test_shared_personal_data_policy_blocks_high_confidence_values(text, expected_reason):
+    result = check_sensitive_personal_data(text)
+
+    assert result.is_sensitive is True
+    assert result.reason is expected_reason
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "салат Цезарь",
+        "Иван-чай",
+        "булочка Московская",
+        "жим Арнольда",
+        "8 яиц",
+        "12.09.2026",
+        "Кнопка анализа не работает",
+    ],
+)
+def test_shared_personal_data_policy_allows_regular_bot_input(text):
+    assert check_sensitive_personal_data(text).is_sensitive is False
 
 
 @pytest.mark.parametrize(

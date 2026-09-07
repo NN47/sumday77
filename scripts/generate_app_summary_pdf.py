@@ -106,7 +106,7 @@ def build_pdf():
         Paragraph("What It Is", styles["SectionHead"]),
         Paragraph(
             "A Telegram fitness-tracking bot built with aiogram and SQLAlchemy. It helps users log meals, workouts, "
-            "water, weight, supplements, procedures, and wellbeing, then adds reminders and AI-assisted analysis.",
+            "water, weight, supplements, and wellbeing, then adds reminders and AI-assisted analysis.",
             styles["BodyTight"],
         ),
         Spacer(1, 4),
@@ -125,7 +125,7 @@ def build_pdf():
                 "Stores water intake with quick-add buttons and per-day calendar/history views.",
                 "Records weight and body measurements over time.",
                 "Manages supplement schedules, intake history, and reminder notifications.",
-                "Captures wellbeing check-ins and procedures, each with calendar-based review.",
+                "Captures structured wellbeing check-ins with calendar-based review.",
                 "Generates day/week/month activity analysis using Gemini plus stored habit data.",
             ],
             styles["BodyTight"],
@@ -141,12 +141,12 @@ def build_pdf():
         ),
         Paragraph(
             "<b>Interaction layer:</b> feature-specific routers live in <font name='Courier'>handlers/</font> for start, meals, "
-            "workouts, weight, water, supplements, settings, wellbeing, calendar, procedures, and AI activity analysis.",
+            "workouts, weight, water, supplements, settings, wellbeing, calendar, and AI activity analysis.",
             styles["BodyTight"],
         ),
         Paragraph(
             "<b>Persistence:</b> SQLAlchemy models in <font name='Courier'>database/models.py</font> cover users, workouts, meals, "
-            "KBJU settings, supplements, procedures, water, wellbeing, measurements, and saved activity analyses; "
+            "KBJU settings, supplements, water, wellbeing, measurements, and saved activity analyses; "
             "<font name='Courier'>database/session.py</font> initializes the DB and sessions.",
             styles["BodyTight"],
         ),

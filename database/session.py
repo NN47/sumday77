@@ -65,8 +65,10 @@ def init_db():
     Base.metadata.create_all(engine)
     from database.activity_migration import migrate_workout_sessions
     from database.legal_migration import migrate_legal_metadata
+    from database.retired_wellbeing_migration import migrate_retired_wellbeing_data
     migrate_workout_sessions(engine)
     migrate_legal_metadata(engine)
+    migrate_retired_wellbeing_data(engine)
     logger.info("База данных инициализирована")
 
     # Новый справочник физической активности синхронизируется отдельно от

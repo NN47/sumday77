@@ -59,8 +59,6 @@ def test_deepseek_daily_analysis_fallback_used_after_invalid_regeneration():
         patch("database.repositories.WeightRepository.get_weights_for_date_range", return_value=[]),
         patch("database.repositories.WaterRepository.get_daily_total", return_value=0),
         patch("database.repositories.SupplementRepository.get_supplements", return_value=[]),
-        patch("database.repositories.ProcedureRepository.get_procedures_for_day", return_value=[]),
-        patch("database.repositories.WellbeingRepository.get_entries_for_period", return_value=[]),
         patch("database.repositories.NoteRepository.get_note_for_date", return_value=None),
         patch(
             "handlers.activity.deepseek_service",
@@ -101,8 +99,6 @@ def test_daily_analysis_uses_previous_weight_older_than_week_in_prompt():
         patch("database.repositories.WaterRepository.get_daily_total", return_value=0),
         patch("database.repositories.SupplementRepository.get_supplements", return_value=[]),
         patch("database.repositories.SupplementRepository.get_entries_for_day", return_value=[]),
-        patch("database.repositories.ProcedureRepository.get_procedures_for_day", return_value=[]),
-        patch("database.repositories.WellbeingRepository.get_entries_for_period", return_value=[]),
         patch("database.repositories.NoteRepository.get_note_for_date", return_value=None),
         patch("handlers.activity.gemini_service", new=SimpleNamespace(analyze=lambda prompt: prompt)),
     ):

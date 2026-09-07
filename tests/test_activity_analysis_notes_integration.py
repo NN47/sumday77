@@ -34,11 +34,6 @@ class ActivityAnalysisNotesIntegrationTests(unittest.TestCase):
             patch("database.repositories.WeightRepository.get_weights_for_date_range", return_value=[]),
             patch("database.repositories.WaterRepository.get_daily_total", return_value=0),
             patch("database.repositories.SupplementRepository.get_supplements", return_value=[]),
-            patch("database.repositories.ProcedureRepository.get_procedures_for_day", return_value=[]),
-            patch(
-                "database.repositories.WellbeingRepository.get_entries_for_period",
-                return_value=[SimpleNamespace(entry_type="comment", comment=private_marker)],
-            ) as legacy_wellbeing,
             patch("database.repositories.NoteRepository.get_note_for_date", side_effect=fake_note_for_date),
             patch("handlers.activity.gemini_service", new=SimpleNamespace(analyze=lambda prompt: prompt)),
         ):
@@ -52,7 +47,6 @@ class ActivityAnalysisNotesIntegrationTests(unittest.TestCase):
         self.assertNotIn("headache", result)
         self.assertNotIn("custom private factor", result)
         self.assertNotIn(private_marker, result)
-        legacy_wellbeing.assert_not_called()
 
 
 if __name__ == "__main__":

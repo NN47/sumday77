@@ -16,7 +16,7 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 
 from config import API_TOKEN, KEEPALIVE_PORT
 from keepalive_server import HealthCheckHandler, ReusableTCPServer
-from middlewares import OnboardingMiddleware, UserActivityMiddleware
+from middlewares import OnboardingMiddleware, SensitiveInputMiddleware, UserActivityMiddleware
 from middlewares.legal import LegalAcceptanceMiddleware
 from utils.logging_config import setup_logging
 from utils.log_sanitizer import safe_exception_summary
@@ -196,6 +196,9 @@ async def main():
     onboarding_middleware = OnboardingMiddleware()
     dp.message.outer_middleware(user_activity_middleware)
     dp.callback_query.outer_middleware(user_activity_middleware)
+    # This check runs before legal/onboarding handlers so even a crafted /start
+    # payload cannot place personal data in temporary FSM state.
+    dp.message.outer_middleware(SensitiveInputMiddleware())
     dp.message.outer_middleware(LegalAcceptanceMiddleware())
     dp.callback_query.outer_middleware(LegalAcceptanceMiddleware())
     dp.message.outer_middleware(onboarding_middleware)

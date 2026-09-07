@@ -13,9 +13,8 @@ from services.daily_analysis_preflight_service import return_to_active_daily_pre
 from states.user_states import WellbeingStates
 from utils.calendar_utils import build_notes_calendar_keyboard, show_calendar_back_button
 from utils.keyboards import (
-    WELLBEING_AND_PROCEDURES_BUTTON_TEXT,
-    LEGACY_WELLBEING_AND_PROCEDURES_BUTTON_TEXT,
     MAIN_MENU_BUTTON_ALIASES,
+    NOTES_BUTTON_TEXT,
     main_menu,
     notes_main_menu,
     notes_rating_menu,
@@ -50,7 +49,7 @@ FACTORS_PROMPT = (
 
 @router.message(
     StateFilter(None),
-    lambda m: m.text in {WELLBEING_AND_PROCEDURES_BUTTON_TEXT, LEGACY_WELLBEING_AND_PROCEDURES_BUTTON_TEXT}
+    lambda m: m.text == NOTES_BUTTON_TEXT,
 )
 async def open_notes_section(message: Message, state: FSMContext):
     """Открывает раздел заметок за текущий день."""

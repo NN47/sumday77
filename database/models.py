@@ -497,16 +497,6 @@ class SupplementEntry(Base):
     amount = Column(Float, nullable=True)
 
 
-class Procedure(Base):
-    """Модель процедуры."""
-    __tablename__ = "procedures"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(String, nullable=False, index=True)
-    name = Column(String, nullable=False)
-    date = Column(Date, default=date.today)
-    notes = Column(String, nullable=True)
-
-
 class WaterEntry(Base):
     """Модель записи воды."""
     __tablename__ = "water_entries"
@@ -527,22 +517,8 @@ class QuickWaterMessage(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
-class WellbeingEntry(Base):
-    """Модель отметки самочувствия."""
-    __tablename__ = "wellbeing_entries"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(String, nullable=False, index=True)
-    entry_type = Column(String, nullable=False)
-    mood = Column(String, nullable=True)
-    influence = Column(String, nullable=True)
-    difficulty = Column(String, nullable=True)
-    comment = Column(Text, nullable=True)
-    date = Column(Date, default=date.today)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 class NoteEntry(Base):
-    """Модель дневной заметки состояния."""
+    """Модель структурированной дневной заметки."""
     __tablename__ = "notes"
     __table_args__ = (UniqueConstraint("user_id", "date", name="uq_notes_user_date"),)
 
@@ -551,7 +527,6 @@ class NoteEntry(Base):
     date = Column(Date, nullable=False, index=True)
     day_rating = Column(Integer, nullable=False)
     factors_json = Column(Text, default="[]", nullable=False)
-    text = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 

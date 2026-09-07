@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from datetime import date, datetime
 import unittest
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from database.account_deletion import USER_LINKED_MODELS, delete_user_account
@@ -28,7 +28,6 @@ from database.models import (
     MealCompletionComment,
     Measurement,
     NoteEntry,
-    Procedure,
     QuickWaterMessage,
     SavedProduct,
     Supplement,
@@ -40,7 +39,6 @@ from database.models import (
     UserPlanAssignment,
     WaterEntry,
     Weight,
-    WellbeingEntry,
     Workout,
     TimedActivityEntry,
     WorkoutSession,
@@ -56,6 +54,15 @@ class AccountDeletionTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(self.engine)
+        legacy_metadata = MetaData()
+        self.legacy_procedures = Table(
+            "procedures",
+            legacy_metadata,
+            Column("id", Integer, primary_key=True),
+            Column("user_id", String, nullable=False),
+            Column("name", String, nullable=False),
+        )
+        legacy_metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
         self._seed_database()
 
@@ -267,7 +274,12 @@ class AccountDeletionTests(unittest.TestCase):
             )
         )
 
-        session.add(Procedure(user_id=user_id, name="Массаж"))
+        session.execute(
+            self.legacy_procedures.insert().values(
+                user_id=user_id,
+                name="Массаж",
+            )
+        )
         session.add(WaterEntry(user_id=user_id, amount=250))
         session.add(
             QuickWaterMessage(
@@ -276,7 +288,6 @@ class AccountDeletionTests(unittest.TestCase):
                 message_id=int(user_id),
             )
         )
-        session.add(WellbeingEntry(user_id=user_id, entry_type="morning"))
         session.add(
             NoteEntry(
                 user_id=user_id,
@@ -390,6 +401,9 @@ class AccountDeletionTests(unittest.TestCase):
 
         self.assertEqual(models_with_user_id, set(USER_LINKED_MODELS))
 
+    def test_removed_procedure_table_is_not_created_for_new_databases(self):
+        self.assertNotIn("procedures", Base.metadata.tables)
+
     def test_deletes_all_target_data_and_preserves_other_user_and_global_data(self):
         success = delete_user_account(
             self.target_user_id,
@@ -449,6 +463,20 @@ class AccountDeletionTests(unittest.TestCase):
                 .count(),
                 1,
             )
+            self.assertIsNone(
+                session.execute(
+                    select(self.legacy_procedures.c.id)
+                    .where(self.legacy_procedures.c.user_id == self.target_user_id)
+                    .limit(1)
+                ).first()
+            )
+            self.assertIsNotNone(
+                session.execute(
+                    select(self.legacy_procedures.c.id)
+                    .where(self.legacy_procedures.c.user_id == self.other_user_id)
+                    .limit(1)
+                ).first()
+            )
 
     def test_rolls_back_every_deletion_when_one_step_fails(self):
         def fail_during_deletion(
@@ -504,6 +532,13 @@ class AccountDeletionTests(unittest.TestCase):
                 )
                 .count(),
                 1,
+            )
+            self.assertIsNotNone(
+                session.execute(
+                    select(self.legacy_procedures.c.id)
+                    .where(self.legacy_procedures.c.user_id == self.target_user_id)
+                    .limit(1)
+                ).first()
             )
 
 

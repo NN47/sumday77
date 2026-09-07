@@ -22,6 +22,7 @@ from database.repositories import UserRepository
 from handlers import legal, settings
 from middlewares.legal import LegalAcceptanceMiddleware
 from middlewares.onboarding import OnboardingMiddleware
+from middlewares.sensitive_input import SensitiveInputMiddleware
 from middlewares.user_activity import UserActivityMiddleware
 from states.user_states import AccountDeletionStates, KbjuTestStates, LegalStates
 from utils.legal_documents import LEGAL_DOCUMENTS, LEGAL_VERSION, SUPPORT_CONTACT
@@ -184,12 +185,22 @@ def test_documents_are_readable_before_acceptance_and_fit_telegram(legal_db):
         policy = LEGAL_DOCUMENTS["privacy"].read()
         assert "Google Gemini" in policy
         assert "OpenAI / DeepSeek / Google Gemini / Яндекс ИИ" in policy
-        assert "параметры тегов самочувствия" in policy and "переданные медиафайлы" in policy
+        assert "структурированная оценка дня и выбранные факторы" in policy
+        assert "переданные медиафайлы" in policy
+        assert "самочувств" not in policy.casefold()
         assert "обучения моделей искусственного интеллекта" in policy
         assert "обязан использовать поля ввода Бота строго по целевому назначению" in policy
+        assert "внутренней служебной аналитики использования Бота" in policy
+        assert "Данные не используются для рекламного профилирования" in policy
+        assert "Отмечая пункт «Ознакомлен»" in policy
+        assert "не является отдельным согласием на обработку персональных данных" in policy
+        assert "Пользователь, принимая условия сервиса, соглашается" not in policy
+        assert "ч. 5 ст. 18 Закона РФ № 152-ФЗ" in policy
+        assert "ч. 5 ст. 18.1" not in policy
         assert "/delete_account" not in policy and "24 час" not in policy
         assert "оперативной памяти" not in policy and "не используется для её обучения" not in policy
         terms = LEGAL_DOCUMENTS["terms"].read()
+        assert "OpenAI / DeepSeek / Google Gemini / Яндекс ИИ" in terms
         assert "любые поля ввода Бота" in terms and "номера паспортов" in terms
         assert "нецензурную лексику" in terms and "призывы к нарушению законов РФ" in terms
         assert "угрозой жизни, здоровью или психологическому благополучию" in terms
@@ -371,6 +382,7 @@ def test_dispatcher_gate_age_and_deletion_cannot_be_bypassed(legal_db):
         bot = Bot(token="999:test-token")
         dp.message.outer_middleware(UserActivityMiddleware())
         dp.callback_query.outer_middleware(UserActivityMiddleware())
+        dp.message.outer_middleware(SensitiveInputMiddleware())
         dp.message.outer_middleware(LegalAcceptanceMiddleware())
         dp.callback_query.outer_middleware(LegalAcceptanceMiddleware())
         dp.message.outer_middleware(OnboardingMiddleware())

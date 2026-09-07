@@ -27,6 +27,7 @@ class SensitiveDataType(str, Enum):
 class SensitiveTextPolicy(str, Enum):
     """Context-specific policies for the shared local text check."""
 
+    PERSONAL_DATA = "personal_data"
     MEAL = "meal"
     FOOD_NAME = "food_name"
     SUPPORT = "support"
@@ -47,21 +48,25 @@ def _compile(*patterns: str, ignore_case: bool = True) -> tuple[Pattern[str], ..
 
 PHONE_PATTERNS = _compile(
     r"(?<!\d)(?:\+7|8)\s*(?:\(\s*\d{3}\s*\)|\d{3})[\s-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}(?!\d)",
+    r"(?<![\d+])\+\d{1,3}(?:[\s().-]*\d){7,12}(?!\d)",
 )
 
 EMAIL_PATTERNS = _compile(
     r"(?<![\w.+-])[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+(?![\w.-])",
 )
 
+BARE_DOCUMENT_PATTERNS = _compile(
+    r"(?<!\d)\d{2}\s+\d{2}\s+\d{6}(?!\d)",
+    r"(?<!\d)\d{3}-\d{3}-\d{3}[ -]\d{2}(?!\d)",
+)
+
 DOCUMENT_PATTERNS = _compile(
     r"\b(?:мой\s+)?паспорт\b",
     r"\b(?:номер|серия)\s+паспорта\b",
     r"\bпаспорт\s*[:№]\s*\d{2}\s*\d{2}\s*\d{6}\b",
-    r"(?<!\d)\d{2}\s+\d{2}\s+\d{6}(?!\d)",
     r"\bснилс\b(?:\s*[:№]?\s*\d{3}[- ]?\d{3}[- ]?\d{3}[- ]?\d{2})?",
-    r"(?<!\d)\d{3}-\d{3}-\d{3}[ -]\d{2}(?!\d)",
     r"\bинн\s*[:№]?\s*\d{10,12}\b",
-)
+) + BARE_DOCUMENT_PATTERNS
 
 PERSONAL_IDENTITY_PATTERNS = _compile(
     r"\bменя\s+зовут\b",
@@ -80,6 +85,19 @@ PERSONAL_NAME_PATTERNS = _compile(
     ignore_case=False,
 )
 
+# A standalone full name is treated as high-confidence only when it consists
+# of three words and one of them has a characteristic patronymic form.  These
+# patterns are intentionally case-insensitive so copied uppercase documents
+# cannot bypass the common check, while ordinary three-word phrases stay valid.
+_PATRONYMIC_TOKEN = (
+    r"(?:[а-яё-]+(?:ович|евич|овна|евна|ична)|"
+    r"ильич|кузьмич|фомич|лукич|саввич|никитич)"
+)
+FULL_NAME_WITH_PATRONYMIC_PATTERNS = _compile(
+    rf"\b[а-яё-]{{2,}}\s+[а-яё-]{{2,}}\s+{_PATRONYMIC_TOKEN}\b",
+    rf"\b[а-яё-]{{2,}}\s+{_PATRONYMIC_TOKEN}\s+[а-яё-]{{2,}}\b",
+)
+
 DATE_OF_BIRTH_PATTERNS = _compile(
     r"\b(?:дата\s+рождения|д\.\s*р\.)\s*[:=-]?\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b",
     r"\b(?:родил(?:ся|ась)|рожден(?:а)?)\s+\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b",
@@ -88,13 +106,16 @@ DATE_OF_BIRTH_PATTERNS = _compile(
     r"\s+\d{4}\b",
 )
 
-ADDRESS_PATTERNS = _compile(
+ADDRESS_MARKER_PATTERNS = _compile(
     r"\bмой\s+адрес\b",
     r"\bадрес\s+проживания\b",
     r"\bживу\s+по\s+адресу\b",
     r"\bпроживаю\s+по\s+адресу\b",
     r"\bпрописан(?:а)?\s+по\s+адресу\b",
     r"\bместо\s+жительства\b",
+)
+
+STRUCTURED_ADDRESS_PATTERNS = _compile(
     r"\b(?:ул(?:ица)?\.?|проспект|пр-т|переулок|пер\.?|шоссе|набережная|наб\.?)"
     r"\s+[а-яё0-9 .'-]{2,40}(?:,|\s)\s*(?:д(?:ом)?\.?)\s*№?\s*\d+[а-я]?\b",
     r"\b(?:д(?:ом)?\.?)\s*№?\s*\d+[а-я]?\s*[,;]\s*(?:кв(?:артира)?\.?)\s*№?\s*\d+\b",
@@ -346,9 +367,9 @@ MEDICAL_STRONG_PATTERNS = (
 )
 
 
-# Support intentionally uses narrower, high-confidence patterns than meal input.
-# Mentioning a password, a doctor, an analysis screen, or a procedure is not by
-# itself treated as sensitive data.
+# Support uses the shared personal-data checks plus narrower medical patterns.
+# Mentioning a password, a doctor, an analysis screen, or a medical procedure is
+# not by itself treated as sensitive data.
 CREDENTIAL_PATTERNS = _compile(
     r"\b(?:мой\s+)?(?:пароль|password|токен|token|api[-_ ]?key|секрет(?:ный)?\s+ключ)\s*(?:[:=]|[—-])\s*[^\s,;]{4,}\b",
     r"\b(?:код\s+(?:доступа|подтверждения)|одноразовый\s+код|otp)\s*(?:[:=]|[—-])?\s*\d{4,8}\b",
@@ -359,6 +380,10 @@ SUPPORT_DOCUMENT_PATTERNS = _compile(
     r"\b(?:паспорт|номер\s+паспорта|серия\s+паспорта)\s*[:№-]?\s*\d{2}\s*\d{2}\s*\d{6}\b",
     r"\bснилс\s*[:№-]?\s*\d{3}[- ]?\d{3}[- ]?\d{3}[- ]?\d{2}\b",
     r"\bинн\s*[:№-]?\s*\d{10,12}\b",
+)
+
+HIGH_CONFIDENCE_DOCUMENT_PATTERNS = (
+    SUPPORT_DOCUMENT_PATTERNS + BARE_DOCUMENT_PATTERNS
 )
 
 BANKING_PATTERNS = _compile(
@@ -400,26 +425,64 @@ def _matches_any(text: str, patterns: tuple[Pattern[str], ...]) -> bool:
     return any(pattern.search(text) is not None for pattern in patterns)
 
 
-def _check_meal_text(normalized: str, normalized_original: str) -> SensitiveMealTextCheck:
+def _check_personal_data(
+    normalized: str,
+    normalized_original: str,
+) -> SensitiveMealTextCheck:
+    """Check high-confidence personal and secret data in any text field."""
     checks = (
-        (SensitiveDataType.PHONE, PHONE_PATTERNS, normalized),
-        (SensitiveDataType.EMAIL, EMAIL_PATTERNS, normalized),
-        (SensitiveDataType.DOCUMENT, DOCUMENT_PATTERNS, normalized),
-        (SensitiveDataType.PERSONAL_IDENTITY, PERSONAL_IDENTITY_PATTERNS, normalized),
-        (SensitiveDataType.PERSONAL_IDENTITY, PERSONAL_NAME_PATTERNS, normalized_original),
-        (SensitiveDataType.PERSONAL_IDENTITY, DATE_OF_BIRTH_PATTERNS, normalized),
-        (SensitiveDataType.ADDRESS, ADDRESS_PATTERNS, normalized),
-        (SensitiveDataType.CREDENTIAL, CREDENTIAL_PATTERNS, normalized),
-        (SensitiveDataType.BANKING, BANKING_PATTERNS, normalized),
-        (SensitiveDataType.MEDICAL, MEDICAL_STRONG_PATTERNS, normalized),
-        (SensitiveDataType.MEDICAL, MEDICAL_PHRASE_PATTERNS, normalized),
-        (SensitiveDataType.MEDICAL, MEDICAL_CONTEXT_PATTERNS, normalized),
+        (SensitiveDataType.PHONE, PHONE_PATTERNS),
+        (SensitiveDataType.EMAIL, EMAIL_PATTERNS),
+        (SensitiveDataType.DOCUMENT, HIGH_CONFIDENCE_DOCUMENT_PATTERNS),
+        (
+            SensitiveDataType.PERSONAL_IDENTITY,
+            FULL_NAME_WITH_PATRONYMIC_PATTERNS,
+        ),
+        (SensitiveDataType.PERSONAL_IDENTITY, DATE_OF_BIRTH_PATTERNS),
+        (SensitiveDataType.ADDRESS, STRUCTURED_ADDRESS_PATTERNS),
+        (SensitiveDataType.CREDENTIAL, CREDENTIAL_PATTERNS),
+        (SensitiveDataType.BANKING, BANKING_PATTERNS),
     )
-    for reason, patterns, candidate in checks:
-        if _matches_any(candidate, patterns):
+    for reason, patterns in checks:
+        if _matches_any(normalized, patterns):
             return SensitiveMealTextCheck(is_sensitive=True, reason=reason)
+
     if _contains_payment_card_number(normalized):
         return SensitiveMealTextCheck(is_sensitive=True, reason=SensitiveDataType.BANKING)
+
+    # Running NER for every menu button would be unnecessarily expensive. The
+    # pre-check keeps it limited to plausible three-part Russian full names.
+    if _matches_any(normalized_original, PERSONAL_NAME_PATTERNS) or (
+        re.search(
+            r"\b[А-ЯЁ][а-яё-]+\s+[А-ЯЁ][а-яё-]+\s+[А-ЯЁ][а-яё-]+\b",
+            normalized_original,
+        )
+        and _contains_confident_full_name(normalized_original)
+    ):
+        return SensitiveMealTextCheck(
+            is_sensitive=True,
+            reason=SensitiveDataType.PERSONAL_IDENTITY,
+        )
+
+    return SensitiveMealTextCheck(is_sensitive=False)
+
+
+def _check_meal_text(normalized: str, normalized_original: str) -> SensitiveMealTextCheck:
+    personal_data_check = _check_personal_data(normalized, normalized_original)
+    if personal_data_check.is_sensitive:
+        return personal_data_check
+
+    checks = (
+        (SensitiveDataType.DOCUMENT, DOCUMENT_PATTERNS),
+        (SensitiveDataType.PERSONAL_IDENTITY, PERSONAL_IDENTITY_PATTERNS),
+        (SensitiveDataType.ADDRESS, ADDRESS_MARKER_PATTERNS),
+        (SensitiveDataType.MEDICAL, MEDICAL_STRONG_PATTERNS),
+        (SensitiveDataType.MEDICAL, MEDICAL_PHRASE_PATTERNS),
+        (SensitiveDataType.MEDICAL, MEDICAL_CONTEXT_PATTERNS),
+    )
+    for reason, patterns in checks:
+        if _matches_any(normalized, patterns):
+            return SensitiveMealTextCheck(is_sensitive=True, reason=reason)
     return SensitiveMealTextCheck(is_sensitive=False)
 
 
@@ -447,15 +510,7 @@ def _contains_confident_full_name(text: str) -> bool:
 
 
 def _check_food_name(normalized: str, normalized_original: str) -> SensitiveMealTextCheck:
-    base_check = _check_meal_text(normalized, normalized_original)
-    if base_check.is_sensitive:
-        return base_check
-    if _contains_confident_full_name(normalized_original):
-        return SensitiveMealTextCheck(
-            is_sensitive=True,
-            reason=SensitiveDataType.PERSONAL_IDENTITY,
-        )
-    return SensitiveMealTextCheck(is_sensitive=False)
+    return _check_meal_text(normalized, normalized_original)
 
 
 def _contains_payment_card_number(text: str) -> bool:
@@ -478,18 +533,13 @@ def _contains_payment_card_number(text: str) -> bool:
     return False
 
 
-def _check_support_text(normalized: str) -> SensitiveMealTextCheck:
-    checks = (
-        (SensitiveDataType.CREDENTIAL, CREDENTIAL_PATTERNS),
-        (SensitiveDataType.DOCUMENT, SUPPORT_DOCUMENT_PATTERNS),
-        (SensitiveDataType.BANKING, BANKING_PATTERNS),
-    )
-    for reason, patterns in checks:
-        if _matches_any(normalized, patterns):
-            return SensitiveMealTextCheck(is_sensitive=True, reason=reason)
-
-    if _contains_payment_card_number(normalized):
-        return SensitiveMealTextCheck(is_sensitive=True, reason=SensitiveDataType.BANKING)
+def _check_support_text(
+    normalized: str,
+    normalized_original: str,
+) -> SensitiveMealTextCheck:
+    personal_data_check = _check_personal_data(normalized, normalized_original)
+    if personal_data_check.is_sensitive:
+        return personal_data_check
 
     has_person = _matches_any(normalized, SUPPORT_PERSON_MARKER_PATTERNS)
     has_medical_detail = _matches_any(normalized, SUPPORT_MEDICAL_DETAIL_PATTERNS)
@@ -507,12 +557,14 @@ def check_sensitive_text(
     """Check text locally without returning or logging matching fragments."""
     normalized_original = _normalize_text(str(text or ""))
     normalized = normalized_original.casefold()
+    if policy is SensitiveTextPolicy.PERSONAL_DATA:
+        return _check_personal_data(normalized, normalized_original)
     if policy is SensitiveTextPolicy.MEAL:
         return _check_meal_text(normalized, normalized_original)
     if policy is SensitiveTextPolicy.FOOD_NAME:
         return _check_food_name(normalized, normalized_original)
     if policy is SensitiveTextPolicy.SUPPORT:
-        return _check_support_text(normalized)
+        return _check_support_text(normalized, normalized_original)
     raise ValueError(f"Unsupported sensitive-text policy: {policy!r}")
 
 
@@ -529,3 +581,8 @@ def check_sensitive_food_name(text: str) -> SensitiveMealTextCheck:
 def check_sensitive_support_text(text: str) -> SensitiveMealTextCheck:
     """High-confidence support-message policy."""
     return check_sensitive_text(text, policy=SensitiveTextPolicy.SUPPORT)
+
+
+def check_sensitive_personal_data(text: str) -> SensitiveMealTextCheck:
+    """Shared high-confidence check used for every free-form text input."""
+    return check_sensitive_text(text, policy=SensitiveTextPolicy.PERSONAL_DATA)

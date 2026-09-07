@@ -387,7 +387,7 @@ async def generate_activity_analysis(
     """Генерирует анализ активности за указанный период через выбранный AI-бэкенд."""
     from database.repositories import (
         WorkoutRepository, MealRepository, WeightRepository,
-        WaterRepository, SupplementRepository, ProcedureRepository,
+        WaterRepository, SupplementRepository,
         NoteRepository
     )
     from utils.workout_utils import calculate_workout_calories
@@ -644,18 +644,6 @@ async def generate_activity_analysis(
 
     today_supplement_entries = SupplementRepository.get_entries_for_day(user_id, end_date)
     
-    # 🔹 Процедуры за период
-    procedure_count = 0
-    current_date = start_date
-    while current_date <= end_date:
-        day_procedures = ProcedureRepository.get_procedures_for_day(user_id, current_date)
-        procedure_count += len(day_procedures)
-        current_date += timedelta(days=1)
-    
-    procedure_summary = ""
-    if procedure_count > 0:
-        procedure_summary = f"\nПроцедуры: {procedure_count} записей за период."
-
     # 🔹 Заметки дня за период
     note_entries = []
     current_date = start_date
@@ -797,7 +785,7 @@ async def generate_activity_analysis(
 {meals_summary}
 
 Норма / цель КБЖУ:
-{kbju_goal_summary}{water_summary}{supplement_summary}{procedure_summary}{notes_summary}
+{kbju_goal_summary}{water_summary}{supplement_summary}{notes_summary}
 
 Вес:
 {weight_summary}{comparison_summary}

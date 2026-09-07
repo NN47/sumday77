@@ -8,8 +8,7 @@ LEGACY_MAIN_MENU_BUTTON_TEXT = "🏠 Главное меню"
 ONBOARDING_OPEN_MENU_BUTTON_TEXT = "Открыть меню"
 MAIN_MENU_BUTTON_ALIASES = {MAIN_MENU_BUTTON_TEXT, LEGACY_MAIN_MENU_BUTTON_TEXT, ONBOARDING_OPEN_MENU_BUTTON_TEXT}
 main_menu_button = KeyboardButton(text=MAIN_MENU_BUTTON_TEXT)
-WELLBEING_AND_PROCEDURES_BUTTON_TEXT = "📝 Заметки"
-LEGACY_WELLBEING_AND_PROCEDURES_BUTTON_TEXT = "📝 Заметки/\n💆 Процедуры"
+NOTES_BUTTON_TEXT = "📝 Заметки"
 WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT = "⚖️ Вес и замеры"
 TRAINING_BUTTON_TEXT = "🏃 Активность"
 PREVIOUS_TRAINING_BUTTON_TEXT = "🚴 Активность"
@@ -56,7 +55,7 @@ main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=MEALS_BUTTON_TEXT)],
         [KeyboardButton(text=TRAINING_BUTTON_TEXT), KeyboardButton(text=WEIGHT_AND_MEASUREMENTS_BUTTON_TEXT)],
-        [KeyboardButton(text=WELLBEING_AND_PROCEDURES_BUTTON_TEXT), KeyboardButton(text="💧 Контроль воды")],
+        [KeyboardButton(text=NOTES_BUTTON_TEXT), KeyboardButton(text="💧 Контроль воды")],
         [KeyboardButton(text="💊 Добавки"), KeyboardButton(text=AI_ANALYSIS_BUTTON_TEXT)],
         [KeyboardButton(text="⚙️ Настройки"), main_menu_button],
     ],
@@ -712,17 +711,6 @@ delete_account_confirm_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="Да, удалить аккаунт")],
         [KeyboardButton(text="❌ Отмена")],
         [main_menu_button],
-    ],
-    resize_keyboard=True,
-)
-
-# Меню процедур
-procedures_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="➕ Добавить процедуру")],
-        [KeyboardButton(text="📆 Календарь процедур")],
-        [KeyboardButton(text="📊 Сегодня")],
-        [KeyboardButton(text="⬅️ Назад"), main_menu_button],
     ],
     resize_keyboard=True,
 )

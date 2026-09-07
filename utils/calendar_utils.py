@@ -10,7 +10,6 @@ from database.repositories import (
     WorkoutRepository,
     MealRepository,
     SupplementRepository,
-    ProcedureRepository,
     WeightRepository,
     WaterRepository,
 )
@@ -282,60 +281,6 @@ def build_supplement_day_actions_keyboard(entries: list[dict], target_date: date
         ]
     )
     
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def get_month_procedure_days(user_id: str, year: int, month: int) -> set[int]:
-    """Получает дни месяца, в которые были процедуры."""
-    return ProcedureRepository.get_month_procedure_days(user_id, year, month)
-
-
-def build_procedure_calendar_keyboard(user_id: str, year: int, month: int) -> InlineKeyboardMarkup:
-    """Строит клавиатуру календаря процедур."""
-    return build_calendar_keyboard(
-        user_id=user_id,
-        year=year,
-        month=month,
-        callback_prefix="proc_cal",
-        marker="💆",
-        get_days_func=get_month_procedure_days,
-    )
-
-
-def build_procedure_day_actions_keyboard(procedures, target_date: date) -> InlineKeyboardMarkup:
-    """Строит клавиатуру действий для дня в календаре процедур."""
-    from aiogram.types import InlineKeyboardButton
-
-    rows: list[list[InlineKeyboardButton]] = []
-
-    if procedures:
-        for proc in procedures:
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"🗑 {proc.name}",
-                        callback_data=f"proc_cal_del:{target_date.isoformat()}:{proc.id}",
-                    )
-                ]
-            )
-
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="➕ Добавить процедуру",
-                callback_data=f"proc_cal_add:{target_date.isoformat()}",
-            ),
-        ]
-    )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="⬅️ Назад к календарю",
-                callback_data=f"proc_cal_back:{target_date.year}-{target_date.month:02d}",
-            )
-        ]
-    )
-
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

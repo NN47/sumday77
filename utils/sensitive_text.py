@@ -5,6 +5,7 @@ from utils.sensitive_meal_text import (
     SensitiveTextPolicy,
     check_sensitive_food_name,
     check_sensitive_meal_text,
+    check_sensitive_personal_data,
     check_sensitive_support_text,
     check_sensitive_text,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "SensitiveTextPolicy",
     "check_sensitive_food_name",
     "check_sensitive_meal_text",
+    "check_sensitive_personal_data",
     "check_sensitive_support_text",
     "check_sensitive_text",
 ]

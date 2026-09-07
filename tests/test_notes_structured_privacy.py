@@ -199,7 +199,7 @@ def test_factor_whitelist_matches_required_non_medical_options():
     )
 
 
-def test_repository_filters_factors_and_does_not_overwrite_legacy_text():
+def test_repository_filters_factors_for_existing_and_new_notes():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False)
@@ -211,7 +211,6 @@ def test_repository_filters_factors_and_does_not_overwrite_legacy_text():
                 date=date(2026, 8, 15),
                 day_rating=3,
                 factors_json=json.dumps(["headache", "legacy custom"]),
-                text=PRIVATE_MARKER,
             )
         )
         session.commit()
@@ -236,9 +235,7 @@ def test_repository_filters_factors_and_does_not_overwrite_legacy_text():
         )
 
     assert note.factors == ["tired", "workout"]
-    assert note.text == PRIVATE_MARKER
     assert new_note.factors == ["energy"]
-    assert new_note.text is None
     engine.dispose()
 
 
@@ -247,14 +244,6 @@ def test_extended_ai_context_excludes_all_legacy_free_text_and_custom_factors():
         day_rating=4,
         factors=["tired", "workout", "headache", "custom factor"],
         text=PRIVATE_MARKER,
-    )
-    legacy_wellbeing = SimpleNamespace(
-        date=date(2026, 8, 15),
-        entry_type="comment",
-        mood=None,
-        influence=None,
-        difficulty=None,
-        comment=PRIVATE_MARKER,
     )
     service = ExtendedActivityAnalysisService()
     target_date = date(2026, 8, 15)
@@ -267,10 +256,6 @@ def test_extended_ai_context_excludes_all_legacy_free_text_and_custom_factors():
         patch("services.extended_activity_analysis_service.WeightRepository.get_weights_for_date_range", return_value=[]),
         patch("services.extended_activity_analysis_service.NoteRepository.get_note_for_date", return_value=note),
         patch("services.extended_activity_analysis_service.get_water_recommended", return_value=2000),
-        patch(
-            "database.repositories.WellbeingRepository.get_entries_for_period",
-            return_value=[legacy_wellbeing],
-        ) as wellbeing_reader,
     ):
         context = service.collect_period_context(
             "123",
@@ -283,7 +268,6 @@ def test_extended_ai_context_excludes_all_legacy_free_text_and_custom_factors():
     assert PRIVATE_MARKER not in payload
     assert "headache" not in payload
     assert "custom factor" not in payload
-    wellbeing_reader.assert_not_called()
 
 
 def test_old_note_text_is_not_displayed_in_current_or_calendar_views():
