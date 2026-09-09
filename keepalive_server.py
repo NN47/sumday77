@@ -17,6 +17,12 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
     health_paths = frozenset({"/", "/health"})
 
     def do_GET(self):
+        self._respond_health_check()
+
+    def do_HEAD(self):
+        self._respond_health_check()
+
+    def _respond_health_check(self):
         if self.path not in self.health_paths:
             self._send_text_response(404, b"Not Found\n")
             return
@@ -29,7 +35,8 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def version_string(self) -> str:
         return self.server_version
