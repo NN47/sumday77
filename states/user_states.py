@@ -5,6 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 class MealEntryStates(StatesGroup):
     """Состояния для добавления приёма пищи."""
     choosing_meal_type = State()  # Выбор типа приёма пищи
+    confirming_unsolicited_input = State()  # Фото/текст получены до выбора способа
     waiting_for_ai_food_input = State()  # AI-анализ через DeepSeek
     confirming_ai_meal = State()  # Предпросмотр и сохранение текстового AI-черновика
     confirming_ai_meal_cancel = State()  # Подтверждение удаления текстового AI-черновика

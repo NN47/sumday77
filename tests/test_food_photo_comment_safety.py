@@ -58,6 +58,9 @@ class _State:
     async def get_data(self):
         return dict(self.data)
 
+    async def get_state(self):
+        return getattr(self.current_state, "state", self.current_state)
+
     async def update_data(self, **kwargs):
         self.data.update(kwargs)
 
@@ -340,10 +343,10 @@ def test_provider_error_and_cancel_remove_legacy_raw_comment_fields(caplog):
     assert "photo_analysis_items" not in state.data
     assert comment not in caplog.text
 
-    state.data.update(food_photo_comment=comment, photo_analysis_comment=comment)
+    state.data.update(food_photo_comment=comment, photo_analysis_comment=comment, food_photo_prompt_id=123)
     callback = SimpleNamespace(
         from_user=SimpleNamespace(id=12345),
-        message=SimpleNamespace(edit_reply_markup=AsyncMock(), answer=AsyncMock()),
+        message=SimpleNamespace(message_id=123, edit_reply_markup=AsyncMock(), answer=AsyncMock()),
         answer=AsyncMock(),
     )
     with patch("handlers.meals._show_input_methods", new_callable=AsyncMock) as show_input_methods:

@@ -6,9 +6,11 @@ import re
 import math
 import html
 import secrets
+from collections import OrderedDict
+from user_operation_guard import user_operation_guard
 from dataclasses import dataclass
 from datetime import date
-from aiogram import Router, F
+from aiogram import BaseMiddleware, Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.exceptions import TelegramBadRequest
 from utils.pagination import build_pagination_keyboard, clamp_page, total_pages_for
@@ -120,6 +122,65 @@ from config import DEEPSEEK_MODEL, YANDEX_TEXT_MODEL
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+
+class MealInputMiddleware(BaseMiddleware):
+    """Serialize meal input and reject albums before any image reaches AI."""
+
+    def __init__(self):
+        self.albums = OrderedDict()
+
+    async def __call__(self, handler, event, data):
+        state = data.get("state")
+        if state is None:
+            return await handler(event, data)
+        current = await state.get_state()
+        is_meal = bool(current and current.startswith("MealEntryStates:"))
+        if isinstance(event, Message) and is_meal and event.media_group_id:
+            key = (event.chat.id, event.media_group_id)
+            if key not in self.albums:
+                self.albums[key] = True
+                if len(self.albums) > 1024:
+                    self.albums.popitem(last=False)
+                await event.answer(
+                    "Можно использовать только одно фото за одно добавление продукта. "
+                    "Альбом не принят. Отправь нужное фото отдельным сообщением. "
+                    "Если фото уже принято, сначала заверши или отмени текущее добавление."
+                )
+            return
+        async with user_operation_guard.operation(str(event.from_user.id)):
+            current = await state.get_state()
+            data["raw_state"] = current
+            if isinstance(event, Message) and event.photo and current and current.startswith("MealEntryStates:"):
+                allowed = {
+                    MealEntryStates.choosing_meal_type.state,
+                    MealEntryStates.confirming_unsolicited_input.state,
+                    MealEntryStates.waiting_for_photo.state,
+                    MealEntryStates.waiting_for_openai_food_photo.state,
+                    MealEntryStates.waiting_for_label_photo.state,
+                    MealEntryStates.waiting_for_openai_label_photo.state,
+                }
+                if current not in allowed:
+                    await event.answer(
+                        "Сейчас уже идёт добавление или редактирование продукта. "
+                        "Новое фото не принято. Заверши текущий шаг или вернись назад, "
+                        "чтобы начать новое добавление."
+                    )
+                    return
+            pending = (await state.get_data()).get("unsolicited_input")
+            try:
+                return await handler(event, data)
+            finally:
+                if pending and await state.get_state() != MealEntryStates.confirming_unsolicited_input.state:
+                    message = event if isinstance(event, Message) else event.message
+                    await _dismiss_unsolicited_prompt(message, pending)
+                    if (await state.get_data()).get("unsolicited_input"):
+                        await state.update_data(unsolicited_input=None)
+
+
+_meal_input_middleware = MealInputMiddleware()
+router.message.outer_middleware(_meal_input_middleware)
+router.callback_query.outer_middleware(_meal_input_middleware)
 
 MEAL_SAVE_TOKEN_BYTES = 16
 MEAL_SAVE_TOKEN_LENGTH = 22
@@ -6268,7 +6329,7 @@ async def handle_photo_input(message: Message, state: FSMContext):
         food_photo_message_id=getattr(message, "message_id", None),
     )
     await state.set_state(MealEntryStates.waiting_for_food_photo_comment)
-    await message.answer(
+    prompt = await message.answer(
         "📷 Фото получено.\n\n"
         "Если хотите, можете сразу написать уточнение к блюду одним сообщением.\n\n"
         "Например:\n"
@@ -6279,6 +6340,7 @@ async def handle_photo_input(message: Message, state: FSMContext):
         "Если уточнений нет — нажмите «⏭️ Анализировать без уточнения».",
         reply_markup=_build_food_photo_clarification_menu(),
     )
+    await state.update_data(food_photo_prompt_id=prompt.message_id)
 
 
 async def _run_pending_food_photo_analysis(
@@ -6315,7 +6377,10 @@ async def _run_pending_food_photo_analysis(
 @router.callback_query(lambda c: c.data == "food_photo_analyze_now")
 async def analyze_food_photo_without_comment(callback: CallbackQuery, state: FSMContext):
     """Запускает анализ сохранённого фото без дополнительного контекста."""
+    if not await _is_current_food_photo_prompt(callback, state):
+        return
     await callback.answer()
+    await state.update_data(food_photo_prompt_id=None)
     await callback.message.edit_reply_markup(reply_markup=None)
     await _run_pending_food_photo_analysis(
         callback.message,
@@ -6327,6 +6392,8 @@ async def analyze_food_photo_without_comment(callback: CallbackQuery, state: FSM
 @router.callback_query(lambda c: c.data == "food_photo_cancel")
 async def cancel_pending_food_photo_analysis(callback: CallbackQuery, state: FSMContext):
     """Отменяет ожидание уточнения к фото еды через inline-кнопку."""
+    if not await _is_current_food_photo_prompt(callback, state):
+        return
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
     await _return_to_add_methods_from_method_input(
@@ -6336,6 +6403,17 @@ async def cancel_pending_food_photo_analysis(callback: CallbackQuery, state: FSM
     )
 
 
+async def _is_current_food_photo_prompt(callback: CallbackQuery, state: FSMContext) -> bool:
+    data = await state.get_data()
+    if (
+        await state.get_state() != MealEntryStates.waiting_for_food_photo_comment.state
+        or data.get("food_photo_prompt_id") != callback.message.message_id
+    ):
+        await callback.answer("Этот запрос уже обработан или устарел.")
+        return False
+    return True
+
+
 @router.message(MealEntryStates.waiting_for_food_photo_comment)
 async def handle_food_photo_comment(message: Message, state: FSMContext):
     """Получает текстовое уточнение и запускает анализ фото еды."""
@@ -6343,6 +6421,8 @@ async def handle_food_photo_comment(message: Message, state: FSMContext):
     await _clear_photo_comment_fields(state)
     if text in BACK_BUTTON_TEXTS or text == "❌ Отмена":
         await _return_to_add_methods_from_method_input(message, state)
+        return
+    if await _reroute_add_method_button_if_needed(message, state, text):
         return
     if not text:
         await message.answer("Пожалуйста, введите уточнение текстом или нажмите «❌ Отмена».")
@@ -9631,6 +9711,136 @@ async def start_kbju_test_from_button(callback: CallbackQuery, state: FSMContext
         "Для начала выбери пол:",
         reply_markup=kbju_gender_menu,
     )
+
+
+async def _dismiss_unsolicited_prompt(message: Message, pending: dict) -> None:
+    prompt_id = pending.get("prompt_id")
+    if not prompt_id:
+        return
+    try:
+        await message.bot.edit_message_reply_markup(
+            chat_id=message.chat.id, message_id=prompt_id, reply_markup=None,
+        )
+    except TelegramBadRequest:
+        pass  # A deleted/already updated prompt cannot be used again.
+
+
+def _is_unsolicited_meal_content(message: Message) -> bool:
+    if message.photo:
+        return True
+    text = (message.text or "").strip()
+    if not text or text.startswith("/"):
+        return False
+    # Reuse the actual navigation keyboards instead of copying their captions.
+    from utils import keyboards
+
+    navigation = set(ADD_METHOD_TEXTS.values()) | set(MEAL_TYPE_BUTTONS)
+    navigation |= set(BACK_BUTTON_TEXTS) | set(MEAL_FINISH_BUTTON_TEXTS) | set(MAIN_MENU_BUTTON_ALIASES)
+    for keyboard in vars(keyboards).values():
+        if isinstance(keyboard, ReplyKeyboardMarkup):
+            navigation.update(button.text for row in keyboard.keyboard for button in row)
+    return text not in navigation
+
+
+async def _ask_unsolicited_meal_intent(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    if data.get("in_my_products_section") or data.get("in_my_product_menu") or data.get("in_my_dishes_section"):
+        return
+    if not data.get("meal_type"):
+        await message.answer("Сначала выбери приём пищи кнопкой ниже, затем отправь фото или описание.")
+        return
+    if message.text and len(message.text) > MAX_MEAL_TEXT_LENGTH:
+        await message.answer(f"Описание слишком длинное. Отправь не более {MAX_MEAL_TEXT_LENGTH} символов.")
+        return
+    if message.text and check_sensitive_meal_text(message.text).is_sensitive:
+        await message.answer(SENSITIVE_MEAL_INPUT_REJECTED_TEXT, parse_mode="HTML")
+        return
+    previous = data.get("unsolicited_input")
+    if previous:
+        await _dismiss_unsolicited_prompt(message, previous)
+    kind = "photo" if message.photo else "text"
+    token = secrets.token_hex(6)
+    choices = (
+        [("label", "📋 Анализ этикетки"), ("photo", "📷 Анализ еды по фото")]
+        if kind == "photo" else [("text", "Да, продолжить")]
+    )
+    choices.append(("cancel", "Отмена"))
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=title, callback_data=f"meal_intent:{token}:{action}")]
+        for action, title in choices
+    ])
+    prompt = "Что нужно проанализировать на фото?" if kind == "photo" else "Добавить приём пищи по этому описанию?"
+    if previous:
+        prompt = "Ожидающее сообщение заменено новым.\n\n" + prompt
+    saved_message = message.model_dump(mode="json", include={"message_id", "date", "chat", "from_user", "photo", "text"})
+    await state.set_state(MealEntryStates.confirming_unsolicited_input)
+    if not previous:
+        await message.answer("Сообщение получено. Уточни, что с ним сделать.", reply_markup=kbju_add_method_back_menu)
+    result = await message.answer(prompt, reply_markup=keyboard)
+    await state.update_data(unsolicited_input={
+        "token": token, "kind": kind, "message": saved_message, "prompt_id": result.message_id,
+    })
+
+
+@router.message(MealEntryStates.choosing_meal_type, _is_unsolicited_meal_content)
+async def handle_unsolicited_meal_content(message: Message, state: FSMContext):
+    await _ask_unsolicited_meal_intent(message, state)
+
+
+@router.message(MealEntryStates.confirming_unsolicited_input)
+async def handle_pending_meal_content(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text in BACK_BUTTON_TEXTS or text in {"Отмена", "❌ Отмена"}:
+        await _return_to_add_methods_from_method_input(message, state)
+    elif text in MAIN_MENU_BUTTON_ALIASES or text in MEAL_FINISH_BUTTON_TEXTS:
+        await handle_meal_type_menu_navigation(message, state)
+    elif text in MEAL_TYPE_BUTTONS:
+        await select_meal_type(message, state)
+    elif await _reroute_add_method_button_if_needed(message, state, text):
+        return
+    elif _is_unsolicited_meal_content(message):
+        await _ask_unsolicited_meal_intent(message, state)
+    else:
+        await message.answer("Выбери действие под сообщением или нажми «Отмена».")
+
+
+@router.callback_query(F.data.startswith("meal_intent:"))
+async def confirm_unsolicited_meal_input(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    pending = (await state.get_data()).get("unsolicited_input")
+    if (
+        len(parts) != 3
+        or await state.get_state() != MealEntryStates.confirming_unsolicited_input.state
+        or not pending or parts[1] != pending.get("token")
+        or callback.message.message_id != pending.get("prompt_id")
+    ):
+        await callback.answer("Этот запрос уже обработан или устарел.")
+        return
+    action = parts[2]
+    allowed = {"label", "photo", "cancel"} if pending["kind"] == "photo" else {"text", "cancel"}
+    if action not in allowed:
+        await callback.answer("Выбери действие под текущим сообщением.")
+        return
+    await callback.answer()
+    await state.update_data(unsolicited_input=None)
+    await callback.message.edit_text({
+        "cancel": "Добавление отменено.", "label": "Анализирую этикетку…",
+        "photo": "Выбран анализ еды по фото.", "text": "Обрабатываю описание приёма пищи…",
+    }[action], reply_markup=None)
+    if action == "cancel":
+        await _return_to_add_methods_from_method_input(callback.message, state, user_id=str(callback.from_user.id))
+        return
+    # Replay the original user message: quotas, identity, file and request IDs
+    # remain identical to the normal button-first route.
+    original = Message.model_validate(pending["message"]).as_(callback.bot)
+    target, processor = {
+        "text": (MealEntryStates.waiting_for_ai_food_input, handle_ai_food_input),
+        "photo": (MealEntryStates.waiting_for_photo, handle_photo_input),
+        "label": (MealEntryStates.waiting_for_label_photo, handle_label_photo),
+    }[action]
+    await state.set_state(target)
+    await state.update_data(pending_add_method=None)
+    await processor(original, state)
 
 
 def register_meal_handlers(dp):
