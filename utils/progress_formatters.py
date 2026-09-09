@@ -21,7 +21,12 @@ LIFESTYLE_ACTIVITY_COEFFICIENTS = {
 }
 
 
-def build_progress_bar(current: float, target: float, length: int = 10) -> str:
+def build_progress_bar(
+    current: float,
+    target: float,
+    length: int = 10,
+    goal_reached_fill: str | None = None,
+) -> str:
     """
     Строит индикатор прогресса по КБЖУ:
     - ⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ - Пустое значение (target <= 0 или current == 0)
@@ -32,6 +37,9 @@ def build_progress_bar(current: float, target: float, length: int = 10) -> str:
     """
     if target <= 0 or current <= 0:
         return "⬜" * length
+
+    if goal_reached_fill is not None and current >= target:
+        return goal_reached_fill * length
     
     percent = (current / target) * 100
     
@@ -96,9 +104,15 @@ def format_progress_block(user_id: str, entry_date: date | None = None) -> str:
         adjusted_fat_target = settings.fat
         adjusted_carbs_target = settings.carbs
     
-    def line(label: str, current: float, target: float, unit: str) -> str:
+    def line(
+        label: str,
+        current: float,
+        target: float,
+        unit: str,
+        goal_reached_fill: str | None = None,
+    ) -> str:
         percent = 0 if target <= 0 else round((current / target) * 100)
-        bar = build_progress_bar(current, target)
+        bar = build_progress_bar(current, target, goal_reached_fill=goal_reached_fill)
         return f"{label}: {current:.0f}/{target:.0f} {unit} ({percent}%)\n{bar}"
     
     eaten_calories = totals["calories"]
@@ -114,7 +128,15 @@ def format_progress_block(user_id: str, entry_date: date | None = None) -> str:
     lines.append(f"🔥 <b>Сожжено:</b> {activity_total:.0f} ккал")
     lines.append("")
     lines.append(line("🔥 <b>Калории</b>", eaten_calories, adjusted_calories_target, "ккал"))
-    lines.append(line("🥩 <b>Белки</b>", totals.get("protein_g", totals.get("protein", 0)), adjusted_protein_target, "г"))
+    lines.append(
+        line(
+            "🥩 <b>Белки</b>",
+            totals.get("protein_g", totals.get("protein", 0)),
+            adjusted_protein_target,
+            "г",
+            goal_reached_fill="🥩",
+        )
+    )
     lines.append(line("🥑 <b>Жиры</b>", totals.get("fat_total_g", totals.get("fat", 0)), adjusted_fat_target, "г"))
     lines.append(line("🍚 <b>Углеводы</b>", totals.get("carbohydrates_total_g", totals.get("carbs", 0)), adjusted_carbs_target, "г"))
     

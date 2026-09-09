@@ -546,11 +546,17 @@ def format_meal_message(
     return "\n".join(lines)
 
 
-def _build_goal_progress_line(label: str, current: float, target: float, unit: str) -> list[str]:
+def _build_goal_progress_line(
+    label: str,
+    current: float,
+    target: float,
+    unit: str,
+    goal_reached_fill: str | None = None,
+) -> list[str]:
     percent = 0 if target <= 0 else round((current / target) * 100)
     return [
         f"<b>{label}:</b> {current:.0f}/{target:.0f} {unit} ({percent}%)",
-        build_progress_bar(current, target),
+        build_progress_bar(current, target, goal_reached_fill=goal_reached_fill),
     ]
 
 
@@ -585,7 +591,15 @@ def format_daily_totals_lines(
         "",
     ]
     lines.extend(_build_goal_progress_line("🔥 Калории", calories_current, base_calories_target, "ккал"))
-    lines.extend(_build_goal_progress_line("🥩 Белки", protein_current, protein_target, "г"))
+    lines.extend(
+        _build_goal_progress_line(
+            "🥩 Белки",
+            protein_current,
+            protein_target,
+            "г",
+            goal_reached_fill="🥩",
+        )
+    )
     lines.extend(_build_goal_progress_line("🥑 Жиры", fat_current, fat_target, "г"))
     lines.extend(_build_goal_progress_line("🍚 Углеводы", carbs_current, carbs_target, "г"))
 
