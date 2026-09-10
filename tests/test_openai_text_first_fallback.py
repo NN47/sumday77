@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from contextlib import nullcontext
 from datetime import date
 
@@ -13,8 +14,9 @@ FOOD_JSON = """{
 }"""
 
 
-def test_text_meal_uses_openai_before_existing_analyzer(monkeypatch):
+def test_text_meal_uses_openai_before_existing_analyzer(monkeypatch, caplog):
     calls = []
+    caplog.set_level(logging.INFO, logger=meals.__name__)
     monkeypatch.setattr(meals.openai_token_budget_service, "reservation", lambda **_: nullcontext())
     monkeypatch.setattr(meals.openai_text_service, "analyze_food_text", lambda *a, **k: calls.append("openai") or FOOD_JSON)
 
@@ -28,10 +30,13 @@ def test_text_meal_uses_openai_before_existing_analyzer(monkeypatch):
     assert parsed["status"] == "ok"
     assert provider == "openai"
     assert calls == ["openai"]
+    assert "AI text meal analysis provider=openai" in caplog.messages
+    assert "AI text meal analysis provider=deepseek" not in caplog.messages
 
 
-def test_text_meal_continues_existing_chain_when_openai_fails(monkeypatch):
+def test_text_meal_continues_existing_chain_when_openai_fails(monkeypatch, caplog):
     calls = []
+    caplog.set_level(logging.INFO, logger=meals.__name__)
     monkeypatch.setattr(meals.openai_token_budget_service, "reservation", lambda **_: nullcontext())
 
     def failed_openai(*args, **kwargs):
@@ -42,6 +47,7 @@ def test_text_meal_continues_existing_chain_when_openai_fails(monkeypatch):
 
     def old_analyzer(*args, **kwargs):
         calls.append("deepseek")
+        assert "AI text meal analysis provider=deepseek" not in caplog.messages
         return FOOD_JSON
 
     _, _, provider = asyncio.run(
@@ -49,6 +55,8 @@ def test_text_meal_continues_existing_chain_when_openai_fails(monkeypatch):
     )
     assert provider == "deepseek"
     assert calls == ["openai", "deepseek"]
+    assert caplog.messages.count("AI text meal analysis provider=deepseek") == 1
+    assert "AI text meal analysis provider=openai" not in caplog.messages
 
 
 def test_meal_comment_uses_openai_first(monkeypatch):

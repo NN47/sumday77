@@ -5539,6 +5539,7 @@ async def _run_text_analysis_with_yandex_fallback(
         kbju_data = parse_kbju_json(raw)
         if kbju_data is None:
             raise ValueError("invalid_openai_food_response")
+        logger.info("AI text meal analysis provider=openai")
         return raw, kbju_data, "openai"
     except Exception as openai_error:
         logger.warning(
@@ -5559,6 +5560,7 @@ async def _run_text_analysis_with_yandex_fallback(
         if kbju_data is None:
             logger.error("DeepSeek parse error: empty or incompatible payload")
             raise ValueError("invalid_deepseek_food_response")
+        logger.info("AI text meal analysis provider=deepseek")
         return raw, kbju_data, "deepseek"
     except (DeepSeekServiceError, ValueError, json.JSONDecodeError) as deepseek_error:
         logger.warning(
@@ -5578,7 +5580,7 @@ async def _run_text_analysis_with_yandex_fallback(
         kbju_data = parse_kbju_json(raw)
         if kbju_data is None:
             raise ValueError("invalid_yandex_food_response")
-        logger.info("AI text meal analysis fallback completed provider=yandex")
+        logger.info("AI text meal analysis provider=yandex")
         return raw, kbju_data, "yandex"
     except (YandexAIServiceError, ValueError, json.JSONDecodeError) as yandex_error:
         raise AllProvidersUnavailableError("All providers unavailable") from yandex_error
@@ -5830,7 +5832,6 @@ async def kbju_add_via_photo_openai(message: Message, state: FSMContext):
 @router.message(MealEntryStates.waiting_for_ai_food_input)
 async def handle_ai_food_input(message: Message, state: FSMContext):
     """Обрабатывает основной AI-анализ текста еды через DeepSeek."""
-    logger.info("AI text meal analysis provider=deepseek")
     await _handle_provider_food_input(
         message,
         state,
