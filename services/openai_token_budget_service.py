@@ -14,6 +14,9 @@ from config import (
     AI_GLOBAL_ATTEMPT_LIMIT_PER_DAY,
     OPENAI_DAILY_TOKEN_LIMIT,
     OPENAI_FOOD_PHOTO_TOKEN_RESERVE,
+    OPENAI_MEAL_TEXT_TOKEN_RESERVE,
+    OPENAI_MEAL_COMMENT_TOKEN_RESERVE,
+    OPENAI_DAILY_ANALYSIS_TOKEN_RESERVE,
     OPENAI_LABEL_TOKEN_RESERVE,
     OPENAI_VISION_MODEL,
 )
@@ -58,6 +61,12 @@ class OpenAITokenBudgetService:
             return OPENAI_LABEL_TOKEN_RESERVE
         if "food_photo" in normalized or "meal_photo" in normalized:
             return OPENAI_FOOD_PHOTO_TOKEN_RESERVE
+        if "meal_text" in normalized:
+            return OPENAI_MEAL_TEXT_TOKEN_RESERVE
+        if "meal_completion_comment" in normalized:
+            return OPENAI_MEAL_COMMENT_TOKEN_RESERVE
+        if "activity_analysis" in normalized or "daily_analysis" in normalized:
+            return OPENAI_DAILY_ANALYSIS_TOKEN_RESERVE
         raise ValueError(f"Unsupported OpenAI budget feature: {feature}")
 
     @staticmethod

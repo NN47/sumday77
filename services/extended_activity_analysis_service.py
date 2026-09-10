@@ -11,6 +11,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from database.repositories import ActivityRepository, MealRepository, WeightRepository, WorkoutRepository, WaterRepository, NoteRepository
 from handlers.water import get_water_recommended
 from services.deepseek_service import deepseek_service
+from services.openai_text_service import openai_text_service
+from services.openai_token_budget_service import openai_token_budget_service
 from services.yandex_ai_service import yandex_ai_service
 from services.ai_quota_service import ai_quota_service
 from utils.log_sanitizer import safe_exception_summary
@@ -569,39 +571,64 @@ class ExtendedActivityAnalysisService:
         context = self.collect_period_context(user_id, period)
         prompt = self.build_prompt(context)
         try:
-            analysis = await asyncio.wait_for(
-                asyncio.to_thread(
-                    deepseek_service.analyze_activity_prompt,
-                    prompt,
-                    user_id=user_id,
-                    system_prompt=DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT,
-                    feature="detailed_activity_analysis",
-                ),
-                timeout=90.0,
-            )
+            with openai_token_budget_service.reservation(
+                user_id=user_id,
+                feature="detailed_activity_analysis",
+            ):
+                analysis = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        openai_text_service.analyze_activity_prompt,
+                        prompt,
+                        user_id=user_id,
+                        system_prompt=DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT,
+                        feature="detailed_activity_analysis",
+                    ),
+                    timeout=90.0,
+                )
             if not (analysis or "").strip():
-                raise ValueError("empty_deepseek_daily_analysis")
-            provider = "deepseek"
-        except Exception as deepseek_error:
+                raise ValueError("empty_openai_daily_analysis")
+            provider = "openai"
+        except Exception as openai_error:
             logger.warning(
-                "Detailed daily analysis switching from DeepSeek to Yandex error_type=%s",
-                safe_exception_summary(deepseek_error),
+                "Detailed daily analysis switching from OpenAI to existing providers error_type=%s",
+                safe_exception_summary(openai_error),
             )
-            if quota_request_id:
+            if quota_request_id and openai_text_service.api_key:
                 ai_quota_service.register_additional_provider_attempt(quota_request_id)
-            analysis = await asyncio.wait_for(
-                yandex_ai_service.analyze_activity_prompt(
-                    prompt,
-                    user_id=user_id,
-                    system_prompt=DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT,
-                    feature="detailed_activity_analysis",
-                    temperature=0.65,
-                ),
-                timeout=90.0,
-            )
-            if not (analysis or "").strip():
-                raise ValueError("empty_yandex_daily_analysis")
-            provider = "yandex"
+            try:
+                analysis = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        deepseek_service.analyze_activity_prompt,
+                        prompt,
+                        user_id=user_id,
+                        system_prompt=DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT,
+                        feature="detailed_activity_analysis",
+                    ),
+                    timeout=90.0,
+                )
+                if not (analysis or "").strip():
+                    raise ValueError("empty_deepseek_daily_analysis")
+                provider = "deepseek"
+            except Exception as deepseek_error:
+                logger.warning(
+                    "Detailed daily analysis switching from DeepSeek to Yandex error_type=%s",
+                    safe_exception_summary(deepseek_error),
+                )
+                if quota_request_id:
+                    ai_quota_service.register_additional_provider_attempt(quota_request_id)
+                analysis = await asyncio.wait_for(
+                    yandex_ai_service.analyze_activity_prompt(
+                        prompt,
+                        user_id=user_id,
+                        system_prompt=DETAILED_DAY_ANALYSIS_SYSTEM_PROMPT,
+                        feature="detailed_activity_analysis",
+                        temperature=0.65,
+                    ),
+                    timeout=90.0,
+                )
+                if not (analysis or "").strip():
+                    raise ValueError("empty_yandex_daily_analysis")
+                provider = "yandex"
         return (analysis, provider) if include_provider else analysis
 
 
