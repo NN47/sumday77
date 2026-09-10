@@ -30,6 +30,12 @@ def test_openai_food_analysis_explicitly_requests_and_parses_json(monkeypatch):
     assert "включая ```json" in AI_FOOD_TEXT_SYSTEM_PROMPT
     assert "не добавляй никаких пояснений до или после JSON" in AI_FOOD_TEXT_SYSTEM_PROMPT
     assert captured["instructions"] == AI_FOOD_TEXT_SYSTEM_PROMPT
+    assert captured["input"] == [
+        {"role": "developer", "content": service_module.JSON_OUTPUT_INPUT_INSTRUCTION},
+        {"role": "user", "content": "яблоко 100 г"},
+    ]
+    assert "json" in captured["input"][0]["content"].lower()
+    assert AI_FOOD_TEXT_SYSTEM_PROMPT not in str(captured["input"])
     assert captured["text"] == {"format": {"type": "json_object"}}
     assert parse_kbju_json(result) == {
         "status": "ok",
@@ -45,3 +51,28 @@ def test_openai_food_analysis_explicitly_requests_and_parses_json(monkeypatch):
         ],
         "total": {"kcal": 52.0, "protein": 0.3, "fat": 0.2, "carbs": 14.0},
     }
+
+
+def test_non_json_completion_keeps_plain_string_input(monkeypatch):
+    captured = {}
+
+    class FakeResponses:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(output_text="Готово", id="response_456", usage=None)
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    monkeypatch.setattr(service_module, "OpenAI", lambda **_kwargs: FakeClient())
+    monkeypatch.setattr(service_module, "log_ai_usage", lambda **_kwargs: None)
+
+    result, _ = service_module.OpenAITextService(api_key="test-key").generate_meal_completion_comment(
+        "user prompt",
+        system_prompt="system prompt",
+    )
+
+    assert result == "Готово"
+    assert captured["instructions"] == "system prompt"
+    assert captured["input"] == "user prompt"
+    assert "text" not in captured

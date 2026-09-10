@@ -16,6 +16,8 @@ from utils.log_sanitizer import REDACTED_CONTENT, redact_sensitive_text, safe_ex
 
 logger = logging.getLogger(__name__)
 
+JSON_OUTPUT_INPUT_INSTRUCTION = "Return the response as a JSON object."
+
 
 def _safe_openai_error_field(value: Any) -> str | None:
     """Return only identifier-like provider metadata, never arbitrary body values."""
@@ -93,10 +95,16 @@ class OpenAITextService:
 
         started = time.perf_counter()
         try:
+            effective_input: str | list[dict[str, str]] = prompt
+            if json_output:
+                effective_input = [
+                    {"role": "developer", "content": JSON_OUTPUT_INPUT_INSTRUCTION},
+                    {"role": "user", "content": prompt},
+                ]
             response = OpenAI(api_key=self.api_key, timeout=self.timeout_seconds).responses.create(
                 model=self.model,
                 instructions=system_prompt,
-                input=prompt,
+                input=effective_input,
                 **({"text": {"format": {"type": "json_object"}}} if json_output else {}),
             )
             content = (getattr(response, "output_text", "") or "").strip()
