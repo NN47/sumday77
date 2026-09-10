@@ -2,16 +2,61 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
+from collections.abc import Mapping
+from typing import Any
 
 from openai import APITimeoutError, OpenAI, OpenAIError
 
 from config import OPENAI_API_KEY, OPENAI_TEXT_MODEL
 from services.ai_food_parser import AI_FOOD_TEXT_SYSTEM_PROMPT
 from services.ai_usage_logger import calculate_ai_cost, log_ai_usage
-from utils.log_sanitizer import safe_exception_summary
+from utils.log_sanitizer import REDACTED_CONTENT, redact_sensitive_text, safe_exception_summary, sanitize_identifier
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_openai_error_field(value: Any) -> str | None:
+    """Return only identifier-like provider metadata, never arbitrary body values."""
+    return sanitize_identifier(value)
+
+
+def _safe_openai_server_message(value: Any, *, sensitive_values: tuple[str, ...]) -> str | None:
+    """Keep a bounded provider explanation while removing possibly echoed input."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    message = value
+    for sensitive_value in sensitive_values:
+        if sensitive_value:
+            message = message.replace(sensitive_value, REDACTED_CONTENT)
+    message = redact_sensitive_text(message, max_length=240)
+    message = re.sub(r"(['\"`]).*?\1", REDACTED_CONTENT, message)
+    message = re.sub(r"\b-?\d{6,}\b", REDACTED_CONTENT, message)
+    message = re.sub(r"[^\x20-\x7E]+", REDACTED_CONTENT, message)
+    return message.strip() or None
+
+
+def _safe_openai_error_details(exc: OpenAIError, *, sensitive_values: tuple[str, ...]) -> dict[str, Any]:
+    """Extract the allowlisted diagnostic fields from an OpenAI SDK error."""
+    body = getattr(exc, "body", None)
+    if not isinstance(body, Mapping):
+        body = {}
+    nested_error = body.get("error")
+    if isinstance(nested_error, Mapping):
+        body = nested_error
+
+    response = getattr(exc, "response", None)
+    status = getattr(exc, "status_code", None) or getattr(response, "status_code", None)
+    details = {
+        "http_status": status if isinstance(status, int) and 100 <= status <= 599 else None,
+        "error_code": _safe_openai_error_field(getattr(exc, "code", None) or body.get("code")),
+        "error_type": _safe_openai_error_field(getattr(exc, "type", None) or body.get("type")),
+        "param": _safe_openai_error_field(getattr(exc, "param", None) or body.get("param")),
+        "server_message": _safe_openai_server_message(body.get("message"), sensitive_values=sensitive_values),
+    }
+    return {key: value for key, value in details.items() if value is not None}
 
 
 class OpenAITextServiceError(Exception):
@@ -60,7 +105,18 @@ class OpenAITextService:
         except OpenAITextServiceError:
             raise
         except (APITimeoutError, OpenAIError) as exc:
-            logger.warning("OpenAI text request failed feature=%s error_type=%s", feature, safe_exception_summary(exc))
+            safe_details = _safe_openai_error_details(exc, sensitive_values=(prompt, system_prompt))
+            logger.warning(
+                "OpenAI text request failed feature=%s error_type=%s "
+                "safe_reason=http_status=%s error_code=%s openai_error_type=%s param=%s server_message=%s",
+                feature,
+                safe_exception_summary(exc),
+                safe_details.get("http_status"),
+                safe_details.get("error_code"),
+                safe_details.get("error_type"),
+                safe_details.get("param"),
+                safe_details.get("server_message"),
+            )
             raise OpenAITextServiceTemporaryError("OpenAI text request failed") from exc
 
         latency_ms = int((time.perf_counter() - started) * 1000)
