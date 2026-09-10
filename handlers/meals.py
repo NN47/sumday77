@@ -66,6 +66,7 @@ from services.openai_label_service import (
     OpenAILabelServiceInvalidJSONError,
     OpenAILabelServiceTimeoutError,
 )
+from services.openai_text_service import openai_text_service
 from services.deepseek_service import (
     deepseek_service,
     DeepSeekServiceError,
@@ -2138,7 +2139,32 @@ async def _generate_meal_completion_comment_with_yandex_fallback(
     user_id: str,
     quota_request_id: str | None = None,
 ) -> tuple[str, dict]:
-    """Генерирует рекомендацию через DeepSeek, а при сбое — через Yandex."""
+    """Генерирует рекомендацию через OpenAI, затем продолжает прежнюю fallback-цепочку."""
+    try:
+        with openai_token_budget_service.reservation(
+            user_id=user_id,
+            feature="meal_completion_comment",
+        ):
+            raw_text, metadata = await asyncio.wait_for(
+                asyncio.to_thread(
+                    openai_text_service.generate_meal_completion_comment,
+                    prompt,
+                    user_id=user_id,
+                    system_prompt=MEAL_COMPLETION_COMMENT_SYSTEM_PROMPT,
+                ),
+                timeout=75.0,
+            )
+        if not (raw_text or "").strip():
+            raise ValueError("OpenAI returned empty meal comment")
+        return raw_text, {**(metadata or {}), "provider": "openai"}
+    except Exception as openai_error:
+        logger.warning(
+            "Meal completion comment switching from OpenAI to existing providers error_type=%s",
+            safe_exception_summary(openai_error),
+        )
+
+    if quota_request_id and openai_text_service.api_key:
+        ai_quota_service.register_additional_provider_attempt(quota_request_id)
     try:
         raw_text, metadata = await asyncio.wait_for(
             asyncio.to_thread(
@@ -5501,7 +5527,27 @@ async def _run_text_analysis_with_yandex_fallback(
     feature: str,
     quota_request_id: str | None = None,
 ) -> tuple[str, dict, str]:
-    """Возвращает валидный анализ текста, используя Yandex после сбоя DeepSeek."""
+    """Возвращает валидный анализ: OpenAI первым, затем прежние DeepSeek и Yandex."""
+    try:
+        with openai_token_budget_service.reservation(user_id=user_id, feature=feature):
+            raw = await asyncio.to_thread(
+                openai_text_service.analyze_food_text,
+                user_text,
+                user_id=user_id,
+                feature=feature,
+            )
+        kbju_data = parse_kbju_json(raw)
+        if kbju_data is None:
+            raise ValueError("invalid_openai_food_response")
+        return raw, kbju_data, "openai"
+    except Exception as openai_error:
+        logger.warning(
+            "OpenAI text meal analysis failed; continuing existing fallback chain error_type=%s",
+            safe_exception_summary(openai_error),
+        )
+
+    if quota_request_id and openai_text_service.api_key:
+        ai_quota_service.register_additional_provider_attempt(quota_request_id)
     try:
         raw = await asyncio.to_thread(
             analyzer,
