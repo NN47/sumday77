@@ -14,6 +14,8 @@ from services.activity_energy_service import get_daily_activity_energy_summary
 
 logger = logging.getLogger(__name__)
 
+PROTEIN_GOAL_REACHED_FILL = "🟩"
+
 LIFESTYLE_ACTIVITY_COEFFICIENTS = {
     "low": 0.72,
     "medium": 0.68,
@@ -134,7 +136,7 @@ def format_progress_block(user_id: str, entry_date: date | None = None) -> str:
             totals.get("protein_g", totals.get("protein", 0)),
             adjusted_protein_target,
             "г",
-            goal_reached_fill="🥩",
+            goal_reached_fill=PROTEIN_GOAL_REACHED_FILL,
         )
     )
     lines.append(line("🥑 <b>Жиры</b>", totals.get("fat_total_g", totals.get("fat", 0)), adjusted_fat_target, "г"))
