@@ -10,7 +10,7 @@ from database.models import Meal, KbjuSettings
 from utils.emoji_map import EMOJI_MAP
 from utils.formatters import get_kbju_goal_label
 from utils.meal_types import MEAL_TYPE_ORDER, normalize_meal_type
-from utils.progress_formatters import build_progress_bar
+from utils.progress_formatters import PROTEIN_GOAL_REACHED_FILL, build_progress_bar
 from utils.log_sanitizer import safe_exception_summary
 
 logger = logging.getLogger(__name__)
@@ -597,7 +597,7 @@ def format_daily_totals_lines(
             protein_current,
             protein_target,
             "г",
-            goal_reached_fill="🥩",
+            goal_reached_fill=PROTEIN_GOAL_REACHED_FILL,
         )
     )
     lines.extend(_build_goal_progress_line("🥑 Жиры", fat_current, fat_target, "г"))
