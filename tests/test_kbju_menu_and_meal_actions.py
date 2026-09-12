@@ -31,6 +31,7 @@ def test_kbju_menu_hides_duplicate_daily_report_button():
     assert KBJU_ADD_MEAL_BUTTON_TEXT in texts
     assert "➕ Добавить" not in texts
     assert "📆 Календарь КБЖУ" in texts
+    assert "📖 Рецепты" in texts
 
 
 def test_kbju_menu_shows_calendar_and_goal_buttons_on_one_row():
@@ -53,6 +54,7 @@ def test_kbju_add_menu_exposes_primary_input_and_custom_product_buttons():
     assert "🧪 Анализ еды OpenAI" not in texts
     assert "🧪 Анализ этикетки OpenAI" not in texts
     assert "🔄 Главное меню" not in texts
+    assert "📖 Рецепты" not in texts
 
 
 

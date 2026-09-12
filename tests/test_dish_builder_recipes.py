@@ -265,7 +265,7 @@ def test_empty_recipe_list_has_create_and_back_actions(monkeypatch):
     buttons = msg.answer.await_args.kwargs["reply_markup"].inline_keyboard
     callbacks = [b.callback_data for row in buttons for b in row]
     assert "recipe_create" in callbacks
-    assert "my_dishes_back_to_current_meal" in callbacks
+    assert "recipes_back_to_diary" in callbacks
 
 
 def test_recipe_card_back_returns_to_recipe_page():

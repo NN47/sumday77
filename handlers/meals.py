@@ -3153,7 +3153,6 @@ def _build_my_products_entry_keyboard(meal_type: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="➕ Добавить блюдо", callback_data="dish_create")],
-            [InlineKeyboardButton(text="📖 Рецепты", callback_data="recipes:1")],
             [
                 InlineKeyboardButton(
                     text="🍽 Мои блюда",
@@ -3267,8 +3266,6 @@ def _build_meal_entry_post_save_keyboard(meal_type: str, entry_date: date) -> In
     iso_date = entry_date.isoformat()
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Добавить блюдо", callback_data="dish_create")],
-            [InlineKeyboardButton(text="📖 Рецепты", callback_data="recipes:1")],
             [
                 InlineKeyboardButton(
                     text="✏️ Редактировать",
@@ -3279,6 +3276,7 @@ def _build_meal_entry_post_save_keyboard(meal_type: str, entry_date: date) -> In
                     callback_data="meal_entry_ai_limits",
                 ),
             ],
+            [InlineKeyboardButton(text="➕ Добавить блюдо", callback_data="dish_create")],
             [
                 InlineKeyboardButton(
                     text="📦 Мои продукты",
@@ -5034,7 +5032,7 @@ async def _show_recipes(message: Message, state: FSMContext, *, user_id: str, pa
     keyboard = build_pagination_keyboard(page - 1, pages, "recipes", rows, page_base=1)
     keyboard.inline_keyboard.extend([
         [InlineKeyboardButton(text="➕ Добавить рецепт", callback_data="recipe_create")],
-        [InlineKeyboardButton(text="⬅️ К приёму пищи", callback_data="my_dishes_back_to_current_meal")],
+        [InlineKeyboardButton(text="⬅️ В дневник питания", callback_data="recipes_back_to_diary")],
     ])
     await state.update_data(recipe_catalog=True, my_dishes_return_meal_type=meal_type,
                             my_dishes_return_entry_date=data.get("entry_date") or date.today().isoformat())
@@ -5047,6 +5045,19 @@ async def _show_recipes(message: Message, state: FSMContext, *, user_id: str, pa
 async def recipes_open(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await _show_recipes(callback.message, state, user_id=str(callback.from_user.id), page=int(callback.data.split(":")[1]))
+
+
+@router.message(F.text == "📖 Рецепты")
+async def recipes_open_from_diary(message: Message, state: FSMContext):
+    await state.clear()
+    await _show_recipes(message, state, user_id=str(message.from_user.id))
+
+
+@router.callback_query(F.data == "recipes_back_to_diary")
+async def recipes_back_to_diary(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await send_today_results(callback.message, str(callback.from_user.id))
 
 
 @router.callback_query(F.data == "recipe_create")
