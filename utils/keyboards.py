@@ -756,9 +756,8 @@ main_water_adjustment_inline = InlineKeyboardMarkup(
     inline_keyboard=[
         *quick_actions_inline.inline_keyboard,
         [
-            InlineKeyboardButton(text="-300", callback_data="quick_main_water_add_-300"),
+            InlineKeyboardButton(text="+200", callback_data="quick_main_water_add_200"),
             InlineKeyboardButton(text="+250", callback_data="quick_main_water_add_250"),
-            InlineKeyboardButton(text="+300", callback_data="quick_main_water_add_300"),
             InlineKeyboardButton(text="+500", callback_data="quick_main_water_add_500"),
         ],
     ]
