@@ -2403,6 +2403,7 @@ async def _return_to_add_methods_from_method_input(
         items = dish_to_snapshot(dish)
         await state.set_state(MealEntryStates.choosing_meal_type)
         await state.update_data(dish_edit_mode=True, dish_edit_id=dish_id, saved_products=items, my_dish_items=items)
+        await _hide_meal_reply_keyboard(message)
         await message.answer(_format_saved_dish_editor(dish, items), reply_markup=_build_saved_dish_editor_keyboard(dish_id, items), parse_mode="HTML")
         return
 
@@ -3764,10 +3765,20 @@ def _format_saved_dish_editor(dish, items: list[dict]) -> str:
         "Выберите продукт для редактирования или добавьте новый:", "",
     ]
     for index, item in enumerate(items, start=1):
-        lines.append(
-            f"{_format_emoji_number(index)} {html.escape(str(item.get('name') or 'Ингредиент'))}"
-            f" — {float(item.get('grams') or 0):.0f} г"
-        )
+        calories, protein, fat, carbs = _extract_product_macros(item)
+        lines.extend([
+            f"{_format_emoji_number(index)} {html.escape(str(item.get('name') or 'Ингредиент'))}",
+            f"⚖️ <b>Вес:</b> {_safe_float(item.get('grams')):.0f} г",
+            _format_product_macro_summary(calories, protein, fat, carbs),
+            "",
+        ])
+    totals = calculate_dish_totals(items)
+    lines.extend([
+        "<b>Итого по блюду:</b>",
+        "",
+        f"📦 <b>Общий вес:</b> {calculate_dish_weight(items):.0f} г",
+        _format_kbju_summary_block(totals),
+    ])
     return "\n".join(lines)
 
 
@@ -3782,7 +3793,7 @@ def _build_saved_dish_editor_keyboard(dish_id: int, items: list[dict]) -> Inline
             callback_data=f"my_dish_ingredient:{dish_id}:{index - 1}",
         )
     ] for index, item in enumerate(items, start=1))
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_dish_edit_back:{dish_id}")])
+    rows.append([InlineKeyboardButton(text="✅ Готово", callback_data=f"my_dish_edit_done:{dish_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -3797,6 +3808,7 @@ async def _show_saved_dish_editor(message: Message, state: FSMContext, user_id: 
         dish_add_destination=False, saved_products=items, my_dish_items=items,
         weight_drafts={}, kbju_drafts={},
     )
+    await _hide_meal_reply_keyboard(message)
     await message.edit_text(
         _format_saved_dish_editor(dish, items),
         reply_markup=_build_saved_dish_editor_keyboard(dish_id, items), parse_mode="HTML",
@@ -3848,6 +3860,7 @@ async def _show_saved_dishes_page(
     page: int,
     edit_message: bool = False,
 ) -> bool:
+    await _hide_meal_reply_keyboard(message)
     total = DishRepository.count_active(user_id)
     if total <= 0:
         return False
@@ -3947,6 +3960,7 @@ async def my_dish_pick(callback: CallbackQuery, state: FSMContext):
         my_dishes_page=int(raw_page),
         meal_type=meal_type,
     )
+    await _hide_meal_reply_keyboard(callback.message)
     await _edit_or_send_photo_analysis_message(
         callback.message,
         _format_saved_dish_card(dish, items),
@@ -4052,6 +4066,7 @@ async def my_dish_rename_apply(message: Message, state: FSMContext):
     await state.set_state(MealEntryStates.choosing_meal_type)
     items = dish_to_snapshot(dish)
     await state.update_data(saved_products=items, my_dish_items=items)
+    await _hide_meal_reply_keyboard(message)
     await message.answer(_format_saved_dish_editor(dish, items), reply_markup=_build_saved_dish_editor_keyboard(dish_id, items), parse_mode="HTML")
 
 
@@ -4061,8 +4076,8 @@ async def my_dish_rename_back(callback: CallbackQuery, state: FSMContext):
     await _show_saved_dish_editor(callback.message, state, str(callback.from_user.id), int(callback.data.rsplit(":", 1)[1]))
 
 
-@router.callback_query(lambda c: c.data.startswith("my_dish_edit_back:"))
-async def my_dish_edit_back(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data.startswith("my_dish_edit_done:"))
+async def my_dish_edit_done(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     dish_id = int(callback.data.rsplit(":", 1)[1])
     dish = DishRepository.get_by_id(str(callback.from_user.id), dish_id)
@@ -4071,8 +4086,19 @@ async def my_dish_edit_back(callback: CallbackQuery, state: FSMContext):
         return
     data = await state.get_data()
     items = dish_to_snapshot(dish)
-    await state.set_state(MealEntryStates.choosing_meal_type)
-    await state.update_data(dish_edit_mode=False, dish_edit_id=None, dish_edit_ingredient_id=None, saved_products=None, my_dish_items=items)
+    navigation = {
+        "meal_type": normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
+        "my_dishes_page": int(data.get("my_dishes_page") or 1),
+        "my_dishes_return_entry_date": data.get("my_dishes_return_entry_date"),
+        "my_dish_return_context": data.get("my_dish_return_context"),
+        "my_dish_id": dish_id,
+        "my_dish_items": items,
+        "my_dish_original_items": items,
+        "my_dish_save_token": _new_meal_save_token(),
+    }
+    await state.clear()
+    await state.update_data(**navigation)
+    await _hide_meal_reply_keyboard(callback.message)
     await callback.message.edit_text(_format_saved_dish_card(dish, items), reply_markup=_build_saved_dish_card_keyboard(normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value), int(data.get("my_dishes_page") or 1), dish_id, return_to_products=bool(data.get("my_dish_return_context"))), parse_mode="HTML")
 
 
@@ -5657,6 +5683,7 @@ async def _save_custom_product(
             await message.answer("❌ Не удалось добавить продукт в блюдо.")
             return _failed_meal_save_result("dish_not_found")
         await state.update_data(custom_product=None, custom_product_save_token=None, dish_add_destination=False)
+        await _hide_meal_reply_keyboard(message)
         await message.answer("✅ Продукт добавлен в блюдо")
         items = dish_to_snapshot(dish)
         await state.set_state(MealEntryStates.choosing_meal_type)
@@ -6174,6 +6201,7 @@ async def _save_ai_meal_draft(
         fresh = dish_to_snapshot(dish)
         await state.set_state(MealEntryStates.choosing_meal_type)
         await state.update_data(saved_products=fresh, my_dish_items=fresh)
+        await _hide_meal_reply_keyboard(message)
         await message.answer("✅ Продукт добавлен в блюдо")
         await message.answer(_format_saved_dish_editor(dish, fresh), reply_markup=_build_saved_dish_editor_keyboard(dish.id, fresh), parse_mode="HTML")
         return MealSaveResult(MealSaveStatus.SAVED)
@@ -7595,6 +7623,7 @@ async def _save_label_analysis_draft(
         fresh = dish_to_snapshot(dish)
         await state.set_state(MealEntryStates.choosing_meal_type)
         await state.update_data(saved_products=fresh, my_dish_items=fresh)
+        await _hide_meal_reply_keyboard(message)
         await message.answer("✅ Продукт добавлен в блюдо")
         await message.answer(_format_saved_dish_editor(dish, fresh), reply_markup=_build_saved_dish_editor_keyboard(dish.id, fresh), parse_mode="HTML")
         return MealSaveResult(MealSaveStatus.SAVED)
