@@ -92,6 +92,11 @@ def get_water_recommended(user_id: str) -> float:
     return 2000.0
 
 
+def save_quick_water_amount(user_id: str, amount: float) -> None:
+    """Сохраняет быструю корректировку воды за сегодня."""
+    WaterRepository.save_water_entry(user_id, amount, date.today())
+
+
 @router.message(lambda m: m.text == "💧 Контроль воды")
 async def water(message: Message):
     """Показывает меню контроля воды."""
@@ -140,7 +145,7 @@ async def quick_add_water_250(message: Message, state: FSMContext):
     
     entry_date = date.today()
     amount = 250.0
-    WaterRepository.save_water_entry(user_id, amount, entry_date)
+    save_quick_water_amount(user_id, amount)
     
     daily_total = WaterRepository.get_daily_total(user_id, entry_date)
     recommended = get_water_recommended(user_id)
@@ -166,7 +171,7 @@ async def add_quick_water_amount(
     await state.clear()
 
     entry_date = date.today()
-    WaterRepository.save_water_entry(user_id, amount, entry_date)
+    save_quick_water_amount(user_id, amount)
 
     daily_total = WaterRepository.get_daily_total(user_id, entry_date)
     recommended = get_water_recommended(user_id)

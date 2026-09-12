@@ -11,6 +11,7 @@ from utils.keyboards import (
     calendar_back_menu,
     kbju_menu,
     main_menu,
+    main_water_adjustment_inline,
     push_menu_stack,
     quick_actions_inline,
     training_menu,
@@ -21,6 +22,19 @@ from utils.log_sanitizer import safe_exception_summary
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+
+async def _build_main_menu_summary(message: Message, user_id: str) -> str:
+    """Собирает актуальную сводку главного экрана."""
+    from datetime import date
+    from utils.progress_formatters import format_progress_block, format_water_progress_block
+
+    recommendations_link = await _build_recommendations_link(message)
+    today_line = f"📅 <b>{date.today().strftime('%d.%m.%Y')}</b>"
+    return (
+        f"{today_line}\n\n{recommendations_link}\n\n"
+        f"{format_progress_block(user_id)}\n\n{format_water_progress_block(user_id)}"
+    )
 
 async def _build_recommendations_link(message: Message) -> str:
     """Возвращает HTML-ссылку на рекомендации от бота."""
@@ -101,12 +115,6 @@ def _build_recommendations_text() -> str:
 @router.message(lambda m: m.text in MAIN_MENU_BUTTON_ALIASES)
 async def go_main_menu(message: Message, state: FSMContext):
     """Обработчик кнопки 'Главное меню'."""
-    from datetime import date
-    from utils.progress_formatters import (
-        format_progress_block,
-        format_water_progress_block,
-    )
-    
     user_id = str(message.from_user.id)
     logger.info("Main menu opened")
     AnalyticsRepository.track_event(user_id, "open_main_menu", section="main")
@@ -114,16 +122,7 @@ async def go_main_menu(message: Message, state: FSMContext):
     # Очищаем FSM состояние
     await state.clear()
     
-    # Формируем сообщение с прогрессом
-    progress_text = format_progress_block(user_id)
-    water_progress_text = format_water_progress_block(user_id)
-    recommendations_link = await _build_recommendations_link(message)
-
-    today_line = f"📅 <b>{date.today().strftime('%d.%m.%Y')}</b>"
-    welcome_text = (
-        f"{today_line}\n\n{recommendations_link}\n\n"
-        f"{progress_text}\n\n{water_progress_text}"
-    )
+    welcome_text = await _build_main_menu_summary(message, user_id)
     
     push_menu_stack(message.bot, main_menu)
     # Отправляем текст с кратким дневным статусом и inline-кнопками быстрых действий
@@ -212,10 +211,44 @@ async def quick_steps_add(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(lambda c: c.data == "quick_water_300")
 async def quick_water_300(callback: CallbackQuery, state: FSMContext):
-    """Быстро добавляет 300 мл воды из верхних быстрых действий."""
-    from handlers.water import add_quick_water_amount
+    """Добавляет 300 мл и раскрывает корректировки на главном экране."""
+    await _update_main_screen_water(callback, state, 300.0)
 
-    await add_quick_water_amount(callback, state, 300.0, force_new_message=True)
+
+@router.callback_query(lambda c: c.data and c.data.startswith("quick_main_water_add_"))
+async def quick_main_water_adjustment(callback: CallbackQuery, state: FSMContext):
+    """Корректирует воду, не покидая главный экран."""
+    amount_text = callback.data.removeprefix("quick_main_water_add_")
+    try:
+        amount = float(amount_text)
+        if amount == 0:
+            raise ValueError
+    except ValueError:
+        await callback.answer("Не удалось определить количество воды.", show_alert=True)
+        return
+
+    await _update_main_screen_water(callback, state, amount)
+
+
+async def _update_main_screen_water(
+    callback: CallbackQuery,
+    state: FSMContext,
+    amount: float,
+) -> None:
+    """Сохраняет воду и обновляет то же сообщение главного экрана."""
+    from handlers.water import save_quick_water_amount
+
+    await callback.answer()
+    await state.clear()
+    user_id = str(callback.from_user.id)
+    save_quick_water_amount(user_id, amount)
+    welcome_text = await _build_main_menu_summary(callback.message, user_id)
+    await callback.message.edit_text(
+        welcome_text,
+        reply_markup=main_water_adjustment_inline,
+        parse_mode="HTML",
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
 
 
 @router.callback_query(lambda c: c.data == "quick_weight")

@@ -749,6 +749,21 @@ water_adjustment_inline = InlineKeyboardMarkup(
 
 water_quick_add_inline = water_adjustment_inline
 
+# Расширенные быстрые действия главного экрана после изменения воды.
+# Отдельные callback_data сохраняют контекст главного экрана: последующие
+# корректировки обновляют его сводку, а не открывают карточку раздела воды.
+main_water_adjustment_inline = InlineKeyboardMarkup(
+    inline_keyboard=[
+        *quick_actions_inline.inline_keyboard,
+        [
+            InlineKeyboardButton(text="-300", callback_data="quick_main_water_add_-300"),
+            InlineKeyboardButton(text="+250", callback_data="quick_main_water_add_250"),
+            InlineKeyboardButton(text="+300", callback_data="quick_main_water_add_300"),
+            InlineKeyboardButton(text="+500", callback_data="quick_main_water_add_500"),
+        ],
+    ]
+)
+
 # Меню анализа
 activity_analysis_menu = ReplyKeyboardMarkup(
     keyboard=[

@@ -12,6 +12,7 @@ from handlers.water import build_water_added_text
 from utils.progress_formatters import build_progress_bar, build_water_progress_bar
 from utils.keyboards import (
     quick_actions_inline,
+    main_water_adjustment_inline,
     steps_confirmation_menu,
     steps_menu,
     water_quick_add_inline,
@@ -97,21 +98,55 @@ def test_quick_actions_water_button_keeps_legacy_callback_supported_by_common_ha
     assert water_button.callback_data == "quick_water_300"
 
 
-def test_quick_water_main_menu_forces_new_confirmation_message(monkeypatch):
+def test_main_water_adjustment_inline_extends_quick_actions():
+    assert main_water_adjustment_inline.inline_keyboard[0] == quick_actions_inline.inline_keyboard[0]
+    row = main_water_adjustment_inline.inline_keyboard[1]
+    assert [button.text for button in row] == ["-300", "+250", "+300", "+500"]
+    assert [button.callback_data for button in row] == [
+        "quick_main_water_add_-300",
+        "quick_main_water_add_250",
+        "quick_main_water_add_300",
+        "quick_main_water_add_500",
+    ]
+
+
+def test_quick_water_main_menu_updates_main_screen(monkeypatch):
     from handlers import common
     import handlers.water as water_module
 
-    calls = []
+    saved = []
 
-    async def fake_add_quick_water_amount(callback, state, amount, *, force_new_message=False):
-        calls.append((callback, state, amount, force_new_message))
+    def fake_save_quick_water_amount(user_id, amount):
+        saved.append((user_id, amount))
 
-    monkeypatch.setattr(water_module, "add_quick_water_amount", fake_add_quick_water_amount)
+    async def fake_summary(message, user_id):
+        return "updated main screen"
 
-    callback = object()
-    state = object()
+    class State:
+        async def clear(self):
+            self.cleared = True
+
+    class Message:
+        async def edit_text(self, text, **kwargs):
+            self.edited = (text, kwargs)
+
+    class Callback:
+        data = "quick_water_300"
+        from_user = type("User", (), {"id": 42})()
+        message = Message()
+
+        async def answer(self):
+            self.answered = True
+
+    monkeypatch.setattr(water_module, "save_quick_water_amount", fake_save_quick_water_amount)
+    monkeypatch.setattr(common, "_build_main_menu_summary", fake_summary)
 
     import asyncio
+    callback = Callback()
+    state = State()
     asyncio.run(common.quick_water_300(callback, state))
 
-    assert calls == [(callback, state, 300.0, True)]
+    assert saved == [("42", 300.0)]
+    assert state.cleared is True
+    assert callback.message.edited[0] == "updated main screen"
+    assert callback.message.edited[1]["reply_markup"] is main_water_adjustment_inline
