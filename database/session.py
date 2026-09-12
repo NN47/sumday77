@@ -63,6 +63,8 @@ def init_db():
     """Инициализация базы данных: создание таблиц и миграции."""
     # Создаём все таблицы
     Base.metadata.create_all(engine)
+    from database.recipe_migration import migrate_recipe_metadata
+    migrate_recipe_metadata(engine)
     from database.activity_migration import migrate_workout_sessions
     from database.legal_migration import migrate_legal_metadata
     from database.retired_free_text_migration import migrate_retired_free_text_data

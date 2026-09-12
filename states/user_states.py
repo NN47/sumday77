@@ -164,3 +164,11 @@ class WellbeingStates(StatesGroup):
     """Состояния для дневных заметок."""
     note_rating = State()
     note_factors = State()
+
+
+class DishBuilderStates(StatesGroup):
+    ingredients = State()
+    name = State()
+    cooking_method = State()
+    cooked_weight = State()
+    preparation = State()

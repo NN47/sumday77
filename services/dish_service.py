@@ -142,7 +142,7 @@ def _api_details(items: list[dict]) -> str:
     )
 
 
-def dish_to_snapshot(dish: Dish) -> list[dict]:
+def dish_to_snapshot(dish: Dish, *, cooked: bool = True) -> list[dict]:
     result: list[dict] = []
     for ingredient in sorted(dish.ingredients, key=lambda value: value.position):
         weight = float(ingredient.weight_g)
@@ -163,6 +163,16 @@ def dish_to_snapshot(dish: Dish) -> list[dict]:
                 }
             )
         )
+    cooked_weight = _number(getattr(dish, "cooked_weight_g", None))
+    raw_weight = calculate_dish_weight(result)
+    if cooked and cooked_weight and raw_weight:
+        # Cooking changes water/weight, not total nutrition. Portion scaling is
+        # a separate operation and continues to scale both weight and macros.
+        for item in result:
+            item["grams"] *= cooked_weight / raw_weight
+            for field, total in (("calories", "kcal"), ("protein", "protein"),
+                                 ("fat", "fat"), ("carbs", "carbs")):
+                item[f"{field}_per_100g"] = item[total] * 100 / item["grams"]
     return result
 
 
@@ -250,7 +260,7 @@ class DishService:
             return None
         return DishService.replace_ingredients(
             user_id=user_id, dish_id=dish_id,
-            items=[*dish_to_snapshot(dish), normalize_ingredient_snapshot(item)],
+            items=[*dish_to_snapshot(dish, cooked=False), normalize_ingredient_snapshot(item)],
         )
 
     @staticmethod
@@ -259,7 +269,7 @@ class DishService:
         dish = DishRepository.get_by_id(str(user_id), int(dish_id))
         if dish is None:
             return None
-        items = dish_to_snapshot(dish)
+        items = dish_to_snapshot(dish, cooked=False)
         if len(items) <= 1 or position < 0 or position >= len(items):
             return None
         items.pop(position)
