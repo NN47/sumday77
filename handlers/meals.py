@@ -5315,8 +5315,6 @@ async def _show_dish_builder(message: Message, state: FSMContext, *, edit: bool 
     await _hide_meal_reply_keyboard(message)
     await state.set_state(DishBuilderStates.ingredients)
     text = _format_dish_builder(items)
-    if builder.get("kind") == "recipe":
-        text = text.replace("Новое блюдо", "Рецепт")
     if builder.get("name"):
         text = "<b>" + html.escape(builder["name"]) + "</b>\n\n" + text
     markup = _build_dish_builder_keyboard(items, token)

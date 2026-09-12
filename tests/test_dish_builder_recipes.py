@@ -172,6 +172,30 @@ def test_builder_hides_old_reply_and_ingredient_screen_shares_methods(monkeypatc
     asyncio.run(run())
 
 
+def test_recipe_builder_uses_same_compact_summary_as_new_dish(monkeypatch):
+    state = builder_state()
+    state.data["dish_builder"].update(kind="recipe", items=[{
+        "name": "ПРОДУКТ МЯСНОЙ ИЗ СВИНИНЫ",
+        "grams": 25,
+        "kcal": 60,
+        "protein": 3.8,
+        "fat": 4.8,
+        "carbs": 0.5,
+    }])
+    msg = message()
+    monkeypatch.setattr(meals, "_hide_meal_reply_keyboard", AsyncMock())
+
+    asyncio.run(meals._show_dish_builder(msg, state))
+
+    assert msg.answer.await_args.args[0] == (
+        "🥣 <b>Новое блюдо</b>\n\n"
+        "Добавленные ингредиенты:\n"
+        "1️⃣ ПРОДУКТ МЯСНОЙ ИЗ СВИНИНЫ — 25 г\n\n"
+        "📦 <b>Общий вес:</b> 25 г\n"
+        "🔥 <b>60 ккал</b> · Б 3.8 · Ж 4.8 · У 0.5"
+    )
+
+
 def test_back_discards_nested_draft_and_keeps_ingredients(monkeypatch):
     state = builder_state(ai_pending_meal={"items": [item()]}, photo_save_token="old")
     state.data["dish_builder"]["items"] = [item()]
