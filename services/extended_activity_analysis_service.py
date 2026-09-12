@@ -575,6 +575,8 @@ class ExtendedActivityAnalysisService:
                 user_id=user_id,
                 feature="detailed_activity_analysis",
             ):
+                if quota_request_id:
+                    ai_quota_service.mark_provider_started(quota_request_id)
                 analysis = await asyncio.wait_for(
                     asyncio.to_thread(
                         openai_text_service.analyze_activity_prompt,

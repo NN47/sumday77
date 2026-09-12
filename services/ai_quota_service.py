@@ -330,6 +330,7 @@ class AIQuotaService:
             session.query(AIQuotaOperation.id)
             .filter(AIQuotaOperation.user_id == user_id)
             .filter(AIQuotaOperation.provider_started.is_(True))
+            .filter(AIQuotaOperation.outcome != "reservation_timeout")
             .filter(AIQuotaOperation.completed_at.is_not(None))
             .filter(AIQuotaOperation.completed_at >= cutoff)
             .first()
@@ -527,8 +528,8 @@ class AIQuotaService:
                             feature_key=feature.value,
                             period_key=period,
                             status="reserved",
-                            provider_started=True,
-                            provider_attempt_count=1,
+                            provider_started=False,
+                            provider_attempt_count=0,
                             expires_at=expires_at,
                         )
                         session.add(operation)
@@ -538,8 +539,8 @@ class AIQuotaService:
                         existing_operation.period_key = period
                         existing_operation.status = "reserved"
                         existing_operation.outcome = None
-                        existing_operation.provider_started = True
-                        existing_operation.provider_attempt_count = 1
+                        existing_operation.provider_started = False
+                        existing_operation.provider_attempt_count = 0
                         existing_operation.result_ref = None
                         existing_operation.completed_at = None
                         existing_operation.updated_at = current
@@ -740,6 +741,47 @@ class AIQuotaService:
                 .first()
             )
 
+    def mark_provider_started(self, request_id: str) -> bool:
+        """Атомарно отмечает первый реальный вызов провайдера.
+
+        Повторная отметка того же зарезервированного запроса идемпотентна и не
+        увеличивает число попыток повторно.
+        """
+        now = self._utcnow_naive()
+        with get_db_session() as session:
+            operation = (
+                session.query(AIQuotaOperation)
+                .filter(AIQuotaOperation.request_id == request_id)
+                .filter(AIQuotaOperation.status == "reserved")
+                .first()
+            )
+            if operation is None:
+                return False
+            if operation.provider_started:
+                return True
+            updated = (
+                session.query(AIQuotaOperation)
+                .filter(AIQuotaOperation.id == operation.id)
+                .filter(AIQuotaOperation.status == "reserved")
+                .filter(AIQuotaOperation.provider_started.is_(False))
+                .update(
+                    {
+                        AIQuotaOperation.provider_started: True,
+                        AIQuotaOperation.provider_attempt_count:
+                            AIQuotaOperation.provider_attempt_count + 1,
+                        AIQuotaOperation.updated_at: now,
+                    },
+                    synchronize_session=False,
+                )
+            )
+            if updated:
+                return True
+            return bool(
+                session.query(AIQuotaOperation.provider_started)
+                .filter(AIQuotaOperation.id == operation.id)
+                .scalar()
+            )
+
     def register_additional_provider_attempt(self, request_id: str) -> bool:
         """Учитывает fallback как отдельный дорогой вызов без второй пользовательской квоты."""
         now = self._utcnow_naive()
@@ -753,6 +795,8 @@ class AIQuotaService:
                 .first()
             )
             if operation is None:
+                return False
+            if not operation.provider_started:
                 return False
             entitlement = self.entitlement(operation.plan_key, AIFeature(operation.feature_key))
             attempts = self._get_or_create(
@@ -816,7 +860,7 @@ class AIQuotaService:
                     )
                     denial = AIGlobalLimitExceeded("global AI limit exhausted")
             if denial is None:
-                operation.provider_attempt_count = int(operation.provider_attempt_count or 1) + 1
+                operation.provider_attempt_count = int(operation.provider_attempt_count or 0) + 1
                 operation.updated_at = now
         if denial is not None:
             raise denial

@@ -2147,6 +2147,8 @@ async def _generate_meal_completion_comment_with_yandex_fallback(
             user_id=user_id,
             feature="meal_completion_comment",
         ):
+            if quota_request_id:
+                ai_quota_service.mark_provider_started(quota_request_id)
             raw_text, metadata = await asyncio.wait_for(
                 asyncio.to_thread(
                     openai_text_service.generate_meal_completion_comment,
@@ -2835,8 +2837,11 @@ async def _run_openai_image_with_yandex_fallback(
             user_id=user_id,
             feature=feature,
         ):
-            if quota_request_id and openai_is_additional_attempt:
-                ai_quota_service.register_additional_provider_attempt(quota_request_id)
+            if quota_request_id:
+                if openai_is_additional_attempt:
+                    ai_quota_service.register_additional_provider_attempt(quota_request_id)
+                else:
+                    ai_quota_service.mark_provider_started(quota_request_id)
             openai_kwargs = {
                 "user_id": user_id,
                 "feature": feature,
@@ -2921,6 +2926,8 @@ async def _run_image_analysis_with_openai_fallback(
     """Запускает цепочку Gemini → OpenAI → Yandex для анализа изображения."""
     logger.info("Gemini attempt for %s", operation_type)
     try:
+        if quota_request_id:
+            ai_quota_service.mark_provider_started(quota_request_id)
         if comment:
             gemini_result = await _run_gemini_task(gemini_analyzer, image_data, comment)
         else:
@@ -2978,6 +2985,9 @@ async def _run_label_analysis_with_openai_fallback(
 ):
     """Запускает цепочку Gemini → OpenAI → Yandex для анализа этикетки."""
     try:
+        if quota_request_id:
+            ai_quota_service.mark_provider_started(quota_request_id)
+            logger.info("label_analysis_started provider=gemini")
         gemini_result = await _run_gemini_task(analyzer, image_data)
         if gemini_result and "kbju_per_100g" in gemini_result:
             return gemini_result
@@ -3021,8 +3031,12 @@ async def _run_openai_label_with_yandex_fallback(
             user_id=user_id,
             feature="label_analysis_fallback",
         ):
-            if quota_request_id and openai_is_additional_attempt:
-                ai_quota_service.register_additional_provider_attempt(quota_request_id)
+            if quota_request_id:
+                if openai_is_additional_attempt:
+                    ai_quota_service.register_additional_provider_attempt(quota_request_id)
+                else:
+                    ai_quota_service.mark_provider_started(quota_request_id)
+                    logger.info("label_analysis_started provider=openai")
             openai_result = await _analyze_label_with_openai(image_data, user_id=user_id)
         if openai_result and "kbju_per_100g" in openai_result:
             return openai_result
@@ -5457,6 +5471,7 @@ async def _generate_composed_dish_name(message: Message, state: FSMContext, *, u
         await message.answer("Можно ввести название вручную.", reply_markup=_dish_name_menu(token))
         return
     try:
+        ai_quota_service.mark_provider_started(request_id)
         generated = await asyncio.to_thread(generate_recipe_name, builder.get("items") or [],
                                             builder.get("cooking_method"), user_id=user_id,
                                             previous_name=data.get("generated_dish_name"))
@@ -6307,6 +6322,8 @@ async def _run_text_analysis_with_yandex_fallback(
     """Возвращает валидный анализ: OpenAI первым, затем прежние DeepSeek и Yandex."""
     try:
         with openai_token_budget_service.reservation(user_id=user_id, feature=feature):
+            if quota_request_id:
+                ai_quota_service.mark_provider_started(quota_request_id)
             raw = await asyncio.to_thread(
                 openai_text_service.analyze_food_text,
                 user_text,
@@ -6997,6 +7014,7 @@ async def _handle_food_photo_analysis(
             kbju_data = analysis_result.payload
             final_provider = analysis_result.provider
         else:
+            ai_quota_service.mark_provider_started(request_id)
             if comment:
                 kbju_data = await runner(analyzer, image_data, comment)
             else:
@@ -7864,7 +7882,6 @@ async def _handle_label_photo_analysis(
     else:
         entry_date = date.today()
 
-    logger.info("label_analysis_started provider=%s", provider)
     await message.answer("📋 Анализирую этикетку с помощью ИИ, секунду...")
 
     photo = message.photo[-1]
@@ -7912,6 +7929,8 @@ async def _handle_label_photo_analysis(
                 quota_request_id=request_id,
             )
         else:
+            ai_quota_service.mark_provider_started(request_id)
+            logger.info("label_analysis_started provider=%s", provider)
             label_data = await runner(analyzer, image_data)
     except Exception as e:
         ai_quota_service.release(request_id, outcome="provider_error")

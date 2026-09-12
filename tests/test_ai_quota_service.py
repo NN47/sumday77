@@ -20,6 +20,8 @@ from sqlalchemy.orm import sessionmaker
 
 from database.models import (
     AIAttemptCounter,
+    AIQuotaActiveLock,
+    AIQuotaCounter,
     AIQuotaOperation,
     Base,
     UserPlanAssignment,
@@ -27,6 +29,7 @@ from database.models import (
 from services.ai_quota_service import (
     AIFeature,
     AIAttemptLimitExceeded,
+    AIOperationCooldown,
     AIOperationInProgress,
     AIQuotaAlreadyConsumed,
     AIQuotaExceeded,
@@ -82,6 +85,7 @@ class AIQuotaServiceTests(unittest.TestCase):
     def _success(self, user_id: str, feature: AIFeature, index: int):
         request_id = f"{user_id}:{feature.value}:{index}"
         reservation = self.service.reserve(user_id, feature, request_id, now=self.now)
+        self.assertTrue(self.service.mark_provider_started(request_id))
         self.assertTrue(self.service.consume(request_id, result_ref=f"result:{index}"))
         return reservation
 
@@ -193,6 +197,8 @@ class AIQuotaServiceTests(unittest.TestCase):
     def test_provider_fallback_is_one_user_operation(self):
         request_id = "fallback:one-operation"
         self.service.reserve("fallback-user", AIFeature.MEAL_PHOTO, request_id, now=self.now)
+        self.assertTrue(self.service.mark_provider_started(request_id))
+        self.assertTrue(self.service.mark_provider_started(request_id))
         with patch("services.ai_quota_service.quota_period_key", return_value=date(2026, 8, 24)):
             self.service.register_additional_provider_attempt(request_id)
         self.service.consume(request_id, outcome="success_after_fallback")
@@ -203,6 +209,36 @@ class AIQuotaServiceTests(unittest.TestCase):
             operation = session.query(AIQuotaOperation).one()
             self.assertEqual(operation.provider_attempt_count, 2)
             self.assertEqual(session.query(AIAttemptCounter).one().attempt_count, 2)
+
+    def test_reserve_and_provider_start_are_separate_and_start_is_idempotent(self):
+        request_id = "lifecycle:separate-start"
+        reservation = self.service.reserve(
+            "lifecycle-user", AIFeature.MEAL_TEXT, request_id, now=self.now
+        )
+        self.assertEqual(reservation.request_id, request_id)
+        with self.Session() as session:
+            operation = session.query(AIQuotaOperation).one()
+            self.assertFalse(operation.provider_started)
+            self.assertEqual(operation.provider_attempt_count, 0)
+
+        self.assertTrue(self.service.mark_provider_started(request_id))
+        self.assertTrue(self.service.mark_provider_started(request_id))
+        with self.Session() as session:
+            operation = session.query(AIQuotaOperation).one()
+            self.assertTrue(operation.provider_started)
+            self.assertEqual(operation.provider_attempt_count, 1)
+            # The technical counter was reserved once and provider start does not double count it.
+            self.assertEqual(session.query(AIAttemptCounter).one().attempt_count, 1)
+
+    def test_normal_completion_releases_active_lock(self):
+        request_id = "lifecycle:consume"
+        self.service.reserve("consume-user", AIFeature.MEAL_TEXT, request_id, now=self.now)
+        self.service.mark_provider_started(request_id)
+        self.assertTrue(self.service.consume(request_id))
+        with self.Session() as session:
+            self.assertEqual(session.query(AIQuotaActiveLock).count(), 0)
+            counter = session.query(AIQuotaCounter).one()
+            self.assertEqual((counter.used_count, counter.reserved_count), (1, 0))
 
     def test_photo_and_label_share_twenty_five_provider_attempts(self):
         limit = FREE_PLAN.features[AIFeature.MEAL_PHOTO].attempt_limit
@@ -316,6 +352,41 @@ class AIQuotaServiceTests(unittest.TestCase):
         with self.Session() as session:
             first = session.query(AIQuotaOperation).filter_by(request_id="stale:first").one()
             self.assertEqual(first.status, "expired")
+            self.assertEqual(first.outcome, "reservation_timeout")
+            self.assertFalse(first.provider_started)
+            locks = session.query(AIQuotaActiveLock).all()
+            self.assertEqual([lock.request_id for lock in locks], ["stale:second"])
+            counter = session.query(AIQuotaCounter).one()
+            self.assertEqual(counter.reserved_count, 1)
+
+    def test_reservation_timeout_does_not_create_cooldown(self):
+        now = datetime(2026, 8, 24, 9, 0, 0)
+        with patch("services.ai_quota_service.AI_QUOTA_COOLDOWN_SECONDS", 60):
+            self.service.reserve("timeout-user", AIFeature.MEAL_TEXT, "timeout:first", now=now)
+            with self.Session() as session:
+                operation = session.query(AIQuotaOperation).filter_by(request_id="timeout:first").one()
+                operation.expires_at = now - timedelta(seconds=1)
+                # Совместимость с записями, созданными до разделения reserve/start.
+                operation.provider_started = True
+                operation.provider_attempt_count = 1
+                session.commit()
+            reservation = self.service.reserve(
+                "timeout-user", AIFeature.MEAL_TEXT, "timeout:second", now=now
+            )
+        self.assertEqual(reservation.request_id, "timeout:second")
+
+    def test_recent_real_provider_request_creates_cooldown(self):
+        now = datetime(2026, 8, 24, 9, 0, 0)
+        with patch("services.ai_quota_service.AI_QUOTA_COOLDOWN_SECONDS", 60), patch.object(
+            self.service, "_utcnow_naive", return_value=now
+        ):
+            self.service.reserve("cooldown-user", AIFeature.MEAL_TEXT, "cooldown:first", now=now)
+            self.service.mark_provider_started("cooldown:first")
+            self.service.consume("cooldown:first")
+            with self.assertRaises(AIOperationCooldown):
+                self.service.reserve(
+                    "cooldown-user", AIFeature.MEAL_TEXT, "cooldown:second", now=now
+                )
 
     def test_plan_assignment_obeys_start_and_end_dates(self):
         with self.Session() as session:
