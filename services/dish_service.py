@@ -7,7 +7,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -175,6 +175,96 @@ class DishEntrySaveResult:
 
 
 class DishService:
+    @staticmethod
+    def update_template(
+        *, user_id: str, dish_id: int, name: str | None = None,
+        items: list[dict] | None = None,
+    ) -> Dish | None:
+        """Atomically update a dish template without touching diary snapshots.
+
+        Ingredient rows are owned by a dish, so replacing them cannot mutate a
+        saved product, another dish, or an already-recorded meal.
+        """
+        normalized_items = None
+        if items is not None:
+            normalized_items = [
+                normalize_ingredient_snapshot(item) for item in items
+                if isinstance(item, dict)
+            ]
+            if not normalized_items:
+                return None
+        with get_db_session() as session:
+            dish = (
+                session.query(Dish)
+                .options(selectinload(Dish.ingredients))
+                .filter(
+                    Dish.id == int(dish_id), Dish.user_id == str(user_id),
+                    Dish.archived_at.is_(None),
+                )
+                .first()
+            )
+            if dish is None:
+                return None
+            if name is not None:
+                clean_name = normalize_dish_display_name(name, normalized_items)
+                dish.name = clean_name
+                dish.normalized_name = clean_name.casefold()
+            if normalized_items is not None:
+                dish.ingredients.clear()
+                session.flush()
+                for position, item in enumerate(normalized_items):
+                    dish.ingredients.append(DishIngredient(
+                        position=position,
+                        name_snapshot=item["name"],
+                        weight_g=item["grams"],
+                        calories_per_100g=item["calories_per_100g"],
+                        protein_per_100g=item["protein_per_100g"],
+                        fat_per_100g=item["fat_per_100g"],
+                        carbs_per_100g=item["carbs_per_100g"],
+                        is_manually_corrected=item["is_manually_corrected"],
+                    ))
+                dish.composition_fingerprint = _composition_fingerprint(normalized_items)
+            dish.updated_at = datetime.utcnow()
+            session.commit()
+        # Return a freshly loaded, usable object rather than a detached object
+        # whose relationship was modified during the transaction.
+        from database.repositories.dish_repository import DishRepository
+        return DishRepository.get_by_id(str(user_id), int(dish_id))
+
+    @staticmethod
+    def rename(*, user_id: str, dish_id: int, name: str) -> Dish | None:
+        clean_name = re.sub(r"\s+", " ", str(name or "").strip())
+        if not clean_name or len(clean_name) > MAX_DISH_NAME_LENGTH:
+            return None
+        return DishService.update_template(user_id=user_id, dish_id=dish_id, name=clean_name)
+
+    @staticmethod
+    def replace_ingredients(*, user_id: str, dish_id: int, items: list[dict]) -> Dish | None:
+        return DishService.update_template(user_id=user_id, dish_id=dish_id, items=items)
+
+    @staticmethod
+    def add_ingredient(*, user_id: str, dish_id: int, item: dict) -> Dish | None:
+        from database.repositories.dish_repository import DishRepository
+        dish = DishRepository.get_by_id(str(user_id), int(dish_id))
+        if dish is None:
+            return None
+        return DishService.replace_ingredients(
+            user_id=user_id, dish_id=dish_id,
+            items=[*dish_to_snapshot(dish), normalize_ingredient_snapshot(item)],
+        )
+
+    @staticmethod
+    def remove_ingredient(*, user_id: str, dish_id: int, position: int) -> Dish | None:
+        from database.repositories.dish_repository import DishRepository
+        dish = DishRepository.get_by_id(str(user_id), int(dish_id))
+        if dish is None:
+            return None
+        items = dish_to_snapshot(dish)
+        if len(items) <= 1 or position < 0 or position >= len(items):
+            return None
+        items.pop(position)
+        return DishService.replace_ingredients(user_id=user_id, dish_id=dish_id, items=items)
+
     @staticmethod
     def save_photo_dish_entry(
         *,

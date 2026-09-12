@@ -52,6 +52,7 @@ from services.dish_service import (
     dish_to_snapshot,
     normalize_dish_display_name,
     scale_dish_snapshot,
+    MAX_DISH_NAME_LENGTH,
 )
 from services.gemini_service import (
     gemini_service,
@@ -2390,6 +2391,21 @@ async def _return_to_add_methods_from_method_input(
     entry_date_str = data.get("entry_date")
     meal_entry_open = bool(data.get("meal_entry_open"))
 
+    if data.get("dish_add_destination") and data.get("dish_edit_id"):
+        dish_id = int(data["dish_edit_id"])
+        # Clear the nested input FSM first, then restore only the dish editor
+        # context so a later ordinary message cannot be consumed by it.
+        await state.clear()
+        dish = DishRepository.get_by_id(user_id or str(message.from_user.id), dish_id)
+        if dish is None:
+            await message.answer("Блюдо не найдено.")
+            return
+        items = dish_to_snapshot(dish)
+        await state.set_state(MealEntryStates.choosing_meal_type)
+        await state.update_data(dish_edit_mode=True, dish_edit_id=dish_id, saved_products=items, my_dish_items=items)
+        await message.answer(_format_saved_dish_editor(dish, items), reply_markup=_build_saved_dish_editor_keyboard(dish_id, items), parse_mode="HTML")
+        return
+
     # Черновики разных способов содержат много временных ключей. Полностью очищаем
     # FSM и восстанавливаем только навигационный контекст выбранного приёма пищи.
     await state.clear()
@@ -3730,6 +3746,7 @@ def _build_saved_dish_card_keyboard(
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Добавить порцию", callback_data=f"my_dish_add:{dish_id}")],
+            [InlineKeyboardButton(text="✏️ Редактировать состав", callback_data=f"my_dish_edit:{dish_id}")],
             [InlineKeyboardButton(text="⚖️ Изменить общий вес", callback_data=f"my_dish_weight:{dish_id}")],
             [InlineKeyboardButton(text="🗑 Убрать из моих блюд", callback_data=f"my_dish_archive_ask:{dish_id}")],
             [InlineKeyboardButton(
@@ -3738,6 +3755,53 @@ def _build_saved_dish_card_keyboard(
             )],
         ]
     )
+
+
+def _format_saved_dish_editor(dish, items: list[dict]) -> str:
+    lines = [
+        "✏️ <b>Редактирование блюда</b>", "",
+        f"🥣 <b>{html.escape(dish.name)}</b>", "",
+        "Выберите продукт для редактирования или добавьте новый:", "",
+    ]
+    for index, item in enumerate(items, start=1):
+        lines.append(
+            f"{_format_emoji_number(index)} {html.escape(str(item.get('name') or 'Ингредиент'))}"
+            f" — {float(item.get('grams') or 0):.0f} г"
+        )
+    return "\n".join(lines)
+
+
+def _build_saved_dish_editor_keyboard(dish_id: int, items: list[dict]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="✏️ Изменить название", callback_data=f"my_dish_rename:{dish_id}")],
+        [InlineKeyboardButton(text="➕ Добавить продукт", callback_data=f"my_dish_product_add:{dish_id}")],
+    ]
+    rows.extend([
+        InlineKeyboardButton(
+            text=f"{_format_emoji_number(index)} {_truncate_product_name(str(item.get('name') or 'Ингредиент'))}",
+            callback_data=f"my_dish_ingredient:{dish_id}:{index - 1}",
+        )
+    ] for index, item in enumerate(items, start=1))
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_dish_edit_back:{dish_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _show_saved_dish_editor(message: Message, state: FSMContext, user_id: str, dish_id: int) -> bool:
+    dish = DishRepository.get_by_id(user_id, dish_id)
+    if dish is None:
+        return False
+    items = dish_to_snapshot(dish)
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(
+        dish_edit_mode=True, dish_edit_id=dish_id, dish_edit_ingredient_id=None,
+        dish_add_destination=False, saved_products=items, my_dish_items=items,
+        weight_drafts={}, kbju_drafts={},
+    )
+    await message.edit_text(
+        _format_saved_dish_editor(dish, items),
+        reply_markup=_build_saved_dish_editor_keyboard(dish_id, items), parse_mode="HTML",
+    )
+    return True
 
 
 def _build_saved_dish_weight_keyboard(dish_id: int) -> InlineKeyboardMarkup:
@@ -3920,6 +3984,129 @@ async def _show_my_dish_catalog_origin(message: Message, state: FSMContext, *, u
 async def my_dish_catalog_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await _show_my_dish_catalog_origin(callback.message, state, user_id=str(callback.from_user.id))
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_edit:"))
+async def my_dish_edit_open(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    dish_id = int(callback.data.split(":", 1)[1])
+    if not await _show_saved_dish_editor(callback.message, state, str(callback.from_user.id), dish_id):
+        await callback.answer("Блюдо не найдено", show_alert=True)
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_ingredient:"))
+async def my_dish_ingredient_open(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    _, raw_dish_id, raw_index = callback.data.split(":")
+    dish_id, product_idx = int(raw_dish_id), int(raw_index)
+    dish = DishRepository.get_by_id(str(callback.from_user.id), dish_id)
+    items = dish_to_snapshot(dish) if dish else []
+    if product_idx < 0 or product_idx >= len(items):
+        await callback.answer("Ингредиент не найден", show_alert=True)
+        return
+    await state.set_state(MealEntryStates.editing_meal_weight)
+    await state.update_data(
+        dish_edit_mode=True, dish_edit_id=dish_id, dish_edit_ingredient_id=product_idx,
+        saved_products=items, weight_drafts={}, kbju_drafts={}, editing_product_idx=product_idx,
+    )
+    await callback.message.edit_text(
+        _render_product_actions_text(items[product_idx]),
+        reply_markup=_build_product_actions_keyboard(product_idx), parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_rename:"))
+async def my_dish_rename_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    dish_id = int(callback.data.split(":", 1)[1])
+    await state.set_state(MealEntryStates.editing_saved_dish_name_input)
+    await state.update_data(dish_edit_mode=True, dish_edit_id=dish_id)
+    await callback.message.answer(
+        "Введите новое название блюда:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_dish_rename_back:{dish_id}")
+        ]]),
+    )
+
+
+@router.message(MealEntryStates.editing_saved_dish_name_input)
+async def my_dish_rename_apply(message: Message, state: FSMContext):
+    name = re.sub(r"\s+", " ", (message.text or "").strip())
+    data = await state.get_data()
+    dish_id = int(data.get("dish_edit_id") or 0)
+    if not name:
+        await message.answer("Название не может быть пустым.")
+        return
+    if len(name) > MAX_DISH_NAME_LENGTH:
+        await message.answer(f"Название слишком длинное. Введите до {MAX_DISH_NAME_LENGTH} символов.")
+        return
+    if await _reject_sensitive_food_name(message, name, context="saved_dish_rename"):
+        return
+    dish = DishService.rename(user_id=str(message.from_user.id), dish_id=dish_id, name=name)
+    if dish is None:
+        await state.clear()
+        await message.answer("❌ Не удалось изменить название блюда.")
+        return
+    await message.answer("✅ Название блюда изменено")
+    # A new message is required after free text; subsequent navigation remains inline.
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    items = dish_to_snapshot(dish)
+    await state.update_data(saved_products=items, my_dish_items=items)
+    await message.answer(_format_saved_dish_editor(dish, items), reply_markup=_build_saved_dish_editor_keyboard(dish_id, items), parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_rename_back:"))
+async def my_dish_rename_back(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await _show_saved_dish_editor(callback.message, state, str(callback.from_user.id), int(callback.data.rsplit(":", 1)[1]))
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_edit_back:"))
+async def my_dish_edit_back(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    dish_id = int(callback.data.rsplit(":", 1)[1])
+    dish = DishRepository.get_by_id(str(callback.from_user.id), dish_id)
+    if dish is None:
+        await state.clear()
+        return
+    data = await state.get_data()
+    items = dish_to_snapshot(dish)
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(dish_edit_mode=False, dish_edit_id=None, dish_edit_ingredient_id=None, saved_products=None, my_dish_items=items)
+    await callback.message.edit_text(_format_saved_dish_card(dish, items), reply_markup=_build_saved_dish_card_keyboard(normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value), int(data.get("my_dishes_page") or 1), dish_id, return_to_products=bool(data.get("my_dish_return_context"))), parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_product_add:"))
+async def my_dish_product_add(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    dish_id = int(callback.data.rsplit(":", 1)[1])
+    await state.update_data(dish_edit_mode=True, dish_edit_id=dish_id, dish_add_destination=True)
+    await callback.message.edit_text(
+        "➕ <b>Добавить продукт в блюдо</b>\n\nВыберите способ:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📝 Ввести текстом", callback_data="dish_add_method:text")],
+            [InlineKeyboardButton(text="🏷 Анализ этикетки", callback_data="dish_add_method:label")],
+            [InlineKeyboardButton(text="✍️ Ввести вручную", callback_data="dish_add_method:manual")],
+            [InlineKeyboardButton(text="📦 Мои продукты", callback_data="dish_add_method:products")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_dish_edit:{dish_id}")],
+        ]), parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("dish_add_method:"))
+async def my_dish_add_method(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    method = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    await state.update_data(dish_add_destination=True)
+    if method == "text":
+        await kbju_add_via_ai(callback.message, state)
+    elif method == "label":
+        await kbju_add_via_label(callback.message, state)
+    elif method == "manual":
+        await kbju_add_via_custom_product(callback.message, state)
+    else:
+        await _show_my_products_page(callback.message, state, meal_type=normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value), page=1, user_id=str(callback.from_user.id), edit_message=True, back_callback_data=f"my_dish_edit:{int(data.get('dish_edit_id') or 0)}")
 
 
 @router.callback_query(lambda c: c.data.startswith("my_dish_weight:"))
@@ -4684,6 +4871,16 @@ async def _save_my_product_from_callback(
         selected_amount = float(custom_amount) if custom_amount else old_amount
     ratio = selected_amount / old_amount
     stored_amount = int(selected_amount) if selected_amount.is_integer() else selected_amount
+    if data.get("dish_add_destination"):
+        payload = json.loads(_single_product_json_for_my_product(source_meal, my_product_item, ratio=ratio, amount_g=stored_amount))[0]
+        dish = DishService.add_ingredient(user_id=user_id, dish_id=int(data.get("dish_edit_id") or 0), item=payload)
+        if dish is None:
+            await callback.message.answer("❌ Не удалось добавить продукт в блюдо.")
+            return
+        await state.update_data(dish_add_destination=False, my_product_save_token=None)
+        await callback.message.answer("✅ Продукт добавлен в блюдо")
+        await _show_saved_dish_editor(callback.message, state, user_id, dish.id)
+        return
     save_result = MealRepository.save_meal_idempotent(
         save_token=save_token,
         user_id=user_id,
@@ -5453,6 +5650,19 @@ async def _save_custom_product(
         ensure_ascii=False,
     )
     resolved_user_id = user_id or str(message.from_user.id)
+    if data.get("dish_add_destination"):
+        payload = json.loads(products_json)[0]
+        dish = DishService.add_ingredient(user_id=resolved_user_id, dish_id=int(data.get("dish_edit_id") or 0), item=payload)
+        if dish is None:
+            await message.answer("❌ Не удалось добавить продукт в блюдо.")
+            return _failed_meal_save_result("dish_not_found")
+        await state.update_data(custom_product=None, custom_product_save_token=None, dish_add_destination=False)
+        await message.answer("✅ Продукт добавлен в блюдо")
+        items = dish_to_snapshot(dish)
+        await state.set_state(MealEntryStates.choosing_meal_type)
+        await state.update_data(saved_products=items, my_dish_items=items)
+        await message.answer(_format_saved_dish_editor(dish, items), reply_markup=_build_saved_dish_editor_keyboard(dish.id, items), parse_mode="HTML")
+        return MealSaveResult(MealSaveStatus.SAVED)
     save_result = MealRepository.save_meal_idempotent(
         save_token=save_token,
         user_id=resolved_user_id,
@@ -5952,6 +6162,21 @@ async def _save_ai_meal_draft(
         entry_date = date.today()
 
     _, api_details = _build_meal_update_payload(items)
+    if data.get("dish_add_destination"):
+        dish_id = int(data.get("dish_edit_id") or 0)
+        dish = DishRepository.get_by_id(user_id, dish_id)
+        merged = [*dish_to_snapshot(dish), *items] if dish else []
+        dish = DishService.replace_ingredients(user_id=user_id, dish_id=dish_id, items=merged) if merged else None
+        if dish is None:
+            await message.answer("❌ Не удалось добавить продукт в блюдо.")
+            return _failed_meal_save_result("dish_not_found")
+        await state.update_data(ai_pending_meal=None, dish_add_destination=False)
+        fresh = dish_to_snapshot(dish)
+        await state.set_state(MealEntryStates.choosing_meal_type)
+        await state.update_data(saved_products=fresh, my_dish_items=fresh)
+        await message.answer("✅ Продукт добавлен в блюдо")
+        await message.answer(_format_saved_dish_editor(dish, fresh), reply_markup=_build_saved_dish_editor_keyboard(dish.id, fresh), parse_mode="HTML")
+        return MealSaveResult(MealSaveStatus.SAVED)
     save_result = MealRepository.save_meal_idempotent(
         save_token=save_token,
         user_id=user_id,
@@ -7361,6 +7586,19 @@ async def _save_label_analysis_draft(
     }
     products_json = json.dumps([product_payload])
 
+    if data.get("dish_add_destination"):
+        dish = DishService.add_ingredient(user_id=user_id, dish_id=int(data.get("dish_edit_id") or 0), item=product_payload)
+        if dish is None:
+            await message.answer("❌ Не удалось добавить продукт в блюдо.")
+            return _failed_meal_save_result("dish_not_found")
+        await state.update_data(label_save_token=None, selected_label_weight=None, dish_add_destination=False)
+        fresh = dish_to_snapshot(dish)
+        await state.set_state(MealEntryStates.choosing_meal_type)
+        await state.update_data(saved_products=fresh, my_dish_items=fresh)
+        await message.answer("✅ Продукт добавлен в блюдо")
+        await message.answer(_format_saved_dish_editor(dish, fresh), reply_markup=_build_saved_dish_editor_keyboard(dish.id, fresh), parse_mode="HTML")
+        return MealSaveResult(MealSaveStatus.SAVED)
+
     save_result = MealRepository.save_meal_idempotent(
         save_token=save_token,
         user_id=user_id,
@@ -8707,6 +8945,9 @@ async def meal_weight_back_to_products(callback: CallbackQuery, state: FSMContex
     data = await state.get_data()
     saved_products = data.get("saved_products", [])
     await state.set_state(MealEntryStates.editing_meal_weight)
+    if data.get("dish_edit_mode"):
+        await _show_saved_dish_editor(callback.message, state, str(callback.from_user.id), int(data.get("dish_edit_id") or 0))
+        return
     if data.get("ai_text_draft_mode"):
         await callback.message.edit_text(
             "<b>✏️ Выбери продукт для редактирования:</b>",
@@ -8846,6 +9087,21 @@ async def meal_product_name_input_value(message: Message, state: FSMContext):
     product["name"] = new_name
     if "name_ru" in product:
         product["name_ru"] = new_name
+
+    if data.get("dish_edit_mode"):
+        dish = DishService.replace_ingredients(
+            user_id=str(message.from_user.id), dish_id=int(data.get("dish_edit_id") or 0),
+            items=saved_products,
+        )
+        if dish is None:
+            await state.clear()
+            await message.answer("❌ Не удалось обновить ингредиент блюда.")
+            return
+        await state.set_state(MealEntryStates.editing_meal_weight)
+        await state.update_data(saved_products=dish_to_snapshot(dish), my_dish_items=dish_to_snapshot(dish))
+        await message.answer("✅ Название продукта обновлено")
+        await message.answer(_render_product_actions_text(saved_products[product_idx]), reply_markup=_build_product_actions_keyboard(product_idx))
+        return
 
     if data.get("ai_text_draft_mode") or data.get("photo_draft_edit_mode"):
         pending = data.get("ai_pending_meal") or {}
@@ -9389,6 +9645,20 @@ async def _save_kbju_changes_for_product(
         await callback.answer("Не удалось обновить КБЖУ", show_alert=True)
         return False
 
+    if data.get("dish_edit_mode"):
+        dish = DishService.replace_ingredients(
+            user_id=user_id, dish_id=int(data.get("dish_edit_id") or 0), items=saved_products,
+        )
+        if dish is None:
+            await callback.answer("Не удалось обновить блюдо", show_alert=True)
+            return False
+        kbju_drafts.pop(str(product_idx), None)
+        await state.set_state(MealEntryStates.edit_kbju_menu)
+        await state.update_data(saved_products=dish_to_snapshot(dish), my_dish_items=dish_to_snapshot(dish), kbju_drafts=kbju_drafts)
+        await callback.message.edit_text(_render_kbju_editor_text(saved_products[product_idx]), reply_markup=_build_kbju_editor_keyboard(product_idx))
+        await callback.answer("✅ КБЖУ ингредиента сохранены")
+        return True
+
     if data.get("ai_text_draft_mode") or data.get("photo_draft_edit_mode"):
         kbju_drafts.pop(str(product_idx), None)
         pending = data.get("ai_pending_meal") or {}
@@ -9498,6 +9768,18 @@ async def meal_weight_save(callback: CallbackQuery, state: FSMContext):
 
     if not _apply_product_weight(product, draft_weight):
         await callback.answer("Не удалось пересчитать КБЖУ", show_alert=True)
+        return
+
+    if data.get("dish_edit_mode"):
+        dish = DishService.replace_ingredients(user_id=user_id, dish_id=int(data.get("dish_edit_id") or 0), items=saved_products)
+        if dish is None:
+            await callback.answer("Не удалось обновить блюдо", show_alert=True)
+            return
+        drafts.pop(str(product_idx), None)
+        fresh = dish_to_snapshot(dish)
+        await state.update_data(saved_products=fresh, my_dish_items=fresh, weight_drafts=drafts)
+        await callback.answer("✅ Вес ингредиента обновлён")
+        await callback.message.edit_text(_render_product_actions_text(fresh[product_idx]), reply_markup=_build_product_actions_keyboard(product_idx))
         return
 
     if data.get("ai_text_draft_mode") or data.get("photo_draft_edit_mode"):
@@ -9617,7 +9899,7 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
     if product_idx < 0 or product_idx >= len(saved_products):
         await callback.answer("Не удалось удалить продукт", show_alert=True)
         return
-    if data.get("photo_draft_edit_mode") and len(saved_products) == 1:
+    if (data.get("photo_draft_edit_mode") or data.get("dish_edit_mode")) and len(saved_products) == 1:
         await callback.answer("В блюде должен остаться хотя бы один ингредиент", show_alert=True)
         return
     source_meal_id = int(saved_products[product_idx].get("_source_meal_id") or meal_id or 0)
@@ -9628,6 +9910,17 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
         for idx, value in drafts.items()
         if int(idx) != product_idx
     }
+
+    if data.get("dish_edit_mode"):
+        dish = DishService.replace_ingredients(user_id=user_id, dish_id=int(data.get("dish_edit_id") or 0), items=saved_products)
+        if dish is None:
+            await callback.answer("Не удалось обновить блюдо", show_alert=True)
+            return
+        fresh = dish_to_snapshot(dish)
+        await state.update_data(saved_products=fresh, my_dish_items=fresh, weight_drafts=drafts, dish_edit_ingredient_id=None)
+        await callback.message.edit_text(_format_saved_dish_editor(dish, fresh), reply_markup=_build_saved_dish_editor_keyboard(dish.id, fresh), parse_mode="HTML")
+        await callback.answer("✅ Ингредиент удалён")
+        return
 
     if data.get("ai_text_draft_mode") or data.get("photo_draft_edit_mode"):
         pending = data.get("ai_pending_meal") or {}
