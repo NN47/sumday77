@@ -101,8 +101,9 @@ def test_quick_actions_water_button_keeps_legacy_callback_supported_by_common_ha
 def test_main_water_adjustment_inline_extends_quick_actions():
     assert main_water_adjustment_inline.inline_keyboard[0] == quick_actions_inline.inline_keyboard[0]
     row = main_water_adjustment_inline.inline_keyboard[1]
-    assert [button.text for button in row] == ["+200", "+250", "+500"]
+    assert [button.text for button in row] == ["-300", "+200", "+250", "+500"]
     assert [button.callback_data for button in row] == [
+        "quick_main_water_add_-300",
         "quick_main_water_add_200",
         "quick_main_water_add_250",
         "quick_main_water_add_500",
