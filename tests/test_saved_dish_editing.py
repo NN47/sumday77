@@ -1,5 +1,8 @@
 from contextlib import contextmanager
+import asyncio
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -8,6 +11,7 @@ from database.models import Base, Dish, DishIngredient, Meal, SavedProduct
 import database.repositories.dish_repository as repository_module
 import services.dish_service as service_module
 from services.dish_service import DishService, calculate_dish_totals, calculate_dish_weight, dish_to_snapshot
+from handlers import meals
 
 
 def _provider():
@@ -94,3 +98,82 @@ def test_invalid_or_foreign_updates_are_rejected(monkeypatch):
     assert DishService.replace_ingredients(user_id="42", dish_id=dish_id, items=[]) is None
     assert DishService.add_ingredient(user_id="another", dish_id=dish_id, item=_ingredient()) is None
     engine.dispose()
+
+
+def test_editor_formats_actual_ingredient_kbju_and_shared_dish_totals():
+    dish = SimpleNamespace(id=7, name="Бутерброд")
+    items = [
+        _ingredient("Хлеб", 110, 275, 8.8, 3.3, 52.8),
+        _ingredient("Сыр", 20, 70, 5, 5.4, 0.2),
+    ]
+
+    text = meals._format_saved_dish_editor(dish, items)
+
+    assert "1️⃣ Хлеб" in text
+    assert "⚖️ <b>Вес:</b> 110 г" in text
+    assert "🔥 <b>Калории:</b> 275 ккал" in text
+    assert "2️⃣ Сыр" in text
+    assert "🔥 <b>Калории:</b> 70 ккал" in text
+    assert "<b>Итого по блюду:</b>" in text
+    assert "📦 <b>Общий вес:</b> 130 г" in text
+    assert "🔥 <b>Калории:</b> 345 ккал" in text
+    assert "🥩 <b>Белки:</b> 13.8 г" in text
+
+
+def test_editor_uses_explicit_done_action():
+    keyboard = meals._build_saved_dish_editor_keyboard(
+        7, [_ingredient("Хлеб"), _ingredient("Сыр")]
+    )
+
+    last_button = keyboard.inline_keyboard[-1][0]
+    assert last_button.text == "✅ Готово"
+    assert last_button.callback_data == "my_dish_edit_done:7"
+    assert all(button.text != "⬅️ Назад" for row in keyboard.inline_keyboard for button in row)
+
+
+def test_done_clears_edit_context_hides_reply_keyboard_and_opens_fresh_card():
+    dish = SimpleNamespace(id=7, name="Новый бутерброд")
+    items = [_ingredient("Хлеб", 120, 300, 9.6, 3.6, 57.6)]
+    message = SimpleNamespace(edit_text=AsyncMock())
+    callback = SimpleNamespace(
+        data="my_dish_edit_done:7",
+        from_user=SimpleNamespace(id=42),
+        message=message,
+        answer=AsyncMock(),
+    )
+
+    class State:
+        def __init__(self):
+            self.data = {
+                "meal_type": "lunch",
+                "my_dishes_page": 2,
+                "dish_edit_mode": True,
+                "dish_edit_id": 7,
+                "dish_edit_ingredient_id": 0,
+                "dish_add_destination": True,
+                "custom_product": {"name": "stale"},
+            }
+            self.clear = AsyncMock(side_effect=self.data.clear)
+
+        async def get_data(self):
+            return dict(self.data)
+
+        async def update_data(self, **values):
+            self.data.update(values)
+
+    state = State()
+    with patch.object(meals.DishRepository, "get_by_id", return_value=dish), patch.object(
+        meals, "dish_to_snapshot", return_value=items
+    ), patch.object(meals, "_hide_meal_reply_keyboard", new=AsyncMock()) as hide_keyboard:
+        asyncio.run(meals.my_dish_edit_done(callback, state))
+
+    state.clear.assert_awaited_once()
+    hide_keyboard.assert_awaited_once_with(message)
+    assert "dish_edit_mode" not in state.data
+    assert "dish_edit_ingredient_id" not in state.data
+    assert "dish_add_destination" not in state.data
+    assert "custom_product" not in state.data
+    assert state.data["my_dish_items"] == items
+    rendered_text = message.edit_text.await_args.args[0]
+    assert "Новый бутерброд" in rendered_text
+    assert "300 ккал" in rendered_text
