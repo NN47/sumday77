@@ -97,7 +97,11 @@ from services.ai_quota_service import (
     format_free_ai_status_block,
     validate_ai_image,
 )
-from services.photo_food_validator import validate_photo_food_payload
+from services.food_photo_analysis_service import (
+    FoodPhotoProvider,
+    FoodPhotoProvidersUnavailableError,
+    food_photo_analysis_service,
+)
 from services.daily_analysis_preflight_service import return_to_active_daily_preflight
 from utils.validators import parse_date
 from utils.log_sanitizer import safe_exception_summary
@@ -3084,43 +3088,6 @@ async def _run_openai_label_with_yandex_fallback(
         )
         raise AllProvidersUnavailableError("All providers unavailable") from yandex_error
     raise AllProvidersUnavailableError("All providers unavailable")
-
-
-def _has_food_photo_result(payload: Optional[dict]) -> bool:
-    """Проверяет, что AI вернул пригодный результат анализа еды по фото."""
-    return validate_photo_food_payload(payload) is not None
-
-
-async def _run_food_photo_analysis_with_openai_fallback(
-    analyzer,
-    image_data: bytes,
-    *,
-    user_id: str | int | None = None,
-    comment: str | None = None,
-    quota_request_id: str | None = None,
-) -> ProviderAnalysisResult:
-    """Запускает анализ еды по фото через Gemini с fallback на OpenAI."""
-    try:
-        result = await _run_image_analysis_with_openai_fallback(
-            analyzer,
-            image_data,
-            user_id=user_id,
-            openai_analyzer=openai_label_service.analyze_food_photo_openai,
-            openai_feature="food_photo_analysis",
-            operation_type="анализа еды по фото",
-            success_validator=_has_food_photo_result,
-            comment=comment,
-            quota_request_id=quota_request_id,
-        )
-        if result.provider == "gemini":
-            logger.info("Анализ еды по фото завершён успешно через Gemini")
-        elif result.provider == "openai":
-            logger.info("Анализ еды по фото завершён успешно через OpenAI")
-        logger.info("final_food_photo_analysis_provider=%s", result.provider)
-        return result
-    except AllProvidersUnavailableError as error:
-        logger.error("Анализ еды по фото завершён ошибкой: все провайдеры недоступны")
-        raise AllProvidersUnavailableError("All providers unavailable") from error
 
 
 def reset_user_state(message: Message, *, keep_supplements: bool = False):
@@ -6925,15 +6892,12 @@ async def _handle_food_photo_analysis(
     state: FSMContext,
     *,
     provider: str,
-    analyzer,
-    runner,
-    error_sender,
     raw_query: str = "[Анализ по фото]",
     image_file_id: str | None = None,
     comment: str | None = None,
     user_id: str | None = None,
 ):
-    """Общая логика обработки фото еды с резервными AI-провайдерами."""
+    """Получает Telegram input и отображает результат service-layer анализа."""
     await _clear_photo_comment_fields(state)
     user_id = str(user_id or message.from_user.id)
     data = await state.get_data()
@@ -6989,65 +6953,34 @@ async def _handle_food_photo_analysis(
         return
 
     try:
-        if provider == "openai":
-            analysis_result = await _run_openai_image_with_yandex_fallback(
-                analyzer,
-                yandex_ai_service.analyze_food_photo,
-                image_data,
-                user_id=user_id,
-                feature="food_photo_analysis",
-                operation_log_name="анализа еды по фото",
-                success_validator=_has_food_photo_result,
-                comment=comment,
-                quota_request_id=request_id,
-            )
-            kbju_data = analysis_result.payload
-            final_provider = analysis_result.provider
-        elif provider == "gemini":
-            analysis_result = await _run_food_photo_analysis_with_openai_fallback(
-                analyzer,
-                image_data,
-                user_id=user_id,
-                comment=comment,
-                quota_request_id=request_id,
-            )
-            kbju_data = analysis_result.payload
-            final_provider = analysis_result.provider
-        else:
-            ai_quota_service.mark_provider_started(request_id)
-            if comment:
-                kbju_data = await runner(analyzer, image_data, comment)
-            else:
-                kbju_data = await runner(analyzer, image_data)
-            final_provider = provider
-    except AllProvidersUnavailableError:
+        analysis_result = await food_photo_analysis_service.analyze(
+            image_bytes=image_data,
+            user_id=user_id,
+            comment=comment,
+            quota_request_id=request_id,
+            primary_provider=FoodPhotoProvider(provider),
+        )
+    except FoodPhotoProvidersUnavailableError:
         ai_quota_service.release(request_id, outcome="providers_unavailable")
         await message.answer(
             "⚠️ Не получилось определить КБЖУ по фото.\n"
             "Попробуй сделать фото получше или используй другой способ."
         )
         return
-    except Exception as e:
+    except Exception as error:
         ai_quota_service.release(request_id, outcome="provider_error")
-        await error_sender(message, e)
+        if provider == "openai":
+            await _send_openai_food_error_message(message, error)
+        else:
+            await _send_ai_error_message(message, error)
         return
 
+    final_provider = analysis_result.provider_used
     logger.info("food_photo_analysis_completed provider=%s", final_provider)
-
-    validated_payload = validate_photo_food_payload(kbju_data)
-    if not validated_payload:
-        ai_quota_service.release(request_id, outcome="no_food")
-        await message.answer(
-            "⚠️ Не получилось определить КБЖУ по фото.\n"
-            "Попробуй сделать фото получше или используй другой способ."
-        )
-        return
-
-    raw_dishes = validated_payload.get("dishes") or [
+    raw_dishes = analysis_result.dishes or [
         {
-            "dish_name": validated_payload.get("dish_name"),
-            "confidence": validated_payload.get("confidence"),
-            "ingredients": validated_payload.get("items") or [],
+            "dish_name": analysis_result.dish_name,
+            "ingredients": analysis_result.items,
         }
     ]
     candidates = []
@@ -7215,9 +7148,6 @@ async def _run_pending_food_photo_analysis(
         message,
         state,
         provider="gemini",
-        analyzer=gemini_service.estimate_kbju_from_photo,
-        runner=_run_gemini_task,
-        error_sender=_send_ai_error_message,
         image_file_id=str(file_id),
         comment=comment,
         user_id=user_id,
@@ -7319,9 +7249,6 @@ async def handle_openai_food_photo(message: Message, state: FSMContext):
         message,
         state,
         provider="openai",
-        analyzer=openai_label_service.analyze_food_photo_openai,
-        runner=_run_openai_label_task,
-        error_sender=_send_openai_food_error_message,
         raw_query="[Анализ по фото OpenAI]",
     )
 
