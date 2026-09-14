@@ -20,6 +20,7 @@ from services.ai_food_parser import (
     MAX_ITEM_WEIGHT_G,
 )
 from services.gemini_service import GEMINI_FOOD_PHOTO_PROMPT
+from services.food_photo_analysis_service import FoodPhotoAnalysisResult, FoodPhotoProvidersUnavailableError
 from services.openai_label_service import OPENAI_FOOD_PHOTO_PROMPT
 from services.photo_food_validator import (
     PHOTO_COMMENT_SECURITY_INSTRUCTIONS,
@@ -45,6 +46,20 @@ def _payload(items=None, total=None):
         "items": items if items is not None else [_item()],
         "total": total or {"kcal": 999, "protein": 999, "fat": 999, "carbs": 999},
     }
+
+
+def _service_result(payload):
+    validated = validate_photo_food_payload(payload)
+    assert validated is not None
+    return FoodPhotoAnalysisResult(
+        status="ok",
+        items=validated["items"],
+        total=validated["total"],
+        dish_name=validated["dish_name"],
+        dishes=validated["dishes"],
+        provider_used="gemini",
+        fallback_used=False,
+    )
 
 
 class _State:
@@ -177,9 +192,9 @@ def test_safe_photo_comment_creates_structured_preview_and_saves_without_raw_com
     )
 
     with patch(
-        "handlers.meals._run_food_photo_analysis_with_openai_fallback",
+        "handlers.meals.food_photo_analysis_service.analyze",
         new_callable=AsyncMock,
-        return_value=meals.ProviderAnalysisResult(payload=provider_payload, provider="gemini"),
+        return_value=_service_result(provider_payload),
     ) as analyze, patch("handlers.meals.MealRepository.save_meal_idempotent") as save_meal:
         asyncio.run(meals.handle_food_photo_comment(message, state))
 
@@ -237,9 +252,9 @@ def test_invalid_photo_item_numbers_do_not_create_preview_or_database_record(fie
     )
 
     with patch(
-        "handlers.meals._run_food_photo_analysis_with_openai_fallback",
+        "handlers.meals.food_photo_analysis_service.analyze",
         new_callable=AsyncMock,
-        return_value=meals.ProviderAnalysisResult(payload=_payload(items=[_item(**{field: value})]), provider="gemini"),
+        side_effect=FoodPhotoProvidersUnavailableError("All providers unavailable"),
     ), patch("handlers.meals.MealRepository.save_meal_idempotent") as save_meal:
         asyncio.run(meals.handle_food_photo_comment(message, state))
 
@@ -302,9 +317,9 @@ def test_prompt_injection_comment_with_empty_items_does_not_create_fake_food_or_
     invalid_payload = {"items": [], "total": {"kcal": 2500, "protein": 50, "fat": 100, "carbs": 300}}
 
     with patch(
-        "handlers.meals._run_food_photo_analysis_with_openai_fallback",
+        "handlers.meals.food_photo_analysis_service.analyze",
         new_callable=AsyncMock,
-        return_value=meals.ProviderAnalysisResult(payload=invalid_payload, provider="gemini"),
+        side_effect=FoodPhotoProvidersUnavailableError("All providers unavailable"),
     ), patch("handlers.meals.MealRepository.save_meal_idempotent") as save_meal:
         asyncio.run(meals.handle_food_photo_comment(message, state))
 
@@ -330,9 +345,9 @@ def test_provider_error_and_cancel_remove_legacy_raw_comment_fields(caplog):
     )
 
     with patch(
-        "handlers.meals._run_food_photo_analysis_with_openai_fallback",
+        "handlers.meals.food_photo_analysis_service.analyze",
         new_callable=AsyncMock,
-        side_effect=meals.AllProvidersUnavailableError("All providers unavailable"),
+        side_effect=FoodPhotoProvidersUnavailableError("All providers unavailable"),
     ):
         caplog.set_level(logging.INFO, logger="handlers.meals")
         asyncio.run(meals.handle_food_photo_comment(message, state))
