@@ -1938,7 +1938,8 @@ def _build_my_products_source_filter_reply_keyboard() -> ReplyKeyboardMarkup:
 
 async def _show_my_products_source_filter_block(message: Message) -> None:
     await message.answer(
-        "📂 <b>Показать продукты по источнику:</b>",
+        "📂 <b>Введите текст для поиска или выберите кнопку ниже, "
+        "чтобы показать продукты по источнику:</b>",
         reply_markup=_build_my_products_source_filter_reply_keyboard(),
         parse_mode="HTML",
     )
@@ -10649,6 +10650,18 @@ async def _ask_unsolicited_meal_intent(message: Message, state: FSMContext) -> N
 
 @router.message(MealEntryStates.choosing_meal_type, _is_unsolicited_meal_content)
 async def handle_unsolicited_meal_content(message: Message, state: FSMContext):
+    data = await state.get_data()
+    if data.get("in_my_products_section") and message.text:
+        meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+        await _show_my_products_search_results(
+            message,
+            state,
+            user_id=str(message.from_user.id),
+            meal_type=meal_type,
+            query=message.text.strip(),
+            page=1,
+        )
+        return
     await _ask_unsolicited_meal_intent(message, state)
 
 

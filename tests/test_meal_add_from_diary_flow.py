@@ -1287,6 +1287,38 @@ def test_my_products_search_start_bolds_prompt_first_sentence():
     assert "Например:\nсыр\nйог\nкур" in text
 
 
+def test_my_products_source_filter_prompt_offers_direct_text_search():
+    message = _build_message()
+
+    asyncio.run(meals._show_my_products_source_filter_block(message))
+
+    text = message.answer.await_args.args[0]
+    assert (
+        "📂 <b>Введите текст для поиска или выберите кнопку ниже, "
+        "чтобы показать продукты по источнику:</b>"
+    ) == text
+
+
+def test_text_entered_in_my_products_section_runs_product_search():
+    message = _build_message()
+    message.from_user = SimpleNamespace(id=12345)
+    message.text = "творог"
+    state = _DummyState()
+    state._data.update({"meal_type": "breakfast", "in_my_products_section": True})
+
+    with patch("handlers.meals._show_my_products_search_results", new_callable=AsyncMock) as search:
+        asyncio.run(meals.handle_unsolicited_meal_content(message, state))
+
+    search.assert_awaited_once_with(
+        message,
+        state,
+        user_id="12345",
+        meal_type="breakfast",
+        query="творог",
+        page=1,
+    )
+
+
 def test_my_product_meals_keyboard_has_search_button():
     item = meals.MyProductItem(
         source_meal_id=7,
