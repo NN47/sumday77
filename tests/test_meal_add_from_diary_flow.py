@@ -435,7 +435,9 @@ def test_reopening_filled_meal_from_diary_shows_existing_products_before_new_add
         ["meal_entry_my_products:snack:1", "meal_entry_my_dishes:snack:1"],
     ]
     add_menu_call = callback.message.answer.await_args_list[2]
-    assert add_menu_call.args[0] == "Можно добавить ещё продукт в этот приём пищи или завершить его."
+    assert add_menu_call.args[0] == (
+        "Можно добавить в этот приём пищи ещё продукт нажав кнопку ниже 👇 или завершить его."
+    )
     assert add_menu_call.kwargs["reply_markup"] == meals.kbju_add_menu
 
 def test_add_meal_from_diary_block_sets_context_and_opens_methods():
@@ -519,7 +521,9 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_switches_bottom_
     ]
     assert message.answer.await_args_list[1].kwargs["parse_mode"] == "HTML"
     add_menu_call = message.answer.await_args_list[-1]
-    assert "добавить ещё продукт" in add_menu_call.args[0]
+    assert add_menu_call.args[0] == (
+        "Можно добавить в этот приём пищи ещё продукт нажав кнопку ниже 👇 или завершить его."
+    )
     assert add_menu_call.kwargs["reply_markup"] == meals.kbju_add_menu
 
 
@@ -2387,7 +2391,9 @@ def test_back_from_ai_method_restores_open_meal_entry_screen():
         ["➕ Добавить блюдо"],
         ["📦 Мои продукты", "🍽 Мои блюда"],
     ]
-    assert message.answer.await_args_list[1].args[0] == "Можно добавить ещё продукт в этот приём пищи или завершить его."
+    assert message.answer.await_args_list[1].args[0] == (
+        "Можно добавить в этот приём пищи ещё продукт нажав кнопку ниже 👇 или завершить его."
+    )
     assert message.answer.await_args_list[1].kwargs["reply_markup"] == meals.kbju_add_menu
 
 
@@ -2425,4 +2431,6 @@ def test_back_from_manual_products_restores_open_meal_entry_screen():
     assert "🍲 <b>Обед</b>" in restored_text
     assert "• <b>Суп</b> (300 г)" in restored_text
     assert "<b>Итого обед:</b>" in restored_text
-    assert message.answer.await_args_list[1].args[0] == "Можно добавить ещё продукт в этот приём пищи или завершить его."
+    assert message.answer.await_args_list[1].args[0] == (
+        "Можно добавить в этот приём пищи ещё продукт нажав кнопку ниже 👇 или завершить его."
+    )
