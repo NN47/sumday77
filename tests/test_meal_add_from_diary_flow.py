@@ -1665,6 +1665,28 @@ def test_my_product_weight_edit_from_my_products_preserves_custom_origin():
 
     assert state._data["my_product_pick_origin"] == "custom"
     assert state._data["in_my_product_menu"] is True
+    state.set_state.assert_awaited_once_with(meals.MealEntryStates.editing_meal_weight)
+
+
+def test_typed_number_in_open_weight_editor_is_used_as_manual_weight():
+    message = _build_message()
+    message.text = "80"
+    state = _DummyState()
+    state._data.update(
+        {
+            "editing_product_idx": 0,
+            "weight_editor_message_id": 42,
+            "saved_products": [{"name": "Чизкейк", "grams": 170}],
+        }
+    )
+
+    with patch(
+        "handlers.meals.meal_weight_manual_input_value", new=AsyncMock()
+    ) as apply_manual_weight:
+        asyncio.run(meals.handle_meal_weight_edit(message, state))
+
+    apply_manual_weight.assert_awaited_once_with(message, state)
+    message.answer.assert_not_awaited()
 
 
 def test_my_product_weight_back_from_my_products_keeps_delete_button_on_confirm_card():
