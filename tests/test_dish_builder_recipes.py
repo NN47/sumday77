@@ -196,6 +196,54 @@ def test_recipe_builder_uses_same_compact_summary_as_new_dish(monkeypatch):
     )
 
 
+def test_recipe_builder_offers_saved_dishes_with_stable_callback():
+    keyboard = meals._build_dish_builder_keyboard([], "B" * 22)
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    saved_dishes = next(button for button in buttons if button.text == "🍽 Выбрать из моих блюд")
+    assert saved_dishes.callback_data == "dish_from_saved:" + "B" * 12 + ":1"
+
+
+def test_saved_dish_is_added_to_recipe_as_aggregate_ingredient(db, monkeypatch):
+    saved = dish_service.DishService.save_photo_dish_entry(
+        save_token="saved-dish", user_id="42", dish_name="Рис с овощами",
+        items=[item()], entry_date=date(2026, 9, 12), meal_type="lunch",
+    ).dish
+    state = builder_state()
+    state.data["dish_builder"]["kind"] = "recipe"
+    cb = SimpleNamespace(
+        data=f"dish_saved_pick:{'B' * 12}:{saved.id}",
+        message=message(), from_user=SimpleNamespace(id=42), answer=AsyncMock(),
+    )
+    show = AsyncMock()
+    monkeypatch.setattr(meals, "_show_dish_builder", show)
+
+    asyncio.run(meals.dish_builder_saved_dish_pick(cb, state))
+
+    assert state.data["dish_builder"]["items"] == [{
+        "name": "Рис с овощами", "grams": 100.0, "kcal": 350.0,
+        "protein": 7.0, "fat": 1.0, "carbs": 78.0,
+    }]
+    show.assert_awaited_once_with(cb.message, state, edit=True)
+
+
+def test_saved_dish_picker_excludes_recipe_being_edited(db, monkeypatch):
+    recipe = recipe_service.save_recipe(
+        user_id="42", token="recipe", name="Каша", items=[item()],
+        cooking_method=None, cooked_weight_g=None,
+    )
+    state = builder_state()
+    state.data["dish_builder"].update(kind="recipe", recipe_id=recipe.id)
+    msg = message()
+    monkeypatch.setattr(meals, "_edit_or_send_photo_analysis_message", AsyncMock())
+
+    asyncio.run(meals._show_builder_saved_dishes(msg, state, user_id="42", page=1))
+
+    markup = meals._edit_or_send_photo_analysis_message.await_args.kwargs["reply_markup"]
+    callbacks = [button.callback_data for row in markup.inline_keyboard for button in row]
+    assert not any(value.startswith("dish_saved_pick:") for value in callbacks)
+    assert callbacks[-1] == "dish_saved_back:" + "B" * 12
+
+
 def test_back_discards_nested_draft_and_keeps_ingredients(monkeypatch):
     state = builder_state(ai_pending_meal={"items": [item()]}, photo_save_token="old")
     state.data["dish_builder"]["items"] = [item()]
