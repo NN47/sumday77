@@ -3717,16 +3717,20 @@ def _build_saved_dishes_keyboard(
     return keyboard
 
 
-def _format_saved_dish_card(dish, items: list[dict]) -> str:
+def _format_saved_dish_card(dish, items: list[dict], *, full_composition: bool = False) -> str:
     totals = calculate_dish_totals(items)
     lines = [
         f"🥣 <b>{html.escape(dish.name)}</b>",
         "",
         "<b>Состав:</b>",
     ]
-    for index, item in enumerate(items[:15]):
+    shown_items = items if full_composition else items[:15]
+    for index, item in enumerate(shown_items):
+        ingredient_name = str(item.get("name") or "Ингредиент")
+        if not full_composition:
+            ingredient_name = _truncate_product_name(ingredient_name)
         lines.append(
-            f"{_number_emoji(index)} {html.escape(_truncate_product_name(str(item.get('name') or 'Ингредиент')))} — "
+            f"{_number_emoji(index)} {html.escape(ingredient_name)} — "
             f"{_safe_float(item.get('grams')):.0f} г"
         )
     lines.extend(
@@ -3744,7 +3748,7 @@ def _format_saved_dish_card(dish, items: list[dict]) -> str:
                       COOKING_METHODS.get(getattr(dish, "cooking_method", None), "Без обработки")])
         if getattr(dish, "preparation", None):
             lines.append(html.escape(dish.preparation))
-    if len(items) > 15:
+    if not full_composition and len(items) > 15:
         lines.append(f"Ещё ингредиентов: {len(items) - 15}. Полный состав доступен в редакторе.")
     return "\n".join(lines)
 
@@ -3765,6 +3769,16 @@ def _build_saved_dish_card_keyboard(
                                f"recipes:{page}" if return_to_recipes else
                                f"meal_entry_my_dishes:{meal_type}:{page}"),
             )],
+        ]
+    )
+
+
+def _build_created_recipe_keyboard(dish_id: int) -> InlineKeyboardMarkup:
+    """Keep a newly created recipe in focus until the user chooses where to go."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"my_dish_edit:{dish_id}")],
+            [InlineKeyboardButton(text="⬅️ Назад к рецептам", callback_data="recipes:1")],
         ]
     )
 
@@ -5172,6 +5186,7 @@ async def recipe_preparation_input(message: Message, state: FSMContext):
         await message.answer("Отправь текст приготовления или нажми «Сохранить рецепт».")
         return
     preparation = builder.get("preparation", "") if text == "Сохранить рецепт" else text
+    is_new_recipe = builder.get("recipe_id") is None
     try:
         dish = save_recipe(user_id=str(message.from_user.id), token=_dish_builder_token(data),
                            name=builder.get("name"), items=builder.get("items") or [],
@@ -5188,8 +5203,19 @@ async def recipe_preparation_input(message: Message, state: FSMContext):
     await state.update_data(meal_type=builder.get("meal_type") or MealType.SNACK.value,
                             entry_date=builder.get("entry_date"))
     await _hide_meal_reply_keyboard(message)
-    await message.answer("✅ Рецепт сохранён.\n\n" + _format_saved_dish_card(dish, dish_to_snapshot(dish)),
-                         parse_mode="HTML")
+    if is_new_recipe:
+        await message.answer(
+            "🎉 <b>Рецепт создан!</b>\n\n" + _format_saved_dish_card(
+                dish, dish_to_snapshot(dish), full_composition=True,
+            ),
+            reply_markup=_build_created_recipe_keyboard(dish.id),
+            parse_mode="HTML",
+        )
+        return
+    await message.answer(
+        "✅ Рецепт сохранён.\n\n" + _format_saved_dish_card(dish, dish_to_snapshot(dish)),
+        parse_mode="HTML",
+    )
     await _show_recipes(message, state, user_id=str(message.from_user.id))
 
 

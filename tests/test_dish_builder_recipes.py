@@ -271,7 +271,8 @@ def test_recipe_full_handler_flow_saves_template_only(db, monkeypatch):
     state = builder_state()
     state.data["dish_builder"].update(kind="recipe", items=[item()])
     monkeypatch.setattr(meals, "_hide_meal_reply_keyboard", AsyncMock())
-    monkeypatch.setattr(meals, "_show_recipes", AsyncMock())
+    show_recipes = AsyncMock()
+    monkeypatch.setattr(meals, "_show_recipes", show_recipes)
 
     async def run():
         await meals._save_composed_dish(message(), state, "Рисовая каша")
@@ -286,7 +287,38 @@ def test_recipe_full_handler_flow_saves_template_only(db, monkeypatch):
             assert saved.cooked_weight_g == 300
             assert saved.preparation == "Сварить рис."
         assert "dish_builder" not in state.data
+        show_recipes.assert_not_awaited()
     asyncio.run(run())
+
+
+def test_new_recipe_result_stays_on_full_card_with_only_edit_and_back_actions(db, monkeypatch):
+    state = builder_state()
+    state.data["dish_builder"].update(
+        kind="recipe", name="Рисовая каша", items=[item()],
+        cooking_method="boil", cooked_weight_g=300,
+    )
+    monkeypatch.setattr(meals, "_hide_meal_reply_keyboard", AsyncMock())
+    show_recipes = AsyncMock()
+    monkeypatch.setattr(meals, "_show_recipes", show_recipes)
+    msg = message("Сварить рис до готовности.")
+
+    asyncio.run(meals.recipe_preparation_input(msg, state))
+
+    show_recipes.assert_not_awaited()
+    text = msg.answer.await_args.args[0]
+    assert text.startswith("🎉 <b>Рецепт создан!</b>\n\n🥣 <b>Рисовая каша</b>")
+    assert "1️⃣ Рис — 300 г" in text
+    assert "📦 <b>Общий вес:</b> 300 г" in text
+    assert "🔥 <b>Калории:</b> 350 ккал" in text
+    assert "🥩 <b>Белки:</b> 7.0 г" in text
+    assert "🥑 <b>Жиры:</b> 1.0 г" in text
+    assert "🍚 <b>Углеводы:</b> 78.0 г" in text
+    assert "Сварить рис до готовности." in text
+    buttons = [button for row in msg.answer.await_args.kwargs["reply_markup"].inline_keyboard for button in row]
+    assert [(button.text, button.callback_data) for button in buttons] == [
+        ("✏️ Редактировать", "my_dish_edit:1"),
+        ("⬅️ Назад к рецептам", "recipes:1"),
+    ]
 
 
 @pytest.mark.parametrize("method", ["fry", "bake", "none"])
