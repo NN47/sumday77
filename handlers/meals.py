@@ -86,7 +86,7 @@ from services.yandex_ai_service import (
     yandex_ai_service,
     YandexAIServiceError,
 )
-from services.ai_food_parser import FoodAnalysisStatus, parse_kbju_json
+from services.ai_food_parser import FoodAnalysisStatus, MAX_ITEM_WEIGHT_G, parse_kbju_json
 from services.ai_usage_logger import log_ai_usage
 from services.openai_token_budget_service import (
     OpenAIDailyTokenLimitExceeded,
@@ -3349,6 +3349,44 @@ def _format_product_weight_g(value: float | int) -> str:
     return f"{numeric:.0f}" if numeric.is_integer() else f"{numeric:.2f}".rstrip("0").rstrip(".")
 
 
+def _whole_portions_count(
+    unit_weight_g: float | None,
+    package_weight_g: float | None,
+    *,
+    tolerance: float = 0.02,
+) -> int | None:
+    """Returns a package portion count only when the weight ratio is near an integer."""
+    if not unit_weight_g or not package_weight_g:
+        return None
+    ratio = float(package_weight_g) / float(unit_weight_g)
+    nearest = round(ratio)
+    if nearest < 1 or not math.isclose(ratio, nearest, abs_tol=tolerance):
+        return None
+    return nearest
+
+
+def _my_product_unit_label(unit_name: str | None) -> str:
+    """Keeps an explicit legacy label while using the new friendly default."""
+    return str(unit_name or "порция").strip() or "порция"
+
+
+def _render_my_product_reference_lines(item: MyProductItem) -> list[str]:
+    lines: list[str] = []
+    if item.unit_weight_g is not None:
+        label = html.escape(_my_product_unit_label(item.unit_name))
+        lines.append(
+            f"1️⃣ <b>1 {label}:</b> {_format_product_weight_g(item.unit_weight_g)} г"
+        )
+    if item.package_weight_g is not None:
+        lines.append(
+            f"📦 <b>Весь продукт:</b> {_format_product_weight_g(item.package_weight_g)} г"
+        )
+    portions = _whole_portions_count(item.unit_weight_g, item.package_weight_g)
+    if portions is not None:
+        lines.append(f"🍽 <b>Порций в продукте:</b> {portions}")
+    return lines
+
+
 def _render_my_product_confirm_text(meal_type: str, meal, amount_g: int = 100) -> str:
     meal_ui = display_meal_type_with_bold_name(meal_type)
     if isinstance(meal, MyProductItem):
@@ -3378,18 +3416,24 @@ def _render_my_product_confirm_text(meal_type: str, meal, amount_g: int = 100) -
         "",
         f"⚖️ <b>Последняя порция:</b> {_format_product_weight_g(amount_g)} г",
     ]
-    if unit_weight_g is not None:
-        safe_unit_name = html.escape(unit_name or "шт.")
-        lines.append(
-            f"1️⃣ <b>1 {safe_unit_name}:</b> {_format_product_weight_g(unit_weight_g)} г"
+    lines.extend(
+        _render_my_product_reference_lines(
+            MyProductItem(
+                source_meal_id=None,
+                product_index=None,
+                title=title,
+                amount_g=amount_g,
+                calories=calories,
+                protein=protein,
+                fat=fat,
+                carbs=carbs,
+                unit_weight_g=unit_weight_g,
+                unit_name=unit_name,
+                package_weight_g=package_weight_g,
+                package_units=package_units,
+            )
         )
-    if package_weight_g is not None or package_units is not None:
-        package_parts = []
-        if package_weight_g is not None:
-            package_parts.append(f"{_format_product_weight_g(package_weight_g)} г")
-        if package_units is not None:
-            package_parts.append(f"{package_units} шт.")
-        lines.append(f"📦 <b>Упаковка:</b> {' • '.join(package_parts)}")
+    )
     lines.extend(
         [
             "",
@@ -3573,11 +3617,10 @@ def _build_my_product_confirm_keyboard(
         ],
     ]
     if item is not None and item.unit_weight_g is not None:
-        unit_label = _truncate_my_product_name(item.unit_name or "шт.", limit=20)
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"1️⃣ Добавить 1 {unit_label}",
+                    text="1️⃣ Добавить 1 порцию",
                     callback_data=(
                         f"mpu:{meal_type}:{page}:{source_meal_id}:"
                         f"{product_idx}:{callback_token}"
@@ -3587,6 +3630,9 @@ def _build_my_product_confirm_keyboard(
         )
     rows.append(
         [InlineKeyboardButton(text="✏️ Изменить вес", callback_data=f"my_product_edit_weight:{meal_type}:{page}:{source_meal_id}:{product_idx}")]
+    )
+    rows.append(
+        [InlineKeyboardButton(text="⚙️ Порция и упаковка", callback_data="my_product_reference")]
     )
     if include_delete:
         rows.append(
@@ -3599,6 +3645,102 @@ def _build_my_product_confirm_keyboard(
         )
     rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_product_back:{meal_type}:{page}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _render_my_product_reference_text(item: MyProductItem) -> str:
+    unit_value = (
+        f"{_format_product_weight_g(item.unit_weight_g)} г"
+        if item.unit_weight_g is not None
+        else "не указана"
+    )
+    package_value = (
+        f"{_format_product_weight_g(item.package_weight_g)} г"
+        if item.package_weight_g is not None
+        else "не указан"
+    )
+    lines = [
+        "⚙️ <b>Порция и упаковка</b>",
+        "",
+        f"<b>{html.escape(item.title or 'Продукт')}</b>",
+        "",
+        f"1️⃣ <b>Одна порция:</b> {unit_value}",
+        f"📦 <b>Вес всего продукта:</b> {package_value}",
+    ]
+    portions = _whole_portions_count(item.unit_weight_g, item.package_weight_g)
+    if portions is not None:
+        lines.append(f"🍽 <b>Порций в продукте:</b> {portions}")
+    return "\n".join(lines)
+
+
+def _build_my_product_reference_keyboard(item: MyProductItem) -> InlineKeyboardMarkup:
+    portion_action = "Изменить" if item.unit_weight_g is not None else "Указать"
+    package_action = "Изменить" if item.package_weight_g is not None else "Указать"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"1️⃣ {portion_action} одну порцию", callback_data="my_product_reference_portion")],
+            [InlineKeyboardButton(text=f"📦 {package_action} общий вес", callback_data="my_product_reference_package")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="my_product_reference_back")],
+        ]
+    )
+
+
+def _build_my_product_reference_input_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="my_product_reference")]
+        ]
+    )
+
+
+def _parse_my_product_reference_weight(raw_text: str) -> float | None:
+    """Parses a positive product weight with an optional Russian gram suffix."""
+    match = re.fullmatch(
+        r"\s*(\d+(?:[.,]\d+)?)\s*(?:г|гр|грамм(?:а|ов)?)?\s*",
+        raw_text or "",
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    value = float(match.group(1).replace(",", "."))
+    if not math.isfinite(value) or value <= 0 or value > MAX_ITEM_WEIGHT_G:
+        return None
+    return value
+
+
+def _get_my_product_item_from_state(data: dict, user_id: str) -> MyProductItem | None:
+    source_meal_id = data.get("my_product_source_meal_id")
+    if not source_meal_id:
+        return None
+    source_meal = MealRepository.get_meal_by_id(int(source_meal_id), str(user_id))
+    if source_meal is None:
+        return None
+    return _get_my_product_from_source_meal(
+        source_meal,
+        _parse_my_product_index(data.get("my_product_source_product_idx")),
+        user_id=str(user_id),
+    )
+
+
+async def _show_my_product_reference(
+    message: Message,
+    state: FSMContext,
+    *,
+    user_id: str,
+    edit_message: bool,
+) -> bool:
+    data = await state.get_data()
+    item = _get_my_product_item_from_state(data, user_id)
+    if item is None:
+        await message.answer("❌ Не удалось найти продукт в истории.")
+        return False
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    text = _render_my_product_reference_text(item)
+    keyboard = _build_my_product_reference_keyboard(item)
+    if edit_message:
+        await message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    else:
+        await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    return True
 
 
 async def _ensure_my_product_save_token(
@@ -4733,6 +4875,152 @@ async def my_product_pick(callback: CallbackQuery, state: FSMContext):
             product_index,
             save_token=save_token,
             item=my_product_item,
+        ),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data == "my_product_reference")
+async def my_product_reference(callback: CallbackQuery, state: FSMContext):
+    """Opens the persistent portion and package settings for the selected product."""
+    await callback.answer()
+    await _show_my_product_reference(
+        callback.message,
+        state,
+        user_id=str(callback.from_user.id),
+        edit_message=True,
+    )
+
+
+@router.callback_query(lambda c: c.data == "my_product_reference_portion")
+async def my_product_reference_portion(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(MealEntryStates.waiting_for_my_product_portion_weight)
+    await callback.message.answer(
+        "1️⃣ <b>Вес одной порции</b>\n\n"
+        "Сколько весит одна порция этого продукта?\n\n"
+        "Отправь вес в граммах, например:\n<code>170</code>",
+        reply_markup=_build_my_product_reference_input_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data == "my_product_reference_package")
+async def my_product_reference_package(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(MealEntryStates.waiting_for_my_product_package_weight)
+    await callback.message.answer(
+        "📦 <b>Вес всего продукта</b>\n\n"
+        "Сколько весит весь продукт или упаковка?\n\n"
+        "Отправь вес в граммах, например:\n<code>680</code>",
+        reply_markup=_build_my_product_reference_input_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+async def _save_my_product_reference_weight(
+    message: Message,
+    state: FSMContext,
+    *,
+    field: str,
+) -> None:
+    weight = _parse_my_product_reference_weight(message.text or "")
+    if weight is None:
+        await message.answer(
+            f"Введи положительный вес не больше {_format_product_weight_g(MAX_ITEM_WEIGHT_G)} г, "
+            "например: <code>170</code> или <code>170,5 г</code>.",
+            reply_markup=_build_my_product_reference_input_keyboard(),
+            parse_mode="HTML",
+        )
+        return
+
+    data = await state.get_data()
+    user_id = str(message.from_user.id)
+    item = _get_my_product_item_from_state(data, user_id)
+    if item is None:
+        await message.answer("❌ Не удалось найти продукт в истории.")
+        return
+    kwargs = {
+        "user_id": user_id,
+        "name": item.title,
+        field: weight,
+    }
+    if field == "unit_weight_g":
+        kwargs["unit_name"] = "порция"
+    try:
+        SavedProductRepository.upsert(**kwargs)
+    except Exception as exc:
+        logger.warning(
+            "Не удалось сохранить свойства продукта error_type=%s",
+            safe_exception_summary(exc),
+        )
+        await message.answer("❌ Не удалось сохранить вес. Попробуй ещё раз.")
+        return
+
+    label = "Вес одной порции" if field == "unit_weight_g" else "Общий вес"
+    await message.answer(
+        f"✅ {label} сохранён: <b>{_format_product_weight_g(weight)} г</b>",
+        parse_mode="HTML",
+    )
+    await _show_my_product_reference(
+        message,
+        state,
+        user_id=user_id,
+        edit_message=False,
+    )
+
+
+@router.message(MealEntryStates.waiting_for_my_product_portion_weight)
+async def my_product_reference_portion_value(message: Message, state: FSMContext):
+    await _save_my_product_reference_weight(
+        message,
+        state,
+        field="unit_weight_g",
+    )
+
+
+@router.message(MealEntryStates.waiting_for_my_product_package_weight)
+async def my_product_reference_package_value(message: Message, state: FSMContext):
+    await _save_my_product_reference_weight(
+        message,
+        state,
+        field="package_weight_g",
+    )
+
+
+@router.callback_query(lambda c: c.data == "my_product_reference_back")
+async def my_product_reference_back(callback: CallbackQuery, state: FSMContext):
+    """Returns to the selected product card without losing its meal/dish context."""
+    await callback.answer()
+    data = await state.get_data()
+    user_id = str(callback.from_user.id)
+    item = _get_my_product_item_from_state(data, user_id)
+    if item is None:
+        await callback.message.answer("❌ Не удалось найти продукт в истории.")
+        return
+    custom_amount = data.get("my_product_custom_amount_g")
+    display_item = (
+        _build_adjusted_my_product_item(item, int(custom_amount))
+        if custom_amount
+        else item
+    )
+    display_amount = int(custom_amount or item.amount_g or 100)
+    save_token = await _ensure_my_product_save_token(state, data)
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await callback.message.edit_text(
+        _render_my_product_confirm_text(
+            normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
+            display_item,
+            amount_g=display_amount,
+        ),
+        reply_markup=_build_my_product_confirm_keyboard(
+            int(data["my_product_source_meal_id"]),
+            normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
+            int(data.get("my_products_page") or 1),
+            _parse_my_product_index(data.get("my_product_source_product_idx")),
+            save_token=save_token,
+            include_delete=data.get("my_product_pick_origin") == "custom" or data.get("in_my_product_menu"),
+            item=display_item,
         ),
         parse_mode="HTML",
     )
