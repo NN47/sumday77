@@ -1,5 +1,5 @@
 import asyncio
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -265,6 +265,49 @@ def test_name_generation_obeys_existing_text_quota(monkeypatch):
     asyncio.run(meals.dish_builder_name_input(message("✨ Сгенерировать название"), state))
     assert reserve.await_args.kwargs["feature"] is meals.AIFeature.MEAL_TEXT
     generate.assert_not_called()
+
+
+def test_name_generation_uses_openai_before_deepseek(monkeypatch):
+    monkeypatch.setattr(meals.openai_token_budget_service, "reservation", lambda **_: nullcontext())
+    openai = Mock(return_value="Рисовая каша")
+    deepseek = Mock(side_effect=AssertionError("DeepSeek must not run after OpenAI success"))
+    monkeypatch.setattr(meals.openai_text_service, "analyze_activity_prompt", openai)
+    monkeypatch.setattr(meals, "generate_recipe_name", deepseek)
+
+    result = asyncio.run(
+        meals._generate_recipe_name_with_text_fallbacks(
+            [item()], None, user_id="42", previous_name=None,
+        )
+    )
+
+    assert result == "Рисовая каша"
+    assert openai.call_args.kwargs["feature"] == "recipe_name"
+    deepseek.assert_not_called()
+
+
+def test_name_generation_uses_yandex_after_openai_and_deepseek_fail(monkeypatch):
+    monkeypatch.setattr(meals.openai_token_budget_service, "reservation", lambda **_: nullcontext())
+    monkeypatch.setattr(
+        meals.openai_text_service,
+        "analyze_activity_prompt",
+        Mock(side_effect=RuntimeError("openai unavailable")),
+    )
+    monkeypatch.setattr(
+        meals,
+        "generate_recipe_name",
+        Mock(side_effect=RuntimeError("deepseek unavailable")),
+    )
+    yandex = AsyncMock(return_value="Рисовая каша")
+    monkeypatch.setattr(meals.yandex_ai_service, "analyze_activity_prompt", yandex)
+
+    result = asyncio.run(
+        meals._generate_recipe_name_with_text_fallbacks(
+            [item()], "boil", user_id="42", previous_name="Рис с молоком",
+        )
+    )
+
+    assert result == "Рисовая каша"
+    assert yandex.await_args.kwargs["feature"] == "recipe_name"
 
 
 def test_recipe_full_handler_flow_saves_template_only(db, monkeypatch):
