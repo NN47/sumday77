@@ -26,6 +26,8 @@ class MealEntryStates(StatesGroup):
     editing_saved_dish_total_weight_input = State()  # Новый общий вес повторно добавляемого блюда
     editing_saved_dish_name_input = State()  # Название шаблона блюда
     waiting_for_my_products_search = State()  # Поиск продукта среди моих продуктов
+    waiting_for_my_product_portion_weight = State()  # Вес одной порции сохранённого продукта
+    waiting_for_my_product_package_weight = State()  # Общий вес сохранённого продукта
     editing_meal_name_input = State()  # Ручной ввод нового названия продукта
     editing_meal_kbju = State()  # Ручная правка КБЖУ выбранного продукта
     edit_kbju_menu = State()  # Экран "Ручная правка КБЖУ"

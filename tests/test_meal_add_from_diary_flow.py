@@ -1133,13 +1133,135 @@ def test_my_product_confirm_card_and_keyboard_show_optional_unit_and_package() -
 
     assert "⚖️ <b>Последняя порция:</b> 20 г" in text
     assert "1️⃣ <b>1 хлебец:</b> 10 г" in text
-    assert "📦 <b>Упаковка:</b> 100 г • 10 шт." in text
+    assert "📦 <b>Весь продукт:</b> 100 г" in text
+    assert "🍽 <b>Порций в продукте:</b> 10" in text
     assert [button.text for row in keyboard.inline_keyboard for button in row] == [
         "✅ Добавить",
-        "1️⃣ Добавить 1 хлебец",
+        "1️⃣ Добавить 1 порцию",
         "✏️ Изменить вес",
+        "⚙️ Порция и упаковка",
         "⬅️ Назад",
     ]
+
+
+def test_my_product_reference_screen_handles_empty_and_complete_values() -> None:
+    empty = meals.MyProductItem(7, 0, "Чизкейк", 170, 300, 5, 20, 15)
+    complete = meals.MyProductItem(
+        7, 0, "Чизкейк", 170, 300, 5, 20, 15,
+        unit_weight_g=170,
+        unit_name="порция",
+        package_weight_g=680,
+    )
+
+    empty_text = meals._render_my_product_reference_text(empty)
+    complete_text = meals._render_my_product_reference_text(complete)
+    keyboard = meals._build_my_product_reference_keyboard(complete)
+
+    assert "Одна порция:</b> не указана" in empty_text
+    assert "Вес всего продукта:</b> не указан" in empty_text
+    assert "Порций в продукте" not in empty_text
+    assert "Одна порция:</b> 170 г" in complete_text
+    assert "Вес всего продукта:</b> 680 г" in complete_text
+    assert "Порций в продукте:</b> 4" in complete_text
+    assert [button.text for row in keyboard.inline_keyboard for button in row] == [
+        "1️⃣ Изменить одну порцию",
+        "📦 Изменить общий вес",
+        "⬅️ Назад",
+    ]
+
+
+@pytest.mark.parametrize("raw, expected", [("170", 170), ("170 г", 170), ("170.5", 170.5), ("170,5", 170.5)])
+def test_my_product_reference_weight_parser_accepts_supported_formats(raw, expected) -> None:
+    assert meals._parse_my_product_reference_weight(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["0", "-10", "abc", "20001"])
+def test_my_product_reference_weight_parser_rejects_invalid_values(raw) -> None:
+    assert meals._parse_my_product_reference_weight(raw) is None
+
+
+def test_my_product_reference_does_not_infer_non_integer_portion_count() -> None:
+    item = meals.MyProductItem(
+        7, 0, "Продукт", 170, 100, 1, 1, 1,
+        unit_weight_g=170,
+        unit_name="порция",
+        package_weight_g=500,
+    )
+
+    assert "Порций в продукте" not in meals._render_my_product_reference_text(item)
+
+
+@pytest.mark.parametrize(
+    "field, raw, expected_kwargs, confirmation",
+    [
+        ("unit_weight_g", "170 г", {"unit_weight_g": 170, "unit_name": "порция"}, "Вес одной порции сохранён"),
+        ("package_weight_g", "680", {"package_weight_g": 680}, "Общий вес сохранён"),
+    ],
+)
+def test_my_product_reference_weight_save_uses_existing_saved_product_fields(
+    field, raw, expected_kwargs, confirmation,
+) -> None:
+    state = _DummyState()
+    state._data.update(
+        my_product_source_meal_id=7,
+        my_product_source_product_idx=0,
+        meal_type="breakfast",
+        my_products_page=2,
+        ingredient_destination="dish",
+    )
+    message = _build_message()
+    message.text = raw
+    message.from_user = SimpleNamespace(id=12345)
+    item = meals.MyProductItem(7, 0, "Чизкейк", 170, 300, 5, 20, 15)
+
+    with patch.object(meals, "_get_my_product_item_from_state", return_value=item), patch.object(
+        meals.SavedProductRepository, "upsert"
+    ) as upsert, patch.object(
+        meals, "_show_my_product_reference", new_callable=AsyncMock
+    ) as show_reference:
+        asyncio.run(meals._save_my_product_reference_weight(message, state, field=field))
+
+    assert upsert.call_args.kwargs == {
+        "user_id": "12345",
+        "name": "Чизкейк",
+        **expected_kwargs,
+    }
+    assert confirmation in message.answer.await_args_list[0].args[0]
+    show_reference.assert_awaited_once()
+    assert state._data["ingredient_destination"] == "dish"
+
+
+def test_invalid_my_product_reference_weight_keeps_fsm_context_and_does_not_save() -> None:
+    state = _DummyState()
+    state._data.update(my_product_source_meal_id=7, meal_type="lunch")
+    message = _build_message()
+    message.text = "abc"
+    message.from_user = SimpleNamespace(id=12345)
+
+    with patch.object(meals.SavedProductRepository, "upsert") as upsert:
+        asyncio.run(
+            meals._save_my_product_reference_weight(
+                message, state, field="unit_weight_g"
+            )
+        )
+
+    upsert.assert_not_called()
+    state.set_state.assert_not_awaited()
+    assert state._data["meal_type"] == "lunch"
+
+
+def test_legacy_unit_names_are_preserved_in_card_but_portion_button_is_consistent() -> None:
+    for unit_name in ("шт.", "батончик"):
+        item = meals.MyProductItem(
+            7, 0, "Продукт", 40, 100, 1, 1, 1,
+            unit_weight_g=40,
+            unit_name=unit_name,
+        )
+        assert f"1 {unit_name}:" in meals._render_my_product_confirm_text("snack", item, 40)
+        keyboard = meals._build_my_product_confirm_keyboard(
+            7, "snack", 1, 0, save_token="A" * meals.MEAL_SAVE_TOKEN_LENGTH, item=item,
+        )
+        assert keyboard.inline_keyboard[1][0].text == "1️⃣ Добавить 1 порцию"
 
 
 def test_my_product_pick_sends_html_parse_mode_for_confirm_card():
@@ -1563,7 +1685,7 @@ def test_custom_product_pick_shows_delete_button():
 
     markup = callback.message.answer.await_args.kwargs["reply_markup"]
     button_texts = [button.text for row in markup.inline_keyboard for button in row]
-    assert button_texts == ["✅ Добавить", "✏️ Изменить вес", "🗑 Удалить", "⬅️ Назад"]
+    assert button_texts == ["✅ Добавить", "✏️ Изменить вес", "⚙️ Порция и упаковка", "🗑 Удалить", "⬅️ Назад"]
     assert state._data["my_product_pick_origin"] == "custom"
 
 
@@ -1699,7 +1821,7 @@ def test_my_product_weight_back_from_my_products_keeps_delete_button_on_confirm_
 
     markup = callback.message.edit_text.await_args.kwargs["reply_markup"]
     button_texts = [button.text for row in markup.inline_keyboard for button in row]
-    assert button_texts == ["✅ Добавить", "✏️ Изменить вес", "🗑 Удалить", "⬅️ Назад"]
+    assert button_texts == ["✅ Добавить", "✏️ Изменить вес", "⚙️ Порция и упаковка", "🗑 Удалить", "⬅️ Назад"]
 
 
 def test_my_product_confirm_uses_single_selected_product():
