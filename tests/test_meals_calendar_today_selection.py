@@ -74,3 +74,22 @@ def test_back_from_kbju_calendar_renders_today_report():
     send_today.assert_awaited_once_with(message, "12345")
     message.answer.assert_not_awaited()
     assert message.bot.menu_stack == [main_menu, kbju_menu]
+
+
+def test_back_from_meal_type_picker_renders_today_report():
+    from handlers import common
+    from utils.keyboards import kbju_meal_type_menu, kbju_menu, main_menu
+
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=12345),
+        bot=SimpleNamespace(menu_stack=[main_menu, kbju_menu, kbju_meal_type_menu]),
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(clear=AsyncMock())
+
+    with patch("handlers.meals.send_today_results", new=AsyncMock()) as send_today:
+        asyncio.run(common.go_back(message, state))
+
+    send_today.assert_awaited_once_with(message, "12345")
+    message.answer.assert_not_awaited()
+    assert message.bot.menu_stack == [main_menu, kbju_menu]

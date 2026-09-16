@@ -153,9 +153,10 @@ async def go_back(message: Message, state: FSMContext):
         prev_menu = stack[-1]  # Берем предыдущее меню
         message.bot.menu_stack = stack
 
-        if current_menu is calendar_back_menu and prev_menu is kbju_menu:
-            # Из календаря КБЖУ нужно возвращать полноценный экран дневника,
-            # а не только нижнюю reply-клавиатуру раздела.
+        if prev_menu is kbju_menu:
+            # При возврате в КБЖУ из любого дочернего экрана нужно заново
+            # показывать полноценный дневник. Одной reply-клавиатуры
+            # недостаточно: пользователь не увидит актуальные приёмы пищи.
             from handlers.meals import send_today_results
 
             await send_today_results(message, str(message.from_user.id))
