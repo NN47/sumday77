@@ -328,13 +328,31 @@ def test_recipe_full_handler_flow_saves_template_only(db, monkeypatch):
         cb = SimpleNamespace(data="recipe_method:" + "B" * 12 + ":boil", answer=AsyncMock(), message=message())
         await meals.recipe_method_selected(cb, state)
         await meals.recipe_weight_input(message("300"), state)
-        await meals.recipe_preparation_input(message("Сварить рис."), state)
+        final_message = message("Сварить рис.")
+        await meals.recipe_preparation_input(final_message, state)
         with db() as session:
             assert session.query(Meal).count() == 0
             saved = session.query(Dish).one()
             assert saved.cooked_weight_g == 300
             assert saved.preparation == "Сварить рис."
         assert "dish_builder" not in state.data
+        meals._show_recipes.assert_not_awaited()
+        result_message = final_message.answer.await_args.args[0]
+        assert result_message.startswith("🎉 <b>Рецепт создан!</b>")
+        assert "🥣 <b>Рисовая каша</b>" in result_message
+        assert "1️⃣ Рис — 300 г" in result_message
+        assert "📦 <b>Общий вес:</b> 300 г" in result_message
+        assert "🔥 <b>Калории:</b> 350 ккал" in result_message
+        assert "🥩 <b>Белки:</b> 7.0 г" in result_message
+        assert "🥑 <b>Жиры:</b> 1.0 г" in result_message
+        assert "🍚 <b>Углеводы:</b> 78.0 г" in result_message
+        assert "📖 <b>Приготовление:</b>\nСварить рис." in result_message
+        keyboard = final_message.answer.await_args.kwargs["reply_markup"]
+        assert [(button.text, button.callback_data) for row in keyboard.inline_keyboard for button in row] == [
+            ("✏️ Редактировать", f"my_dish_edit:{saved.id}"),
+            ("⬅️ Назад к рецептам", "recipes:1"),
+        ]
+        assert state.data["recipe_catalog"] is True
     asyncio.run(run())
 
 
