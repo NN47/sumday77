@@ -5258,9 +5258,13 @@ def _format_dish_builder(items: list[dict]) -> str:
         lines.extend(["", "Пока ничего не добавлено."])
     else:
         for index, item in enumerate(items[:15]):
+            calories, protein, fat, carbs = extract_meal_product_macros(item)
             lines.append(
                 f"{_number_emoji(index)} {html.escape(_truncate_product_name(extract_meal_product_name(item, fallback='Продукт')))} — "
                 f"{extract_meal_product_weight(item):.0f} г"
+            )
+            lines.append(
+                f"   🔥 {calories:.0f} ккал · Б {protein:.1f} · Ж {fat:.1f} · У {carbs:.1f}"
             )
         totals = calculate_dish_totals(items)
         lines.extend([
@@ -10713,6 +10717,11 @@ def _is_unsolicited_meal_content(message: Message) -> bool:
     return text not in navigation
 
 
+def _is_ingredient_input_context(data: dict) -> bool:
+    """Проверяет, направляется ли новый продукт в состав блюда, а не в дневник."""
+    return bool(data.get("dish_builder") or data.get("dish_add_destination"))
+
+
 async def _ask_unsolicited_meal_intent(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     if data.get("in_my_products_section") or data.get("in_my_product_menu") or data.get("in_my_dishes_section"):
@@ -10740,7 +10749,14 @@ async def _ask_unsolicited_meal_intent(message: Message, state: FSMContext) -> N
         [InlineKeyboardButton(text=title, callback_data=f"meal_intent:{token}:{action}")]
         for action, title in choices
     ])
-    prompt = "Что нужно проанализировать на фото?" if kind == "photo" else "Добавить приём пищи по этому описанию?"
+    ingredient_context = _is_ingredient_input_context(data)
+    prompt = (
+        "Что нужно проанализировать на фото?"
+        if kind == "photo"
+        else "Добавить ингредиент по этому описанию?"
+        if ingredient_context
+        else "Добавить приём пищи по этому описанию?"
+    )
     if previous:
         prompt = "Ожидающее сообщение заменено новым.\n\n" + prompt
     saved_message = message.model_dump(mode="json", include={"message_id", "date", "chat", "from_user", "photo", "text"})
@@ -10806,9 +10822,15 @@ async def confirm_unsolicited_meal_input(callback: CallbackQuery, state: FSMCont
         return
     await callback.answer()
     await state.update_data(unsolicited_input=None)
+    ingredient_context = _is_ingredient_input_context(await state.get_data())
     await callback.message.edit_text({
         "cancel": "Добавление отменено.", "label": "Анализирую этикетку…",
-        "photo": "Выбран анализ еды по фото.", "text": "Обрабатываю описание приёма пищи…",
+        "photo": "Выбран анализ еды по фото.",
+        "text": (
+            "Обрабатываю описание ингредиента…"
+            if ingredient_context
+            else "Обрабатываю описание приёма пищи…"
+        ),
     }[action], reply_markup=None)
     if action == "cancel":
         await _return_to_add_methods_from_method_input(callback.message, state, user_id=str(callback.from_user.id))
