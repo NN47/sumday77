@@ -3758,6 +3758,46 @@ def _format_saved_dish_card(dish, items: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _format_created_recipe_card(dish, items: list[dict]) -> str:
+    """Render the complete recipe once, immediately after it is created."""
+    totals = calculate_dish_totals(items)
+    lines = [
+        "🎉 <b>Рецепт создан!</b>",
+        "",
+        f"🥣 <b>{html.escape(dish.name)}</b>",
+        "",
+        "<b>Состав:</b>",
+    ]
+    for index, item in enumerate(items):
+        lines.append(
+            f"{_number_emoji(index)} {html.escape(str(item.get('name') or 'Ингредиент'))} — "
+            f"{_safe_float(item.get('grams')):.0f} г"
+        )
+    lines.extend(
+        [
+            "",
+            f"📦 <b>Общий вес:</b> {calculate_dish_weight(items):.0f} г",
+            f"🔥 <b>Калории:</b> {totals['calories']:.0f} ккал",
+            f"🥩 <b>Белки:</b> {totals['protein']:.1f} г",
+            f"🥑 <b>Жиры:</b> {totals['fat']:.1f} г",
+            f"🍚 <b>Углеводы:</b> {totals['carbs']:.1f} г",
+            "",
+            "📖 <b>Приготовление:</b>",
+            html.escape(getattr(dish, "preparation", None) or "Не указано."),
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _build_created_recipe_keyboard(dish_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"my_dish_edit:{dish_id}")],
+            [InlineKeyboardButton(text="⬅️ Назад к рецептам", callback_data="recipes:1")],
+        ]
+    )
+
+
 def _build_saved_dish_card_keyboard(
     meal_type: str, page: int, dish_id: int, *, return_to_products: bool = False,
     return_to_recipes: bool = False,
@@ -5232,6 +5272,7 @@ async def recipe_preparation_input(message: Message, state: FSMContext):
         await message.answer("Отправь текст приготовления или нажми «Сохранить рецепт».")
         return
     preparation = builder.get("preparation", "") if text == "Сохранить рецепт" else text
+    is_new_recipe = builder.get("recipe_id") is None
     try:
         dish = save_recipe(user_id=str(message.from_user.id), token=_dish_builder_token(data),
                            name=builder.get("name"), items=builder.get("items") or [],
@@ -5248,6 +5289,20 @@ async def recipe_preparation_input(message: Message, state: FSMContext):
     await state.update_data(meal_type=builder.get("meal_type") or MealType.SNACK.value,
                             entry_date=builder.get("entry_date"))
     await _hide_meal_reply_keyboard(message)
+    if is_new_recipe:
+        items = dish_to_snapshot(dish)
+        await state.update_data(
+            recipe_catalog=True,
+            my_dishes_page=1,
+            my_dish_id=dish.id,
+            my_dish_items=items,
+        )
+        await message.answer(
+            _format_created_recipe_card(dish, items),
+            reply_markup=_build_created_recipe_keyboard(dish.id),
+            parse_mode="HTML",
+        )
+        return
     await message.answer("✅ Рецепт сохранён.\n\n" + _format_saved_dish_card(dish, dish_to_snapshot(dish)),
                          parse_mode="HTML")
     await _show_recipes(message, state, user_id=str(message.from_user.id))
