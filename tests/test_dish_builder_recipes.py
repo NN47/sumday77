@@ -255,20 +255,25 @@ def test_back_discards_nested_draft_and_keeps_ingredients(monkeypatch):
     assert "photo_save_token" not in state.data
 
 
-def test_name_generation_obeys_existing_text_quota(monkeypatch):
+def test_name_generation_does_not_use_meal_text_quota(monkeypatch):
     state = builder_state()
     state.data["dish_builder"]["items"] = [item()]
-    reserve = AsyncMock(return_value=None)
-    generate = Mock()
+    reserve = AsyncMock(side_effect=AssertionError("recipe names must not use meal text quota"))
+    consume = Mock(side_effect=AssertionError("recipe names must not consume meal text quota"))
+    generate = Mock(return_value="Рисовая каша")
     monkeypatch.setattr(meals, "_reserve_meal_ai_quota", reserve)
+    monkeypatch.setattr(meals.ai_quota_service, "consume", consume)
     monkeypatch.setattr(meals, "generate_recipe_name", generate)
     asyncio.run(meals.dish_builder_name_input(message("✨ Сгенерировать название"), state))
-    assert reserve.await_args.kwargs["feature"] is meals.AIFeature.MEAL_TEXT
-    generate.assert_not_called()
+    reserve.assert_not_awaited()
+    consume.assert_not_called()
+    generate.assert_called_once()
+    assert state.data["dish_builder"]["name_generation_count"] == 1
 
 
 def test_name_generation_uses_openai_before_deepseek(monkeypatch):
-    monkeypatch.setattr(meals.openai_token_budget_service, "reservation", lambda **_: nullcontext())
+    budget = Mock(return_value=nullcontext())
+    monkeypatch.setattr(meals.openai_token_budget_service, "reservation", budget)
     openai = Mock(return_value="Рисовая каша")
     deepseek = Mock(side_effect=AssertionError("DeepSeek must not run after OpenAI success"))
     monkeypatch.setattr(meals.openai_text_service, "analyze_activity_prompt", openai)
@@ -281,6 +286,7 @@ def test_name_generation_uses_openai_before_deepseek(monkeypatch):
     )
 
     assert result == "Рисовая каша"
+    assert budget.call_args.kwargs["feature"] == "recipe_name"
     assert openai.call_args.kwargs["feature"] == "recipe_name"
     deepseek.assert_not_called()
 
@@ -395,24 +401,44 @@ def test_stale_builder_action_does_not_replace_current_draft(monkeypatch):
     assert cb.answer.await_args.kwargs["show_alert"] is True
 
 
-def test_name_regeneration_uses_callback_user_and_shared_quota(monkeypatch):
+def test_name_generation_allows_five_attempts_and_blocks_sixth(monkeypatch):
     state = builder_state()
     state.data["dish_builder"]["items"] = [item()]
     cb = SimpleNamespace(data="dish_ngen:" + "B" * 12, id="callback-2", message=message(),
                          from_user=SimpleNamespace(id=42), answer=AsyncMock())
     cb.message.from_user.id = 999
-    reserve = AsyncMock(return_value=object())
-    consume = Mock()
     generate = Mock(return_value="Рисовая каша")
-    monkeypatch.setattr(meals, "_reserve_meal_ai_quota", reserve)
-    monkeypatch.setattr(meals.ai_quota_service, "consume", consume)
     monkeypatch.setattr(meals, "generate_recipe_name", generate)
-    asyncio.run(meals.dish_builder_generated_name_action(cb, state))
-    assert reserve.await_args.kwargs["user_id"] == "42"
-    assert reserve.await_args.kwargs["feature"] is meals.AIFeature.MEAL_TEXT
+
+    for _ in range(meals.RECIPE_NAME_GENERATION_LIMIT):
+        asyncio.run(meals.dish_builder_generated_name_action(cb, state))
+
     assert generate.call_args.kwargs["user_id"] == "42"
-    consume.assert_called_once()
+    assert generate.call_count == 5
     assert state.data["generated_dish_name"] == "Рисовая каша"
+    assert state.data["dish_builder"]["name_generation_count"] == 5
+
+    asyncio.run(meals.dish_builder_generated_name_action(cb, state))
+
+    assert generate.call_count == 5
+    assert cb.message.answer.await_args.args[0] == meals.RECIPE_NAME_GENERATION_LIMIT_TEXT
+    assert cb.message.answer.await_args.kwargs["reply_markup"]
+
+
+def test_name_generation_limit_is_scoped_to_recipe_draft(monkeypatch):
+    generate = Mock(return_value="Рисовая каша")
+    monkeypatch.setattr(meals, "generate_recipe_name", generate)
+    exhausted = builder_state()
+    exhausted.data["dish_builder"].update(items=[item()], name_generation_count=5)
+    fresh = builder_state()
+    fresh.data["dish_builder"].update(token="C" * 22, items=[item()])
+
+    asyncio.run(meals.dish_builder_name_input(message("✨ Сгенерировать название"), exhausted))
+    asyncio.run(meals.dish_builder_name_input(message("✨ Сгенерировать название"), fresh))
+
+    generate.assert_called_once()
+    assert exhausted.data["dish_builder"]["name_generation_count"] == 5
+    assert fresh.data["dish_builder"]["name_generation_count"] == 1
 
 
 def test_empty_recipe_list_has_create_and_back_actions(monkeypatch):

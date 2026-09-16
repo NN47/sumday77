@@ -61,7 +61,7 @@ class OpenAITokenBudgetService:
             return OPENAI_LABEL_TOKEN_RESERVE
         if "food_photo" in normalized or "meal_photo" in normalized:
             return OPENAI_FOOD_PHOTO_TOKEN_RESERVE
-        if "meal_text" in normalized:
+        if "meal_text" in normalized or "recipe_name" in normalized:
             return OPENAI_MEAL_TEXT_TOKEN_RESERVE
         if "meal_completion_comment" in normalized:
             return OPENAI_MEAL_COMMENT_TOKEN_RESERVE
