@@ -5079,6 +5079,7 @@ async def my_product_edit_weight(callback: CallbackQuery, state: FSMContext):
         if data.get("my_product_pick_origin") == "custom" or data.get("in_my_product_menu")
         else data.get("my_product_pick_origin", "my_products")
     )
+    await state.set_state(MealEntryStates.editing_meal_weight)
     await state.update_data(
         my_product_source_meal_id=source_meal_id,
         my_product_source_product_idx=product_index,
@@ -9872,6 +9873,20 @@ async def handle_meal_weight_edit(message: Message, state: FSMContext):
             "✏️ Редактирование приёма пищи\n\nВыбери, что хочешь изменить:",
             reply_markup=kbju_edit_type_menu,
         )
+        return
+
+    data = await state.get_data()
+    weight_editor_is_open = bool(
+        data.get("my_product_weight_edit_mode")
+        or (
+            data.get("editing_product_idx") is not None
+            and data.get("weight_editor_message_id")
+        )
+    )
+    if weight_editor_is_open and text.isdigit():
+        # A number typed while the weight editor is open is the same action as
+        # choosing "Ввести вручную" first and then entering the value.
+        await meal_weight_manual_input_value(message, state)
         return
 
     await message.answer("Используй кнопки ниже для редактирования продукта 👇")
