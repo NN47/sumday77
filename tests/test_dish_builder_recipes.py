@@ -429,3 +429,47 @@ def test_empty_recipe_list_has_create_and_back_actions(monkeypatch):
 def test_recipe_card_back_returns_to_recipe_page():
     keyboard = meals._build_saved_dish_card_keyboard("lunch", 2, 7, return_to_recipes=True)
     assert keyboard.inline_keyboard[-1][0].callback_data == "recipes:2"
+
+
+def test_recipe_portion_asks_for_meal_type_before_saving(db, monkeypatch):
+    recipe = recipe_service.save_recipe(
+        user_id="42", token="recipe", name="Рисовая каша", items=[item()],
+        cooking_method="boil", cooked_weight_g=300,
+    )
+    state = State(
+        recipe_catalog=True,
+        meal_type="snack",
+        my_dish_id=recipe.id,
+        my_dish_items=dish_service.dish_to_snapshot(recipe),
+        my_dish_save_token="S" * 22,
+        my_dishes_return_entry_date="2026-09-12",
+    )
+    callback = SimpleNamespace(
+        data=f"my_dish_add:{recipe.id}", message=message(),
+        from_user=SimpleNamespace(id=42), answer=AsyncMock(),
+    )
+    keep_open = AsyncMock()
+    monkeypatch.setattr(meals, "_keep_meal_entry_open_after_save", keep_open)
+
+    async def scenario():
+        await meals.my_dish_add(callback, state)
+        assert callback.message.edit_text.await_args.args[0] == "К какому приёму пищи добавить порцию?"
+        callbacks = [
+            button.callback_data
+            for row in callback.message.edit_text.await_args.kwargs["reply_markup"].inline_keyboard
+            for button in row
+        ]
+        assert f"my_dish_add_to:lunch:{recipe.id}" in callbacks
+        with db() as session:
+            assert session.query(Meal).count() == 0
+
+        callback.data = f"my_dish_add_to:lunch:{recipe.id}"
+        await meals.my_dish_add_to_meal(callback, state)
+
+    asyncio.run(scenario())
+
+    keep_open.assert_awaited_once()
+    with db() as session:
+        saved = session.query(Meal).one()
+        assert saved.meal_type == "lunch"
+        assert saved.date == date(2026, 9, 12)

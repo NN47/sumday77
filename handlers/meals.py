@@ -3778,6 +3778,22 @@ def _build_saved_dish_card_keyboard(
     )
 
 
+def _build_saved_dish_meal_type_keyboard(dish_id: int) -> InlineKeyboardMarkup:
+    """Let a catalog recipe choose its diary destination before it is saved."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=display_meal_type(meal_type),
+                callback_data=f"my_dish_add_to:{meal_type}:{dish_id}",
+            )
+            for meal_type in MEAL_TYPE_ORDER[index:index + 2]
+        ]
+        for index in range(0, len(MEAL_TYPE_ORDER), 2)
+    ]
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_dish_wback:{dish_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def _format_saved_dish_editor(dish, items: list[dict]) -> str:
     lines = [
         "✏️ <b>Редактирование блюда</b>", "",
@@ -4316,6 +4332,41 @@ async def my_dish_add(callback: CallbackQuery, state: FSMContext):
         await _save_ingredient_destination(callback.message, state, user_id=str(callback.from_user.id),
                                            items=data.get("my_dish_items") or [])
         return
+    if data.get("recipe_catalog"):
+        await callback.answer()
+        await callback.message.edit_text(
+            "К какому приёму пищи добавить порцию?",
+            reply_markup=_build_saved_dish_meal_type_keyboard(dish_id),
+        )
+        return
+    await _save_my_dish_to_diary(callback, state, data, dish_id=dish_id)
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_add_to:"))
+async def my_dish_add_to_meal(callback: CallbackQuery, state: FSMContext):
+    """Save a recipe portion after the user explicitly selects a meal type."""
+    data = await state.get_data()
+    _, raw_meal_type, raw_dish_id = callback.data.split(":")
+    dish_id = int(raw_dish_id)
+    token = data.get("my_dish_save_token")
+    if not _is_valid_meal_save_token(token) or dish_id != int(data.get("my_dish_id") or 0):
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+    meal_type = normalize_meal_type(raw_meal_type, fallback=MealType.SNACK.value)
+    await state.update_data(meal_type=meal_type)
+    data["meal_type"] = meal_type
+    await _save_my_dish_to_diary(callback, state, data, dish_id=dish_id)
+
+
+async def _save_my_dish_to_diary(
+    callback: CallbackQuery,
+    state: FSMContext,
+    data: dict,
+    *,
+    dish_id: int,
+) -> None:
+    """Shared final save for dishes selected from any catalog."""
+    token = data.get("my_dish_save_token")
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     try:
         entry_date = date.fromisoformat(str(data.get("my_dishes_return_entry_date") or data.get("entry_date") or ""))
