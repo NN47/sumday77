@@ -54,7 +54,16 @@ from services.dish_service import (
     scale_dish_snapshot,
     MAX_DISH_NAME_LENGTH,
 )
-from services.recipe_service import COOKING_METHODS, MAX_RECIPE_INGREDIENTS, parse_recipe_weight, save_recipe, validate_recipe_name, generate_recipe_name
+from services.recipe_service import (
+    COOKING_METHODS,
+    MAX_RECIPE_INGREDIENTS,
+    RECIPE_NAME_SYSTEM_PROMPT,
+    build_recipe_name_prompt,
+    generate_recipe_name,
+    parse_recipe_weight,
+    save_recipe,
+    validate_recipe_name,
+)
 from services.gemini_service import (
     gemini_service,
     GeminiServiceTemporaryUnavailableError,
@@ -5551,6 +5560,75 @@ async def _save_composed_dish(message: Message, state: FSMContext, name: str, *,
     )
 
 
+async def _generate_recipe_name_with_text_fallbacks(
+    items: list[dict],
+    cooking_method: str | None,
+    *,
+    user_id: str,
+    previous_name: str | None,
+    quota_request_id: str | None = None,
+) -> str:
+    """Generate a dish name through the same OpenAI → DeepSeek → Yandex chain as meal text."""
+    prompt = build_recipe_name_prompt(
+        items,
+        cooking_method,
+        previous_name=previous_name,
+    )
+    try:
+        with openai_token_budget_service.reservation(user_id=user_id, feature=AIFeature.MEAL_TEXT.value):
+            if quota_request_id:
+                ai_quota_service.mark_provider_started(quota_request_id)
+            generated = await asyncio.to_thread(
+                openai_text_service.analyze_activity_prompt,
+                prompt,
+                user_id=user_id,
+                feature="recipe_name",
+                system_prompt=RECIPE_NAME_SYSTEM_PROMPT,
+            )
+        result = validate_recipe_name(generated)
+        logger.info("AI recipe name generation provider=openai")
+        return result
+    except Exception as openai_error:
+        logger.warning(
+            "OpenAI recipe name generation failed; continuing text fallback chain error_type=%s",
+            safe_exception_summary(openai_error),
+        )
+
+    if quota_request_id and openai_text_service.api_key:
+        ai_quota_service.register_additional_provider_attempt(quota_request_id)
+    try:
+        result = await asyncio.to_thread(
+            generate_recipe_name,
+            items,
+            cooking_method,
+            user_id=user_id,
+            previous_name=previous_name,
+        )
+        logger.info("AI recipe name generation provider=deepseek")
+        return result
+    except Exception as deepseek_error:
+        logger.warning(
+            "DeepSeek recipe name generation failed; switching to Yandex error_type=%s",
+            safe_exception_summary(deepseek_error),
+        )
+
+    if quota_request_id:
+        ai_quota_service.register_additional_provider_attempt(quota_request_id)
+    try:
+        generated = await _run_yandex_task(
+            yandex_ai_service.analyze_activity_prompt,
+            prompt,
+            user_id=user_id,
+            feature="recipe_name",
+            system_prompt=RECIPE_NAME_SYSTEM_PROMPT,
+        )
+        result = validate_recipe_name(generated)
+        logger.info("AI recipe name generation provider=yandex")
+        return result
+    except Exception as yandex_error:
+        raise AllProvidersUnavailableError("All providers unavailable") from yandex_error
+
+
 async def _generate_composed_dish_name(message: Message, state: FSMContext, *, user_id: str, request_key: str) -> None:
     data = await state.get_data(); builder = data.get("dish_builder") or {}; token = _dish_builder_token(data)
     if token is None:
@@ -5564,10 +5642,13 @@ async def _generate_composed_dish_name(message: Message, state: FSMContext, *, u
         await message.answer("Можно ввести название вручную.", reply_markup=_dish_name_menu(token))
         return
     try:
-        ai_quota_service.mark_provider_started(request_id)
-        generated = await asyncio.to_thread(generate_recipe_name, builder.get("items") or [],
-                                            builder.get("cooking_method"), user_id=user_id,
-                                            previous_name=data.get("generated_dish_name"))
+        generated = await _generate_recipe_name_with_text_fallbacks(
+            builder.get("items") or [],
+            builder.get("cooking_method"),
+            user_id=user_id,
+            previous_name=data.get("generated_dish_name"),
+            quota_request_id=request_id,
+        )
     except Exception:
         ai_quota_service.release(request_id, outcome="dish_name_error")
         logger.exception("Failed to generate composed dish name")
