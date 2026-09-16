@@ -5556,6 +5556,13 @@ def _dish_name_menu(token: str) -> ReplyKeyboardMarkup:
     ], resize_keyboard=True)
 
 
+RECIPE_NAME_GENERATION_LIMIT = 5
+RECIPE_NAME_GENERATION_LIMIT_TEXT = (
+    "✨ Вы использовали все 5 вариантов названия для этого рецепта. "
+    "Название можно изменить вручную."
+)
+
+
 @router.callback_query(lambda c: c.data and c.data.startswith("dish_finish:"))
 async def dish_builder_finish(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data(); token = _dish_builder_token(data)
@@ -5617,7 +5624,6 @@ async def _generate_recipe_name_with_text_fallbacks(
     *,
     user_id: str,
     previous_name: str | None,
-    quota_request_id: str | None = None,
 ) -> str:
     """Generate a dish name through the same OpenAI → DeepSeek → Yandex chain as meal text."""
     prompt = build_recipe_name_prompt(
@@ -5626,9 +5632,8 @@ async def _generate_recipe_name_with_text_fallbacks(
         previous_name=previous_name,
     )
     try:
-        with openai_token_budget_service.reservation(user_id=user_id, feature=AIFeature.MEAL_TEXT.value):
-            if quota_request_id:
-                ai_quota_service.mark_provider_started(quota_request_id)
+        # This is an internal provider-cost budget, not the user's meal-text quota.
+        with openai_token_budget_service.reservation(user_id=user_id, feature="recipe_name"):
             generated = await asyncio.to_thread(
                 openai_text_service.analyze_activity_prompt,
                 prompt,
@@ -5645,8 +5650,6 @@ async def _generate_recipe_name_with_text_fallbacks(
             safe_exception_summary(openai_error),
         )
 
-    if quota_request_id and openai_text_service.api_key:
-        ai_quota_service.register_additional_provider_attempt(quota_request_id)
     try:
         result = await asyncio.to_thread(
             generate_recipe_name,
@@ -5663,8 +5666,6 @@ async def _generate_recipe_name_with_text_fallbacks(
             safe_exception_summary(deepseek_error),
         )
 
-    if quota_request_id:
-        ai_quota_service.register_additional_provider_attempt(quota_request_id)
     try:
         generated = await _run_yandex_task(
             yandex_ai_service.analyze_activity_prompt,
@@ -5680,32 +5681,33 @@ async def _generate_recipe_name_with_text_fallbacks(
         raise AllProvidersUnavailableError("All providers unavailable") from yandex_error
 
 
-async def _generate_composed_dish_name(message: Message, state: FSMContext, *, user_id: str, request_key: str) -> None:
+async def _generate_composed_dish_name(message: Message, state: FSMContext, *, user_id: str) -> None:
     data = await state.get_data(); builder = data.get("dish_builder") or {}; token = _dish_builder_token(data)
     if token is None:
         await message.answer("Черновик блюда устарел.")
         return
-    await message.answer("Придумываю название…", reply_markup=ReplyKeyboardRemove())
-    request_id = build_quota_request_id("dish_name", user_id, message.chat.id, request_key)
-    reservation = await _reserve_meal_ai_quota(message, user_id=user_id, feature=AIFeature.MEAL_TEXT,
-                                               request_id=request_id, meal_type=data.get("meal_type") or MealType.SNACK.value)
-    if reservation is None:
-        await message.answer("Можно ввести название вручную.", reply_markup=_dish_name_menu(token))
+    generation_count = int(builder.get("name_generation_count") or 0)
+    if generation_count >= RECIPE_NAME_GENERATION_LIMIT:
+        await message.answer(RECIPE_NAME_GENERATION_LIMIT_TEXT, reply_markup=_dish_name_menu(token))
         return
+    # The counter belongs to this draft (its token) and is deliberately separate
+    # from the user's daily meal-analysis quota. Reserve the attempt before the
+    # provider call so repeated callbacks cannot exceed the per-recipe limit.
+    await state.update_data(dish_builder={
+        **builder, "name_generation_count": generation_count + 1,
+    })
+    await message.answer("Придумываю название…", reply_markup=ReplyKeyboardRemove())
     try:
         generated = await _generate_recipe_name_with_text_fallbacks(
             builder.get("items") or [],
             builder.get("cooking_method"),
             user_id=user_id,
             previous_name=data.get("generated_dish_name"),
-            quota_request_id=request_id,
         )
     except Exception:
-        ai_quota_service.release(request_id, outcome="dish_name_error")
         logger.exception("Failed to generate composed dish name")
         await message.answer("Не удалось сгенерировать название. Введи его вручную.", reply_markup=_dish_name_menu(token))
         return
-    ai_quota_service.consume(request_id, outcome="success", result_ref="dish_name")
     await state.update_data(generated_dish_name=generated)
     short = token[:MEAL_SAVE_CALLBACK_TOKEN_LENGTH]
     await message.answer(
@@ -5725,7 +5727,7 @@ async def dish_builder_name_input(message: Message, state: FSMContext):
     if text == "⬅️ К ингредиентам":
         await _show_dish_builder(message, state); return
     if text == "✨ Сгенерировать название":
-        await _generate_composed_dish_name(message, state, user_id=str(message.from_user.id), request_key=str(message.message_id))
+        await _generate_composed_dish_name(message, state, user_id=str(message.from_user.id))
         return
     await _save_composed_dish(message, state, text)
 
@@ -5744,7 +5746,7 @@ async def dish_builder_generated_name_action(callback: CallbackQuery, state: FSM
     await state.set_state(DishBuilderStates.name)
     if callback.data.startswith("dish_nmanual:"):
         await callback.message.answer("Введи название блюда:", reply_markup=_dish_name_menu(token)); return
-    await _generate_composed_dish_name(callback.message, state, user_id=str(callback.from_user.id), request_key=callback.id)
+    await _generate_composed_dish_name(callback.message, state, user_id=str(callback.from_user.id))
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("dish_cancel:"))
