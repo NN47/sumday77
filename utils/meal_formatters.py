@@ -340,21 +340,30 @@ def _collect_product_totals(products: list[dict]) -> dict[str, float]:
     return totals
 
 
-def _format_product_detail_block(product: dict) -> str:
-    """Форматирует продукт в общем подробном HTML-стиле add/edit-сценариев."""
+def format_product_detail_block(
+    product: dict,
+    *,
+    prefix: str = "•",
+    include_correction_note: bool = True,
+) -> str:
+    """Форматирует продукт в эталонном HTML-стиле состава приёма пищи.
+
+    Название и количество образуют одну жирную строку, а КБЖУ выводятся
+    отдельной обычной строкой. ``prefix`` позволяет сохранить нумерацию в
+    интерактивных списках, не создавая ещё один вариант форматирования.
+    """
     name = html.escape(extract_product_name(product))
     grams = extract_product_weight(product)
     calories, protein, fat, carbs = extract_product_macros(product)
-    title = f"• <b>{name}</b>"
+    title = name
     if grams > 0:
         title += f" ({grams:.0f} г)"
 
     lines = [
-        title,
-        f"<b>{calories:.0f} ккал</b> "
-        f"<i>(Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f})</i>",
+        f"{prefix} <b>{title}</b>" if prefix else f"<b>{title}</b>",
+        f"{calories:.0f} ккал (Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f})",
     ]
-    if bool(product.get("is_manually_corrected")):
+    if include_correction_note and bool(product.get("is_manually_corrected")):
         lines.append("✏️ <i>КБЖУ скорректированы вручную</i>")
     return "\n".join(lines)
 
@@ -411,7 +420,7 @@ def _format_meal_edit_detail_blocks(
     normalized_totals = _normalize_totals(totals) if totals is not None else _collect_product_totals(products)
     blocks = [f"<b>✏️ {meal_ui['title']} — выберите продукт для редактирования</b>"]
 
-    blocks.extend(_format_product_detail_block(product) for product in products)
+    blocks.extend(format_product_detail_block(product) for product in products)
 
     blocks.append("---")
     blocks.append("\n".join(format_meal_totals(normalized_meal_type, normalized_totals)))
@@ -504,7 +513,7 @@ def format_meal_details(meal_type: str, items: list[Meal]) -> str:
     totals = _collect_meal_totals(items)
     blocks = [f"{meal_ui['emoji']} <b>{meal_ui['title']}</b>"]
     blocks.extend(
-        _format_product_detail_block(product)
+        format_product_detail_block(product)
         for product in _collect_meal_detail_products(items)
     )
     blocks.append("---")

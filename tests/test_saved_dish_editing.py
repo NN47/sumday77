@@ -109,11 +109,10 @@ def test_editor_formats_actual_ingredient_kbju_and_shared_dish_totals():
 
     text = meals._format_saved_dish_editor(dish, items)
 
-    assert "1️⃣ Хлеб" in text
-    assert "⚖️ <b>Вес:</b> 110 г" in text
-    assert "🔥 <b>Калории:</b> 275 ккал" in text
-    assert "2️⃣ Сыр" in text
-    assert "🔥 <b>Калории:</b> 70 ккал" in text
+    assert "1️⃣ <b>Хлеб (110 г)</b>" in text
+    assert "275 ккал (Б 8.8 / Ж 3.3 / У 52.8)" in text
+    assert "2️⃣ <b>Сыр (20 г)</b>" in text
+    assert "70 ккал (Б 5.0 / Ж 5.4 / У 0.2)" in text
     assert "<b>Итого по блюду:</b>" in text
     assert "📦 <b>Общий вес:</b> 130 г" in text
     assert "🔥 <b>Калории:</b> 345 ккал" in text

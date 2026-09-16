@@ -419,8 +419,8 @@ def test_reopening_filled_meal_from_diary_shows_existing_products_before_new_add
     assert "🍱 <b>Уже в этом приёме пищи</b>" in current_meal_text
     assert "📅 <b>Дата:</b> 08.04.2026" in current_meal_text
     assert "🍎 <b>Перекус</b>" in current_meal_text
-    assert "• <b>Яблоко</b> (180 г)" in current_meal_text
-    assert "<b>94 ккал</b> <i>(Б 0.5 / Ж 0.3 / У 25.0)</i>" in current_meal_text
+    assert "• <b>Яблоко (180 г)</b>" in current_meal_text
+    assert "94 ккал (Б 0.5 / Ж 0.3 / У 25.0)" in current_meal_text
     assert "<b>Итого перекус:</b>" in current_meal_text
     assert "🔥 <b>Калории:</b> 94 ккал" in current_meal_text
     keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"]
@@ -502,8 +502,8 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_switches_bottom_
     assert "🍱 <b>Уже в этом приёме пищи</b>" in answer_text
     assert "📅 <b>Дата:</b> 08.04.2026" in answer_text
     assert "🍳 <b>Завтрак</b>" in answer_text
-    assert "• <b>Чёрный кофе</b> (250 г)" in answer_text
-    assert "<b>5 ккал</b> <i>(Б 0.3 / Ж 0.0 / У 0.5)</i>" in answer_text
+    assert "• <b>Чёрный кофе (250 г)</b>" in answer_text
+    assert "5 ккал (Б 0.3 / Ж 0.0 / У 0.5)" in answer_text
     assert "<b>Итого завтрак:</b>" in answer_text
     assert not answer_text.endswith("\n⸻")
     assert "➕ Добавь следующий продукт" not in answer_text
@@ -956,9 +956,9 @@ def test_diary_edit_keeps_duplicate_records_and_text_button_numbering_in_sync():
     assert [product["_source_meal_id"] for product in state._data["saved_products"]] == [11, 12]
     detail_call = callback.message.answer.await_args_list[-1]
     detail_text = detail_call.args[0]
-    assert "• <b>Хлебцы</b> (10 г)" in detail_text
-    assert "• <b>Хлебцы</b> (20 г)" in detail_text
-    assert detail_text.count("• <b>Хлебцы</b>") == 2
+    assert "• <b>Хлебцы (10 г)</b>" in detail_text
+    assert "• <b>Хлебцы (20 г)</b>" in detail_text
+    assert detail_text.count("• <b>Хлебцы (") == 2
     assert "<b>Итого обед:</b>" in detail_text
     assert "Нашёл несколько записей" not in detail_text
     assert "Убираю нижнюю клавиатуру" not in detail_text
@@ -1093,14 +1093,8 @@ def test_my_product_confirm_text_uses_photo_style_kbju_and_escapes_html():
     text = meals._render_my_product_confirm_text("dinner", item, amount_g=300)
 
     assert "🍽 <b>Ужин</b> • <b>Добавить продукт?</b>" in text
-    assert "<b>Продукт:</b> Tea &lt;green&gt;" in text
-    assert "<b>Продукт:</b> Tea &lt;green&gt;\n\n⚖️ <b>Последняя порция:</b> 300 г" in text
-    assert "<b>Tea &lt;green&gt;</b>" not in text
-    assert "⚖️ <b>Последняя порция:</b> 300 г" in text
-    assert "🔥 <b>Калории:</b> 0 ккал" in text
-    assert "🥩 <b>Белки:</b> 0.3 г" in text
-    assert "🥑 <b>Жиры:</b> 0.0 г" in text
-    assert "🍚 <b>Углеводы:</b> 0.9 г" in text
+    assert "• <b>Tea &lt;green&gt; (300 г)</b>" in text
+    assert "0 ккал (Б 0.3 / Ж 0.0 / У 0.9)" in text
     assert "<b>Выбери действие:</b>" in text
     assert "Tea <green>" not in text
 
@@ -1131,7 +1125,7 @@ def test_my_product_confirm_card_and_keyboard_show_optional_unit_and_package() -
         item=item,
     )
 
-    assert "⚖️ <b>Последняя порция:</b> 20 г" in text
+    assert "• <b>Хлебцы (20 г)</b>" in text
     assert "1️⃣ <b>1 хлебец:</b> 10 г" in text
     assert "📦 <b>Весь продукт:</b> 100 г" in text
     assert "🍽 <b>Порций в продукте:</b> 10" in text
@@ -1375,9 +1369,8 @@ def test_format_my_products_text_uses_meal_report_bold_style_and_escapes_html():
     text = meals._format_my_products_text([item], page=1)
 
     assert "🕒 <b>Недавние продукты • страница 1</b>" in text
-    assert "1️⃣ <b>Салат &lt;Курочка&gt;</b>" in text
-    assert "<b>120 г • 67 ккал</b>" in text
-    assert "<i>Б 3.1 / Ж 5.3 / У 1.7</i>" in text
+    assert "1️⃣ <b>Салат &lt;Курочка&gt; (120 г)</b>" in text
+    assert "67 ккал (Б 3.1 / Ж 5.3 / У 1.7)" in text
     assert "<Курочка>" not in text
 
 
@@ -1494,9 +1487,8 @@ def test_format_my_products_search_results_text_uses_my_product_format_and_escap
     text = meals._format_my_products_search_results_text("сыр <", [item], page=1)
 
     assert "🔎 <b>Результаты поиска: сыр &lt;</b>" in text
-    assert "1️⃣ <b>Сыр &lt;творожный&gt;</b>" in text
-    assert "<b>120 г • 67 ккал</b>" in text
-    assert "<i>Б 3.1 / Ж 5.3 / У 1.7</i>" in text
+    assert "1️⃣ <b>Сыр &lt;творожный&gt; (120 г)</b>" in text
+    assert "67 ккал (Б 3.1 / Ж 5.3 / У 1.7)" in text
 
 
 def test_my_products_search_query_uses_full_user_history_not_my_product_page():
@@ -2006,8 +1998,8 @@ def test_edit_last_meal_single_label_product_opens_detailed_product_list():
     answer_kwargs = message.answer.await_args.kwargs
     answer_text = message.answer.await_args.args[0]
     assert "<b>✏️ Перекус — выберите продукт для редактирования</b>" in answer_text
-    assert "• <b>Eichbaum Radler Lemon</b> (350 г)" in answer_text
-    assert "<b>112 ккал</b> <i>(Б 1.8 / Ж 1.8 / У 27.3)</i>" in answer_text
+    assert "• <b>Eichbaum Radler Lemon (350 г)</b>" in answer_text
+    assert "112 ккал (Б 1.8 / Ж 1.8 / У 27.3)" in answer_text
     assert "<b>Итого перекус:</b>" in answer_text
     assert "🔥 <b>Калории:</b> 112 ккал" in answer_text
     assert answer_kwargs["reply_markup"].remove_keyboard is True
@@ -2048,7 +2040,7 @@ def test_meal_product_name_input_back_returns_to_product_actions_without_saving(
     callback.message.edit_text.assert_awaited_once()
     edit_text = callback.message.edit_text.await_args.args[0]
     assert "✏️ Редактирование продукта" in edit_text
-    assert "<b>Продукт:</b> Кофе" in edit_text
+    assert "• <b>Кофе (250 г)</b>" in edit_text
     button_texts = [
         button.text
         for row in callback.message.edit_text.await_args.kwargs["reply_markup"].inline_keyboard
@@ -2195,8 +2187,8 @@ def test_meal_weight_save_stays_in_product_editing_until_done():
     callback.message.edit_text.assert_awaited_once()
     detail_text = callback.message.edit_text.await_args.args[0]
     assert "<b>✏️ Перекус — выберите продукт для редактирования</b>" in detail_text
-    assert "• <b>Творог</b> (150 г)" in detail_text
-    assert "<b>180 ккал</b> <i>(Б 24.0 / Ж 7.5 / У 4.5)</i>" in detail_text
+    assert "• <b>Творог (150 г)</b>" in detail_text
+    assert "180 ккал (Б 24.0 / Ж 7.5 / У 4.5)" in detail_text
     assert "<b>Итого перекус:</b>" in detail_text
     render_day.assert_not_awaited()
     state.clear.assert_not_awaited()
@@ -2245,7 +2237,7 @@ def test_meal_product_delete_updates_existing_record_and_detailed_list():
     assert [product["name"] for product in saved_payload] == ["Сыр"]
     assert [product["name"] for product in state._data["saved_products"]] == ["Сыр"]
     detail_text = callback.message.edit_text.await_args.args[0]
-    assert "• <b>Сыр</b> (20 г)" in detail_text
+    assert "• <b>Сыр (20 г)</b>" in detail_text
     assert "Хлебцы" not in detail_text
 
 
@@ -2332,7 +2324,7 @@ def test_main_ai_text_input_uses_deepseek_not_gemini(caplog):
     assert "<b>📝 AI-анализ приёма пищи</b>" in analysis_text
     assert "🤖 <b>📝 AI-анализ приёма пищи</b>" not in analysis_text
     assert "AI-анализ (DeepSeek): оценка приёма пищи" not in analysis_text
-    assert "• <b>Курица</b> (200 г) — <b>330 ккал</b>" in analysis_text
+    assert "• <b>Курица (200 г)</b>\n330 ккал" in analysis_text
     assert "🔥 <b>Калории:</b> <b>330 ккал</b>" in analysis_text
     assert "✅ <b>Продукт сохранён.</b>" not in analysis_text
     assert "Проверьте данные перед сохранением." in analysis_text
@@ -2505,7 +2497,7 @@ def test_back_from_ai_method_restores_open_meal_entry_screen():
     restored_text = message.answer.await_args_list[0].args[0]
     assert "🍱 <b>Уже в этом приёме пищи</b>" in restored_text
     assert "🍳 <b>Завтрак</b>" in restored_text
-    assert "• <b>Творог</b> (150 г)" in restored_text
+    assert "• <b>Творог (150 г)</b>" in restored_text
     assert "<b>Итого завтрак:</b>" in restored_text
     inline_keyboard = message.answer.await_args_list[0].kwargs["reply_markup"].inline_keyboard
     assert [[button.text for button in row] for row in inline_keyboard] == [
@@ -2551,7 +2543,7 @@ def test_back_from_manual_products_restores_open_meal_entry_screen():
     restored_text = message.answer.await_args_list[0].args[0]
     assert "🍱 <b>Уже в этом приёме пищи</b>" in restored_text
     assert "🍲 <b>Обед</b>" in restored_text
-    assert "• <b>Суп</b> (300 г)" in restored_text
+    assert "• <b>Суп (300 г)</b>" in restored_text
     assert "<b>Итого обед:</b>" in restored_text
     assert message.answer.await_args_list[1].args[0] == (
         "Можно добавить в этот приём пищи ещё продукт нажав кнопку ниже 👇 или завершить его."
