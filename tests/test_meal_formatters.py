@@ -114,8 +114,8 @@ class MealFormatterTests(unittest.TestCase):
         )
 
         self.assertEqual(summary.casefold().count("хлебцы"), 1)
-        self.assertIn("• <b>Хлебцы</b> (10 г)", details)
-        self.assertIn("• <b>хлебцы</b> (20 г)", details)
+        self.assertIn("• <b>Хлебцы (10 г)</b>", details)
+        self.assertIn("• <b>хлебцы (20 г)</b>", details)
         self.assertIn("<b>Итого обед:</b>", details)
         self.assertIn("🔥 <b>Калории:</b> 99 ккал", details)
         self.assertIn("🥩 <b>Белки:</b> 2.0 г", details)
@@ -184,7 +184,7 @@ class MealFormatterTests(unittest.TestCase):
 
         self.assertNotIn("10 г", summary)
         self.assertIn("продукт 1, продукт 2, продукт 3", summary)
-        self.assertIn("• <b>Продукт 8</b> (80 г)", details)
+        self.assertIn("• <b>Продукт 8 (80 г)</b>", details)
         self.assertEqual(details.count("• <b>"), 8)
 
     def test_current_meal_details_keep_full_names_duplicates_and_html_safety(self):
@@ -209,13 +209,13 @@ class MealFormatterTests(unittest.TestCase):
 
         escaped_name = 'Тунец &lt;в собственном соку&gt; &amp; &quot;Бренд&quot;'
         self.assertIn("🍲 <b>Обед</b>", details)
-        self.assertIn(f"• <b>{escaped_name}</b> (100 г)", details)
-        self.assertEqual(details.count("• <b>Хлебцы</b>"), 2)
-        self.assertIn("• <b>Хлебцы</b> (10 г)", details)
-        self.assertIn("• <b>Хлебцы</b> (20 г)", details)
+        self.assertIn(f"• <b>{escaped_name} (100 г)</b>", details)
+        self.assertEqual(details.count("• <b>Хлебцы ("), 2)
+        self.assertIn("• <b>Хлебцы (10 г)</b>", details)
+        self.assertIn("• <b>Хлебцы (20 г)</b>", details)
         self.assertIn("<b>Итого обед:</b>", details)
         self.assertIn("🔥 <b>Калории:</b> 219 ккал", details)
-        self.assertIn(f"• <b>{escaped_name}</b> (100 г)", edit_details)
+        self.assertIn(f"• <b>{escaped_name} (100 г)</b>", edit_details)
         self.assertEqual(products[0]["name"], original_name)
 
     def test_current_meal_keeps_dish_portions_and_separately_added_products(self):
@@ -241,12 +241,12 @@ class MealFormatterTests(unittest.TestCase):
 
         details = format_meal_details("lunch", [dish, bread, dish])
 
-        title = '• <b>Бутерброд &lt;с сыром&gt; &amp; &quot;соусом&quot;</b> (150 г)'
+        title = '• <b>Бутерброд &lt;с сыром&gt; &amp; &quot;соусом&quot; (150 г)</b>'
         self.assertEqual(details.count(title), 2)
-        self.assertEqual(details.count("• <b>Хлеб</b>"), 1)
-        self.assertIn("• <b>Хлеб</b> (20 г)", details)
+        self.assertEqual(details.count("• <b>Хлеб ("), 1)
+        self.assertIn("• <b>Хлеб (20 г)</b>", details)
         self.assertNotIn("• <b>Сыр</b>", details)
-        self.assertIn("<b>400 ккал</b> <i>(Б 15.0 / Ж 20.0 / У 40.0)</i>", details)
+        self.assertIn("400 ккал (Б 15.0 / Ж 20.0 / У 40.0)", details)
         self.assertEqual(details.count("КБЖУ скорректированы вручную"), 2)
         self.assertIn("🔥 <b>Калории:</b> 850 ккал", details)
         self.assertIn("🥩 <b>Белки:</b> 32.0 г", details)
@@ -275,7 +275,7 @@ class MealFormatterTests(unittest.TestCase):
 
         self.assertIn("очень длинное название продукта", summary)
         self.assertNotIn(long_name.strip(), summary)
-        self.assertIn(f"<b>{long_name.strip()}</b>", details)
+        self.assertIn(f"<b>{long_name.strip()} (100 г)</b>", details)
 
     def test_large_edit_details_split_without_data_loss(self):
         products = [

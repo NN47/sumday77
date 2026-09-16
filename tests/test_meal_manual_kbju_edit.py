@@ -186,7 +186,7 @@ def test_format_product_macro_summary_matches_edit_card_example():
     )
 
 
-def test_product_actions_text_shows_bold_product_label_and_plain_name():
+def test_product_actions_text_uses_shared_product_block():
     text = _render_product_actions_text({
         "name": "Творог",
         "grams": 50,
@@ -197,24 +197,17 @@ def test_product_actions_text_shows_bold_product_label_and_plain_name():
     })
 
     assert "<b>✏️ Редактирование продукта</b>" in text
-    assert "<b>Продукт:</b> Творог" in text
-    assert "<b>Продукт:</b> Творог\n\n⚖️ <b>Вес:</b> 50 г" in text
-    assert "<b>Творог</b>" not in text
-    assert "⚖️ <b>Вес:</b> 50 г" in text
-    assert "🔥 <b>Калории:</b> 182 ккал" in text
-    assert "🥩 <b>Белки:</b> 10.0 г" in text
-    assert "🥑 <b>Жиры:</b> 8.0 г" in text
-    assert f"{EMOJI_MAP['carbs']} <b>Углеводы:</b> 5.0 г" in text
+    assert "• <b>Творог (50 г)</b>" in text
+    assert "182 ккал (Б 10.0 / Ж 8.0 / У 5.0)" in text
 
 
-def test_weight_editor_text_bolds_title_and_colon_labels():
+def test_weight_editor_text_uses_shared_product_block_and_weight_context():
     text = _render_weight_editor_text({"name": "Творог", "grams": 500}, draft_weight=450)
 
     assert "<b>✏️ Изменение веса продукта</b>" in text
-    assert "<b>Продукт:</b> Творог" in text
-    assert "<b>Продукт:</b> Творог\n\n🔥 <b>Калории:</b>" in text
-    assert "<b>Текущий вес:</b> 500 г" in text
-    assert "<b>Новый вес:</b> 450 г" in text
+    assert "• <b>Творог (500 г)</b>" in text
+    assert "Текущий вес до изменения: 500 г" in text
+    assert "Новый вес: 450 г" in text
     assert "<b>Выбери действие или введи вручную:</b>" in text
 
 

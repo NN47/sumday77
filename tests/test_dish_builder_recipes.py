@@ -189,11 +189,14 @@ def test_recipe_builder_uses_same_compact_summary_as_new_dish(monkeypatch):
 
     assert msg.answer.await_args.args[0] == (
         "🥣 <b>Новое блюдо</b>\n\n"
-        "Добавленные ингредиенты:\n"
-        "1️⃣ ПРОДУКТ МЯСНОЙ ИЗ СВИНИНЫ — 25 г\n"
-        "   🔥 60 ккал · Б 3.8 · Ж 4.8 · У 0.5\n\n"
-        "📦 <b>Общий вес:</b> 25 г\n"
-        "🔥 <b>60 ккал</b> · Б 3.8 · Ж 4.8 · У 0.5"
+        "Добавленные ингредиенты:\n\n"
+        "1️⃣ <b>ПРОДУКТ МЯСНОЙ ИЗ СВИНИНЫ (25 г)</b>\n"
+        "60 ккал (Б 3.8 / Ж 4.8 / У 0.5)\n\n"
+        "<b>Итого по блюду:</b>\n"
+        "🔥 <b>Калории:</b> 60 ккал\n"
+        "🥩 <b>Белки:</b> 3.8 г\n"
+        "🥑 <b>Жиры:</b> 4.8 г\n"
+        "🍚 <b>Углеводы:</b> 0.5 г"
     )
 
 
@@ -340,7 +343,7 @@ def test_recipe_full_handler_flow_saves_template_only(db, monkeypatch):
         result_message = final_message.answer.await_args.args[0]
         assert result_message.startswith("🎉 <b>Рецепт создан!</b>")
         assert "🥣 <b>Рисовая каша</b>" in result_message
-        assert "1️⃣ Рис — 300 г" in result_message
+        assert "1️⃣ <b>Рис (300 г)</b>" in result_message
         assert "📦 <b>Общий вес:</b> 300 г" in result_message
         assert "🔥 <b>Калории:</b> 350 ккал" in result_message
         assert "🥩 <b>Белки:</b> 7.0 г" in result_message

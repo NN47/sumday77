@@ -120,6 +120,7 @@ from utils.meal_formatters import (
     extract_product_name as extract_meal_product_name,
     extract_product_weight as extract_meal_product_weight,
     format_emoji_number as format_meal_emoji_number,
+    format_product_detail_block,
     format_meal_details,
     format_meal_edit_chunks,
 )
@@ -603,17 +604,7 @@ def _format_ai_food_analysis_message(title: str, items: list, totals: dict, *, s
     lines = [f"<b>{html.escape(title)}</b>", "", "📌 <b>Распознанные продукты:</b>"]
     if items:
         for item in items:
-            item_name = html.escape(str(item.get("name") or "продукт"))
-            grams = float(item.get("grams", 0) or 0)
-            kcal = float(item.get("kcal", 0) or 0)
-            protein = float(item.get("protein", 0) or 0)
-            fat = float(item.get("fat", 0) or 0)
-            carbs = float(item.get("carbs", 0) or 0)
-            lines.append(
-                f"• <b>{item_name}</b> ({grams:.0f} г) — "
-                f"<b>{kcal:.0f} ккал</b> "
-                f"<i>(Б {protein:.1f} / Ж {fat:.1f} / У {carbs:.1f})</i>"
-            )
+            lines.append(format_product_detail_block(item))
     else:
         lines.append("• Не удалось выделить продукты отдельно — использую общий итог.")
 
@@ -1094,15 +1085,9 @@ def _scale_photo_items(items: list[dict], new_total_weight: float) -> list[dict]
 
 
 def _format_photo_item_block(item: dict, index: int | None = None) -> str:
-    prefix = f"{_number_emoji(index)} " if index is not None else ""
-    return "\n".join(
-        [
-            f"{prefix}{html.escape(str(item.get('name') or 'Продукт'))} — {_safe_float(item.get('grams')):.0f} г",
-            f"🔥 {_safe_float(item.get('kcal') or item.get('calories')):.0f} ккал",
-            f"🥩 Б: {_safe_float(item.get('protein') or item.get('protein_g')):.1f} г",
-            f"🥑 Ж: {_safe_float(item.get('fat') or item.get('fat_total_g')):.1f} г",
-            f"🍚 У: {_safe_float(item.get('carbs') or item.get('carbohydrates_total_g')):.1f} г",
-        ]
+    return format_product_detail_block(
+        item,
+        prefix=_number_emoji(index) if index is not None else "•",
     )
 
 
@@ -1493,14 +1478,10 @@ def _format_my_products_text(my_product_meals: list[MyProductItem], page: int, *
     start_idx = (page - 1) * MY_PRODUCTS_PAGE_SIZE
     lines: list[str] = [f"{title} • страница {page}</b>", ""]
     for offset, item in enumerate(my_product_meals, start=start_idx + 1):
-        lines.extend(
-            [
-                f"{_format_emoji_number(offset)} <b>{html.escape(item.title)}</b>",
-                f"<b>{item.amount_g} г • {item.calories:.0f} ккал</b>",
-                f"<i>Б {item.protein:.1f} / Ж {item.fat:.1f} / У {item.carbs:.1f}</i>",
-                "",
-            ]
-        )
+        lines.extend([format_product_detail_block({
+            "name": item.title, "grams": item.amount_g, "calories": item.calories,
+            "protein": item.protein, "fat": item.fat, "carbs": item.carbs,
+        }, prefix=_format_emoji_number(offset)), ""])
     return "\n".join(lines).strip()
 
 
@@ -1509,14 +1490,10 @@ def _format_my_products_search_results_text(query: str, items: list[MyProductIte
     safe_query = html.escape((query or "").strip())
     lines: list[str] = [f"🔎 <b>Результаты поиска: {safe_query}</b>", ""]
     for offset, item in enumerate(items, start=start_idx + 1):
-        lines.extend(
-            [
-                f"{_format_emoji_number(offset)} <b>{html.escape(item.title)}</b>",
-                f"<b>{item.amount_g} г • {item.calories:.0f} ккал</b>",
-                f"<i>Б {item.protein:.1f} / Ж {item.fat:.1f} / У {item.carbs:.1f}</i>",
-                "",
-            ]
-        )
+        lines.extend([format_product_detail_block({
+            "name": item.title, "grams": item.amount_g, "calories": item.calories,
+            "protein": item.protein, "fat": item.fat, "carbs": item.carbs,
+        }, prefix=_format_emoji_number(offset)), ""])
     return "\n".join(lines).strip()
 
 
@@ -3409,12 +3386,13 @@ def _render_my_product_confirm_text(meal_type: str, meal, amount_g: int = 100) -
         unit_name = None
         package_weight_g = None
         package_units = None
-    safe_title = html.escape(title or "Продукт")
     lines = [
-        f"{meal_ui} • <b>Добавить продукт?</b>\n\n"
-        f"<b>Продукт:</b> {safe_title}",
+        f"{meal_ui} • <b>Добавить продукт?</b>",
         "",
-        f"⚖️ <b>Последняя порция:</b> {_format_product_weight_g(amount_g)} г",
+        format_product_detail_block({
+            "name": title or "Продукт", "grams": amount_g, "calories": calories,
+            "protein": protein, "fat": fat, "carbs": carbs,
+        }),
     ]
     lines.extend(
         _render_my_product_reference_lines(
@@ -3436,11 +3414,6 @@ def _render_my_product_confirm_text(meal_type: str, meal, amount_g: int = 100) -
     )
     lines.extend(
         [
-            "",
-            f"🔥 <b>Калории:</b> {calories:.0f} ккал",
-            f"🥩 <b>Белки:</b> {protein:.1f} г",
-            f"🥑 <b>Жиры:</b> {fat:.1f} г",
-            f"🍚 <b>Углеводы:</b> {carbs:.1f} г",
             "",
             "<b>Выбери действие:</b>",
         ]
@@ -3840,10 +3813,9 @@ def _format_saved_dishes_page(dishes: list, page: int) -> str:
     for index, dish in enumerate(dishes, start=1):
         snapshot = dish_to_snapshot(dish)
         totals = calculate_dish_totals(snapshot)
-        lines.append(
-            f"{_format_emoji_number(index)} {html.escape(dish.name)} — "
-            f"{calculate_dish_weight(snapshot):.0f} г, {totals['calories']:.0f} ккал"
-        )
+        lines.extend([format_product_detail_block({
+            "name": dish.name, "grams": calculate_dish_weight(snapshot), **totals,
+        }, prefix=_format_emoji_number(index)), ""])
     lines.extend(["", f"Страница {page}"])
     return "\n".join(lines)
 
@@ -3876,10 +3848,9 @@ def _format_saved_dish_card(dish, items: list[dict]) -> str:
         "<b>Состав:</b>",
     ]
     for index, item in enumerate(items[:15]):
-        lines.append(
-            f"{_number_emoji(index)} {html.escape(_truncate_product_name(str(item.get('name') or 'Ингредиент')))} — "
-            f"{_safe_float(item.get('grams')):.0f} г"
-        )
+        visible_item = dict(item)
+        visible_item["name"] = _truncate_product_name(str(item.get("name") or "Ингредиент"))
+        lines.extend(["", format_product_detail_block(visible_item, prefix=_number_emoji(index))])
     lines.extend(
         [
             "",
@@ -3911,10 +3882,7 @@ def _format_created_recipe_card(dish, items: list[dict]) -> str:
         "<b>Состав:</b>",
     ]
     for index, item in enumerate(items):
-        lines.append(
-            f"{_number_emoji(index)} {html.escape(str(item.get('name') or 'Ингредиент'))} — "
-            f"{_safe_float(item.get('grams')):.0f} г"
-        )
+        lines.extend(["", format_product_detail_block(item, prefix=_number_emoji(index))])
     lines.extend(
         [
             "",
@@ -3983,11 +3951,8 @@ def _format_saved_dish_editor(dish, items: list[dict]) -> str:
         "Выберите продукт для редактирования или добавьте новый:", "",
     ]
     for index, item in enumerate(items, start=1):
-        calories, protein, fat, carbs = _extract_product_macros(item)
         lines.extend([
-            f"{_format_emoji_number(index)} {html.escape(str(item.get('name') or 'Ингредиент'))}",
-            f"⚖️ <b>Вес:</b> {_safe_float(item.get('grams')):.0f} г",
-            _format_product_macro_summary(calories, protein, fat, carbs),
+            format_product_detail_block(item, prefix=_format_emoji_number(index)),
             "",
         ])
     totals = calculate_dish_totals(items)
@@ -4063,9 +4028,9 @@ def _format_saved_dish_weight_text(dish, items: list[dict]) -> str:
         [
             f"⚖️ <b>Порция: {html.escape(dish.name)}</b>",
             "",
-            f"Общий вес: {calculate_dish_weight(items):.0f} г",
-            f"🔥 {totals['calories']:.0f} ккал · Б {totals['protein']:.1f} · "
-            f"Ж {totals['fat']:.1f} · У {totals['carbs']:.1f}",
+            format_product_detail_block({
+                "name": dish.name, "grams": calculate_dish_weight(items), **totals,
+            }),
             "",
             "Ингредиенты и КБЖУ пересчитываются пропорционально.",
         ]
@@ -5677,19 +5642,15 @@ def _format_dish_builder(items: list[dict]) -> str:
         lines.extend(["", "Пока ничего не добавлено."])
     else:
         for index, item in enumerate(items[:15]):
-            calories, protein, fat, carbs = extract_meal_product_macros(item)
-            lines.append(
-                f"{_number_emoji(index)} {html.escape(_truncate_product_name(extract_meal_product_name(item, fallback='Продукт')))} — "
-                f"{extract_meal_product_weight(item):.0f} г"
+            visible_item = dict(item)
+            visible_item["name"] = _truncate_product_name(
+                extract_meal_product_name(item, fallback="Продукт")
             )
-            lines.append(
-                f"   🔥 {calories:.0f} ккал · Б {protein:.1f} · Ж {fat:.1f} · У {carbs:.1f}"
-            )
+            lines.extend(["", format_product_detail_block(visible_item, prefix=_number_emoji(index))])
         totals = calculate_dish_totals(items)
         lines.extend([
-            "", f"📦 <b>Общий вес:</b> {calculate_dish_weight(items):.0f} г",
-            f"🔥 <b>{totals['calories']:.0f} ккал</b> · Б {totals['protein']:.1f} · "
-            f"Ж {totals['fat']:.1f} · У {totals['carbs']:.1f}",
+            "", "<b>Итого по блюду:</b>",
+            _format_kbju_summary_block(totals),
         ])
     if len(items) > 15:
         lines.append(f"Ещё ингредиентов: {len(items) - 15}. Полный состав доступен в редакторе.")
@@ -9117,26 +9078,17 @@ def _format_product_macro_summary(
     fat: float,
     carbs: float,
 ) -> str:
-    """Форматирует блок КБЖУ для карточки редактирования продукта."""
-    return (
-        f"🔥 <b>Калории:</b> {calories:.0f} ккал\n"
-        f"🥩 <b>Белки:</b> {protein:.1f} г\n"
-        f"🥑 <b>Жиры:</b> {fat:.1f} г\n"
-        f"{CARBS_EMOJI} <b>Углеводы:</b> {carbs:.1f} г"
+    """Форматирует развёрнутый блок КБЖУ там, где нет строки продукта."""
+    return _format_kbju_summary_block(
+        {"calories": calories, "protein": protein, "fat": fat, "carbs": carbs}
     )
 
 
 def _render_product_actions_text(product: dict) -> str:
-    name = html.escape(str(product.get("name") or "продукт"))
-    grams = float(product.get("grams") or 0)
-    calories, protein, fat, carbs = _extract_product_macros(product)
     lines = [
         "<b>✏️ Редактирование продукта</b>",
         "",
-        f"<b>Продукт:</b> {name}",
-        "",
-        f"⚖️ <b>Вес:</b> {grams:.0f} г",
-        _format_product_macro_summary(calories, protein, fat, carbs),
+        format_product_detail_block(product, include_correction_note=False),
     ]
     if bool(product.get("is_manually_corrected")):
         lines.append("✏️ КБЖУ скорректированы вручную")
@@ -9357,22 +9309,20 @@ def _build_product_preview_for_weight(product: dict, draft_weight: Optional[floa
 
 def _render_weight_editor_text(product: dict, draft_weight: Optional[float] = None) -> str:
     """Текст экрана изменения веса конкретного продукта."""
-    name = html.escape(str(product.get("name") or "продукт"))
     current_weight = float(product.get("grams") or 0)
     has_changes = draft_weight is not None and round(float(draft_weight), 2) != round(current_weight, 2)
     preview = _build_product_preview_for_weight(product, draft_weight if has_changes else None)
-    calories, protein, fat, carbs = _extract_product_macros(preview)
     lines = [
         "<b>✏️ Изменение веса продукта</b>",
         "",
-        f"<b>Продукт:</b> {name}",
-        "",
-        _format_product_macro_summary(calories, protein, fat, carbs),
-        "",
-        f"<b>Текущий вес:</b> {current_weight:.0f} г",
+        format_product_detail_block(preview),
     ]
     if has_changes:
-        lines.append(f"<b>Новый вес:</b> {float(draft_weight):.0f} г")
+        lines.extend([
+            "",
+            f"Текущий вес до изменения: {current_weight:.0f} г",
+            f"Новый вес: {float(draft_weight):.0f} г",
+        ])
 
     lines.extend(["", "<b>Выбери действие или введи вручную:</b>"])
     return "\n".join(lines)
@@ -9395,25 +9345,18 @@ def _build_kbju_editor_keyboard(product_idx: int) -> InlineKeyboardMarkup:
 
 
 def _render_kbju_editor_text(product: dict, draft: Optional[dict] = None) -> str:
-    name = product.get("name") or "продукт"
-    grams = float(product.get("grams") or 0)
     calories, protein, fat, carbs = _extract_product_macros(product)
     if draft:
         calories = float(draft.get("calories", calories))
         protein = float(draft.get("protein", protein))
         fat = float(draft.get("fat", fat))
         carbs = float(draft.get("carbs", carbs))
+    preview = dict(product)
+    preview.update(calories=calories, kcal=calories, protein=protein, fat=fat, carbs=carbs)
     lines = [
         "🧮 <b>Ручная правка КБЖУ</b>",
         "",
-        f"<b>Продукт:</b> {html.escape(str(name))}",
-        "",
-        f"<b>Текущий вес:</b> {grams:.0f} г",
-        "",
-        f"🔥 <b>Калории:</b> {calories:.0f} ккал",
-        f"🥩 <b>Белки:</b> {protein:.1f} г",
-        f"🥑 <b>Жиры:</b> {fat:.1f} г",
-        f"{CARBS_EMOJI} <b>Углеводы:</b> {carbs:.1f} г",
+        format_product_detail_block(preview, include_correction_note=False),
     ]
     if bool(product.get("is_manually_corrected")) or draft:
         lines.append("✏️ КБЖУ скорректированы вручную")
