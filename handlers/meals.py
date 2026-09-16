@@ -5280,6 +5280,7 @@ def _build_dish_builder_keyboard(items: list[dict], token: str) -> InlineKeyboar
         rows.append([InlineKeyboardButton(text="✏️ Редактировать ингредиенты", callback_data=f"dish_edit:{short}")])
     if len(items) < DISH_BUILDER_MAX_ITEMS:
         rows.append([InlineKeyboardButton(text="➕ Добавить ингредиент", callback_data=f"dish_more:{short}")])
+        rows.append([InlineKeyboardButton(text="🍽 Выбрать из моих блюд", callback_data=f"dish_from_saved:{short}:1")])
     if items:
         rows.append([InlineKeyboardButton(text="✅ Все ингредиенты добавлены", callback_data=f"dish_finish:{short}")])
     rows.append([InlineKeyboardButton(text="❌ Отменить", callback_data=f"dish_cancel:{short}")])
@@ -5337,6 +5338,110 @@ async def dish_builder_more(callback: CallbackQuery, state: FSMContext):
         await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True); return
     await callback.answer()
     await _show_ingredient_input_methods(callback.message, state, user_id=str(callback.from_user.id))
+
+
+def _saved_dish_as_ingredient(dish) -> dict:
+    """Represent a reusable dish as one recipe ingredient with aggregate nutrition."""
+    snapshot = dish_to_snapshot(dish)
+    totals = calculate_dish_totals(snapshot)
+    return {
+        "name": dish.name,
+        "grams": max(1.0, calculate_dish_weight(snapshot)),
+        "kcal": totals["calories"],
+        "protein": totals["protein"],
+        "fat": totals["fat"],
+        "carbs": totals["carbs"],
+    }
+
+
+async def _show_builder_saved_dishes(message: Message, state: FSMContext, *, user_id: str, page: int) -> None:
+    """Show saved dishes without leaving the current dish/recipe draft."""
+    data = await state.get_data()
+    builder = data.get("dish_builder") or {}
+    token = _dish_builder_token(data)
+    if token is None:
+        await message.answer("Черновик блюда устарел. Начни создание заново.")
+        return
+
+    # Do not allow an edited recipe to include itself. Other templates are
+    # copied as immutable aggregate ingredients, so future edits stay isolated.
+    current_id = builder.get("recipe_id")
+    dishes = [
+        dish for dish in DishRepository.list_active(user_id, limit=None)
+        if dish.id != current_id
+    ]
+    pages = total_pages_for(len(dishes), MY_DISHES_PAGE_SIZE)
+    page = clamp_page(page - 1, pages) + 1
+    shown = dishes[(page - 1) * MY_DISHES_PAGE_SIZE:page * MY_DISHES_PAGE_SIZE]
+    short = token[:MEAL_SAVE_CALLBACK_TOKEN_LENGTH]
+    rows = [[InlineKeyboardButton(
+        text=_truncate_product_name(dish.name),
+        callback_data=f"dish_saved_pick:{short}:{dish.id}",
+    )] for dish in shown]
+    keyboard = build_pagination_keyboard(
+        page - 1, pages, f"dish_from_saved:{short}", rows, page_base=1,
+    )
+    keyboard.inline_keyboard.append([
+        InlineKeyboardButton(text="⬅️ К ингредиентам", callback_data=f"dish_saved_back:{short}")
+    ])
+    text = "🍽 <b>Мои блюда</b>\n\n" + (
+        "Выбери блюдо — оно добавится в рецепт как один ингредиент."
+        if shown else "Пока нет сохранённых блюд."
+    )
+    await _edit_or_send_photo_analysis_message(
+        message, text, reply_markup=keyboard, parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("dish_from_saved:"))
+async def dish_builder_saved_dishes(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    parts = callback.data.split(":")
+    token = _dish_builder_token(data)
+    if len(parts) != 3 or token is None or parts[1] != token[:MEAL_SAVE_CALLBACK_TOKEN_LENGTH]:
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+    await callback.answer()
+    try:
+        page = int(parts[2])
+    except ValueError:
+        page = 1
+    await _show_builder_saved_dishes(
+        callback.message, state, user_id=str(callback.from_user.id), page=page,
+    )
+
+
+@router.callback_query(F.data.startswith("dish_saved_pick:"))
+async def dish_builder_saved_dish_pick(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    parts = callback.data.split(":")
+    token = _dish_builder_token(data)
+    if len(parts) != 3 or token is None or parts[1] != token[:MEAL_SAVE_CALLBACK_TOKEN_LENGTH]:
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+    builder = data.get("dish_builder") or {}
+    dish = DishRepository.get_by_id(str(callback.from_user.id), int(parts[2]))
+    if dish is None or dish.id == builder.get("recipe_id"):
+        await callback.answer("Блюдо не найдено", show_alert=True)
+        return
+    if len(builder.get("items") or []) >= DISH_BUILDER_MAX_ITEMS:
+        await callback.answer(f"В блюде может быть не больше {DISH_BUILDER_MAX_ITEMS} ингредиентов.", show_alert=True)
+        return
+    await callback.answer("Блюдо добавлено")
+    await state.update_data(dish_builder={
+        **builder, "items": [*(builder.get("items") or []), _saved_dish_as_ingredient(dish)],
+    })
+    await _show_dish_builder(callback.message, state, edit=True)
+
+
+@router.callback_query(F.data.startswith("dish_saved_back:"))
+async def dish_builder_saved_dishes_back(callback: CallbackQuery, state: FSMContext):
+    token = _dish_builder_token(await state.get_data())
+    if token is None or callback.data.split(":")[1] != token[:MEAL_SAVE_CALLBACK_TOKEN_LENGTH]:
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+    await callback.answer()
+    await _show_dish_builder(callback.message, state, edit=True)
 
 
 
