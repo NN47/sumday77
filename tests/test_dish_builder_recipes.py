@@ -190,7 +190,8 @@ def test_recipe_builder_uses_same_compact_summary_as_new_dish(monkeypatch):
     assert msg.answer.await_args.args[0] == (
         "🥣 <b>Новое блюдо</b>\n\n"
         "Добавленные ингредиенты:\n"
-        "1️⃣ ПРОДУКТ МЯСНОЙ ИЗ СВИНИНЫ — 25 г\n\n"
+        "1️⃣ ПРОДУКТ МЯСНОЙ ИЗ СВИНИНЫ — 25 г\n"
+        "   🔥 60 ккал · Б 3.8 · Ж 4.8 · У 0.5\n\n"
         "📦 <b>Общий вес:</b> 25 г\n"
         "🔥 <b>60 ккал</b> · Б 3.8 · Ж 4.8 · У 0.5"
     )

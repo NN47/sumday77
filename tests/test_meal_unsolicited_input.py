@@ -90,6 +90,28 @@ def test_confirmation_replays_original_message_once(monkeypatch, action, process
     asyncio.run(scenario())
 
 
+def test_unsolicited_text_uses_ingredient_wording_inside_dish_builder(monkeypatch):
+    async def scenario():
+        flow = Flow()
+        await flow.start()
+        await flow.state.update_data(dish_builder={"token": "B" * 22, "items": []})
+        analyze = AsyncMock()
+        monkeypatch.setattr(meals, "handle_ai_food_input", analyze)
+
+        await flow.route(flow.message(text="Яйцо 1 шт", message_id=71))
+
+        assert flow.sent[-1].text == "Добавить ингредиент по этому описанию?"
+        pending = (await flow.state.get_data())["unsolicited_input"]
+        await flow.route(flow.callback(pending, "text"))
+
+        edited_texts = [getattr(method, "text", None) for method in flow.sent]
+        assert "Обрабатываю описание ингредиента…" in edited_texts
+        assert "Обрабатываю описание приёма пищи…" not in edited_texts
+        analyze.assert_awaited_once()
+
+    asyncio.run(scenario())
+
+
 def test_replacement_and_cancel_restore_meal(monkeypatch):
     async def scenario():
         flow = Flow()
