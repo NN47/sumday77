@@ -5110,16 +5110,33 @@ async def recipe_method_selected(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Выбери способ из меню", show_alert=True)
         return
     await callback.answer()
-    await state.update_data(dish_builder={**data["dish_builder"], "cooking_method": None if method == "none" else method})
-    await _recipe_weight_prompt(callback.message, state)
+    cooking_method = None if method == "none" else method
+    await state.update_data(dish_builder={
+        **data["dish_builder"],
+        "cooking_method": cooking_method,
+        "cooked_weight_g": None,
+    })
+    if cooking_method == "boil":
+        await _recipe_weight_prompt(callback.message, state)
+    else:
+        await _recipe_preparation_prompt(callback.message, state)
 
 
 async def _recipe_weight_prompt(message: Message, state: FSMContext) -> None:
     await state.set_state(DishBuilderStates.cooked_weight)
     await message.answer(
-        "Введи общий вес готового блюда в граммах. КБЖУ всего рецепта сохранятся, а КБЖУ порции будут рассчитаны по готовому весу.",
+        "Если при варке ты добавлял воду, введи общий вес блюда после приготовления в граммах. "
+        "Тогда КБЖУ продуктов будут рассчитаны на этот общий вес.",
         reply_markup=ReplyKeyboardMarkup(keyboard=[
             [KeyboardButton(text="Оставить вес ингредиентов")], [KeyboardButton(text="⬅️ Назад")]
+        ], resize_keyboard=True))
+
+
+async def _recipe_preparation_prompt(message: Message, state: FSMContext) -> None:
+    await state.set_state(DishBuilderStates.preparation)
+    await message.answer("Опиши приготовление рецепта (до 2000 символов) или нажми «Сохранить рецепт».",
+        reply_markup=ReplyKeyboardMarkup(keyboard=[
+            [KeyboardButton(text="Сохранить рецепт")], [KeyboardButton(text="⬅️ Назад")]
         ], resize_keyboard=True))
 
 
@@ -5137,11 +5154,7 @@ async def recipe_weight_input(message: Message, state: FSMContext):
         await message.answer(str(exc))
         return
     await state.update_data(dish_builder={**builder, "cooked_weight_g": weight})
-    await state.set_state(DishBuilderStates.preparation)
-    await message.answer("Опиши приготовление рецепта (до 2000 символов) или нажми «Сохранить рецепт».",
-        reply_markup=ReplyKeyboardMarkup(keyboard=[
-            [KeyboardButton(text="Сохранить рецепт")], [KeyboardButton(text="⬅️ Назад")]
-        ], resize_keyboard=True))
+    await _recipe_preparation_prompt(message, state)
 
 
 @router.message(DishBuilderStates.preparation)
@@ -5150,7 +5163,10 @@ async def recipe_preparation_input(message: Message, state: FSMContext):
     data = await state.get_data()
     builder = data.get("dish_builder") or {}
     if text in BACK_BUTTON_TEXTS:
-        await _recipe_weight_prompt(message, state)
+        if builder.get("cooking_method") == "boil":
+            await _recipe_weight_prompt(message, state)
+        else:
+            await _recipe_method_prompt(message, state)
         return
     if not text:
         await message.answer("Отправь текст приготовления или нажми «Сохранить рецепт».")
