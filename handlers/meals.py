@@ -6855,7 +6855,7 @@ async def _keep_meal_entry_open_after_save(
         parse_mode="HTML",
     )
     await message.answer(
-        "Можно добавить ещё продукт в этот приём пищи или завершить его.",
+        "Можно добавить в этот приём пищи ещё продукт нажав кнопку ниже 👇 или завершить его.",
         reply_markup=kbju_add_menu,
     )
     await return_to_active_daily_preflight(message, user_id, entry_date)
