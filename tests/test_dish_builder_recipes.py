@@ -289,6 +289,48 @@ def test_recipe_full_handler_flow_saves_template_only(db, monkeypatch):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("method", ["fry", "bake", "none"])
+def test_only_boiling_requests_cooked_weight(monkeypatch, method):
+    state = builder_state()
+    state.data["dish_builder"].update(kind="recipe", cooked_weight_g=500)
+    monkeypatch.setattr(meals, "_hide_meal_reply_keyboard", AsyncMock())
+    msg = message()
+    cb = SimpleNamespace(data=f"recipe_method:{'B' * 12}:{method}", answer=AsyncMock(), message=msg)
+
+    asyncio.run(meals.recipe_method_selected(cb, state))
+
+    assert state.current == meals.DishBuilderStates.preparation
+    assert state.data["dish_builder"]["cooked_weight_g"] is None
+    assert "Опиши приготовление" in msg.answer.await_args.args[0]
+
+
+def test_boiling_explains_when_to_enter_total_cooked_weight(monkeypatch):
+    state = builder_state()
+    state.data["dish_builder"]["kind"] = "recipe"
+    monkeypatch.setattr(meals, "_hide_meal_reply_keyboard", AsyncMock())
+    msg = message()
+    cb = SimpleNamespace(data=f"recipe_method:{'B' * 12}:boil", answer=AsyncMock(), message=msg)
+
+    asyncio.run(meals.recipe_method_selected(cb, state))
+
+    assert state.current == meals.DishBuilderStates.cooked_weight
+    prompt = msg.answer.await_args.args[0]
+    assert "Если при варке ты добавлял воду" in prompt
+    assert "общий вес блюда после приготовления" in prompt
+    assert "КБЖУ продуктов будут рассчитаны на этот общий вес" in prompt
+
+
+def test_preparation_back_skips_weight_for_non_boiling_method(monkeypatch):
+    state = builder_state()
+    state.data["dish_builder"].update(kind="recipe", cooking_method="fry")
+    prompt = AsyncMock()
+    monkeypatch.setattr(meals, "_recipe_method_prompt", prompt)
+
+    asyncio.run(meals.recipe_preparation_input(message("⬅️ Назад"), state))
+
+    prompt.assert_awaited_once()
+
+
 def test_catalog_return_keeps_destination_and_uses_real_user(monkeypatch):
     state = builder_state()
     cb = SimpleNamespace(message=message(), from_user=SimpleNamespace(id=42), answer=AsyncMock())
