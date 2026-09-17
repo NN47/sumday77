@@ -5651,6 +5651,7 @@ def _format_dish_builder(items: list[dict]) -> str:
         totals = calculate_dish_totals(items)
         lines.extend([
             "", "<b>Итого по блюду:</b>",
+            f"📦 <b>Общий вес:</b> {calculate_dish_weight(items):.0f} г",
             _format_kbju_summary_block(totals),
         ])
     if len(items) > 15:
