@@ -285,6 +285,7 @@ class DishService:
         entry_date: date,
         meal_type: str,
         provider: str | None = None,
+        source: str = "photo_analysis",
     ) -> DishEntrySaveResult:
         if not save_token or len(save_token) > 64:
             return DishEntrySaveResult(MealSaveStatus.FAILED, error_type="invalid_save_token")
@@ -292,6 +293,7 @@ class DishService:
         if not normalized_items:
             return DishEntrySaveResult(MealSaveStatus.FAILED, error_type="empty_dish")
         name = normalize_dish_display_name(dish_name, normalized_items)
+        source = str(source or "photo_analysis").strip() or "photo_analysis"
         totals = calculate_dish_totals(normalized_items)
         user_id = str(user_id)
 
@@ -317,7 +319,7 @@ class DishService:
                     user_id=user_id,
                     name=name,
                     normalized_name=name.casefold(),
-                    source="photo_analysis",
+                    source=source,
                     source_provider=(str(provider).strip() or None) if provider else None,
                     composition_fingerprint=_composition_fingerprint(normalized_items),
                     save_token=save_token,
@@ -355,7 +357,7 @@ class DishService:
                     entry_kind="dish",
                     dish_id=dish.id,
                     dish_name_snapshot=name,
-                    entry_source="photo_analysis",
+                    entry_source=source,
                 )
                 session.add(meal)
                 session.commit()
