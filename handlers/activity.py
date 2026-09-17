@@ -1332,11 +1332,28 @@ async def show_activity_analysis_day(message: Message, user_id: str, target_date
         lines.append(f"{idx}. {source}\n{full_analysis}{created_note}")
 
     text = "\n\n".join(lines)
+    chunks = split_telegram_message(text, limit=4000)
     keyboard = build_activity_analysis_day_actions_keyboard(entries, target_date)
+
+    # Telegram rejects text messages longer than 4096 characters. Keep the
+    # calendar message as the first page and attach the day actions to the last
+    # page, so a long saved analysis remains readable and navigable.
     try:
-        await message.edit_text(text, reply_markup=keyboard)
+        await message.edit_text(
+            chunks[0],
+            reply_markup=keyboard if len(chunks) == 1 else None,
+        )
     except Exception:
-        await message.answer(text, reply_markup=keyboard)
+        await message.answer(
+            chunks[0],
+            reply_markup=keyboard if len(chunks) == 1 else None,
+        )
+
+    for idx, chunk in enumerate(chunks[1:], start=1):
+        await message.answer(
+            chunk,
+            reply_markup=keyboard if idx == len(chunks) - 1 else None,
+        )
 
 
 @router.message(ActivityAnalysisStates.entering_manual_analysis)
