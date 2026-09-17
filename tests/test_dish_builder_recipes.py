@@ -360,6 +360,41 @@ def test_recipe_full_handler_flow_saves_template_only(db, monkeypatch):
     asyncio.run(run())
 
 
+def test_manual_dish_name_is_saved_to_dish_and_diary(db, monkeypatch):
+    state = builder_state()
+    state.data["dish_builder"]["items"] = [item()]
+    monkeypatch.setattr(meals, "_keep_meal_entry_open_after_save", AsyncMock())
+
+    asyncio.run(meals._save_composed_dish(message(), state, "  Рисовая   тарелка  "))
+
+    with db() as session:
+        saved_dish = session.query(Dish).one()
+        saved_meal = session.query(Meal).one()
+        assert saved_dish.name == "Рисовая тарелка"
+        assert saved_dish.source == "manual_composition"
+        assert saved_meal.description == "Рисовая тарелка"
+        assert saved_meal.dish_name_snapshot == "Рисовая тарелка"
+        assert saved_meal.entry_source == "manual_composition"
+
+
+def test_generated_dish_name_is_saved_from_callback(db, monkeypatch):
+    state = builder_state(generated_dish_name="Рисовая каша")
+    state.data["dish_builder"]["items"] = [item()]
+    monkeypatch.setattr(meals, "_keep_meal_entry_open_after_save", AsyncMock())
+    callback = SimpleNamespace(
+        data="dish_nok:" + "B" * 12,
+        from_user=SimpleNamespace(id=42),
+        message=message(),
+        answer=AsyncMock(),
+    )
+
+    asyncio.run(meals.dish_builder_generated_name_action(callback, state))
+
+    with db() as session:
+        assert session.query(Dish).one().name == "Рисовая каша"
+        assert session.query(Meal).one().dish_name_snapshot == "Рисовая каша"
+
+
 @pytest.mark.parametrize("method", ["fry", "bake", "none"])
 def test_only_boiling_requests_cooked_weight(monkeypatch, method):
     state = builder_state()
