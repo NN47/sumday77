@@ -536,6 +536,14 @@ def test_recipe_portion_asks_for_meal_type_before_saving(db, monkeypatch):
 
     async def scenario():
         await meals.my_dish_add(callback, state)
+        assert "Сколько добавить?" in callback.message.edit_text.await_args.args[0]
+        callback.data = f"my_dish_portion:{recipe.id}:half"
+        await meals.my_dish_portion_select(callback, state)
+        assert "Порция: Рисовая каша" in callback.message.edit_text.await_args.args[0]
+        assert "150 г" in callback.message.edit_text.await_args.args[0]
+
+        callback.data = f"my_dish_portion_confirm:{recipe.id}"
+        await meals.my_dish_portion_confirm(callback, state)
         assert callback.message.edit_text.await_args.args[0] == "К какому приёму пищи добавить порцию?"
         callbacks = [
             button.callback_data

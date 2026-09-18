@@ -100,7 +100,7 @@ def scale_dish_snapshot(items: list[dict], new_total_weight: float) -> list[dict
     scaled: list[dict] = []
     for source in items:
         item = dict(source)
-        weight = max(1.0, _number(item.get("grams")) * factor)
+        weight = max(0.0, _number(item.get("grams")) * factor)
         for key in (
             "kcal",
             "calories",

@@ -3916,7 +3916,6 @@ def _build_saved_dish_card_keyboard(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Добавить порцию", callback_data=f"my_dish_add:{dish_id}")],
             [InlineKeyboardButton(text="✏️ Редактировать состав", callback_data=f"my_dish_edit:{dish_id}")],
-            [InlineKeyboardButton(text="⚖️ Изменить общий вес", callback_data=f"my_dish_weight:{dish_id}")],
             [InlineKeyboardButton(text="🗑 Убрать из моих блюд", callback_data=f"my_dish_archive_ask:{dish_id}")],
             [InlineKeyboardButton(
                 text="⬅️ Назад",
@@ -3926,6 +3925,54 @@ def _build_saved_dish_card_keyboard(
             )],
         ]
     )
+
+
+PORTION_FRACTIONS = (("quarter", "¼ блюда", 0.25), ("third", "⅓ блюда", 1 / 3),
+                     ("half", "½ блюда", 0.5), ("whole", "Всё блюдо", 1.0))
+
+
+def _format_saved_dish_portion_picker(dish, items: list[dict]) -> str:
+    return "\n".join([
+        "🍽 <b>Сколько добавить?</b>", "", f"🥣 <b>{html.escape(dish.name)}</b>",
+        f"Всё блюдо: <b>{calculate_dish_weight(items):.0f} г</b>", "", "Выбери размер порции:",
+    ])
+
+
+def _build_saved_dish_portion_keyboard(dish_id: int, items: list[dict]) -> InlineKeyboardMarkup:
+    total = calculate_dish_weight(items)
+    buttons = [InlineKeyboardButton(
+        text=f"{label} · {total * factor:.0f} г",
+        callback_data=f"my_dish_portion:{dish_id}:{key}",
+    ) for key, label, factor in PORTION_FRACTIONS]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        buttons[:2], buttons[2:],
+        [InlineKeyboardButton(text="⚖️ Указать вес вручную", callback_data=f"my_dish_portion_manual:{dish_id}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_dish_portion_back:{dish_id}")],
+    ])
+
+
+def _format_saved_dish_portion_confirmation(dish, items: list[dict]) -> str:
+    totals = calculate_dish_totals(items)
+    return "\n".join([
+        f"🍽 <b>Порция: {html.escape(dish.name)}</b>", "",
+        f"📦 <b>Вес:</b> {calculate_dish_weight(items):.0f} г",
+        f"🔥 <b>Калории:</b> {totals['calories']:.0f} ккал",
+        f"🥩 <b>Белки:</b> {totals['protein']:.1f} г",
+        f"🥑 <b>Жиры:</b> {totals['fat']:.1f} г",
+        f"🍚 <b>Углеводы:</b> {totals['carbs']:.1f} г",
+    ])
+
+
+def _build_saved_dish_portion_confirmation_keyboard(
+    dish_id: int, meal_type: str, *, choose_meal_type: bool,
+) -> InlineKeyboardMarkup:
+    action_text = ("✅ Выбрать приём пищи" if choose_meal_type else
+                   f"✅ Добавить в {display_meal_type(meal_type).lower()}")
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=action_text, callback_data=f"my_dish_portion_confirm:{dish_id}")],
+        [InlineKeyboardButton(text="✏️ Изменить порцию", callback_data=f"my_dish_portion_change:{dish_id}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"my_dish_portion_back:{dish_id}")],
+    ])
 
 
 def _build_saved_dish_meal_type_keyboard(dish_id: int) -> InlineKeyboardMarkup:
@@ -4146,7 +4193,7 @@ async def my_dish_pick(callback: CallbackQuery, state: FSMContext):
         my_dish_original_items=items,
         my_dish_save_token=save_token,
         my_dish_return_context=return_context,
-        my_dish_weight_draft=None,
+        my_dish_portion_items=None,
         my_dishes_return_entry_date=data.get(return_date_key) or data.get("entry_date"),
         my_dishes_page=int(raw_page),
         meal_type=meal_type,
@@ -4283,6 +4330,7 @@ async def my_dish_edit_done(callback: CallbackQuery, state: FSMContext):
         "my_dishes_page": int(data.get("my_dishes_page") or 1),
         "my_dishes_return_entry_date": data.get("my_dishes_return_entry_date"),
         "my_dish_return_context": data.get("my_dish_return_context"),
+        "recipe_catalog": bool(data.get("recipe_catalog")),
         "my_dish_id": dish_id,
         "my_dish_items": items,
         "my_dish_original_items": items,
@@ -4318,152 +4366,41 @@ async def my_dish_add_method(callback: CallbackQuery, state: FSMContext):
         await _show_my_products_page(callback.message, state, meal_type=normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value), page=1, user_id=str(callback.from_user.id), edit_message=True, back_callback_data=f"my_dish_edit:{int(data.get('dish_edit_id') or 0)}")
 
 
-@router.callback_query(lambda c: c.data.startswith("my_dish_weight:"))
-async def my_dish_weight_open(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    dish_id = int(callback.data.split(":", 1)[1])
+async def _show_my_dish_portion_picker(message: Message, state: FSMContext, user_id: str, dish_id: int) -> bool:
     data = await state.get_data()
-    dish = DishRepository.get_by_id(str(callback.from_user.id), dish_id)
-    items = data.get("my_dish_items") or (dish_to_snapshot(dish) if dish else [])
-    if dish is None or not items:
-        await callback.answer("Блюдо не найдено", show_alert=True)
-        return
-    await state.update_data(my_dish_weight_draft=[dict(item) for item in items])
-    await callback.message.edit_text(
-        _format_saved_dish_weight_text(dish, items),
-        reply_markup=_build_saved_dish_weight_keyboard(dish_id),
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(lambda c: c.data.startswith("my_dish_wchg:"))
-async def my_dish_weight_change(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    _, raw_dish_id, raw_delta = callback.data.split(":", 2)
-    dish_id = int(raw_dish_id)
-    data = await state.get_data()
-    draft = data.get("my_dish_weight_draft") or data.get("my_dish_items") or []
-    dish = DishRepository.get_by_id(str(callback.from_user.id), dish_id)
-    if dish is None or not draft:
-        await callback.answer("Блюдо не найдено", show_alert=True)
-        return
-    new_weight = max(1.0, calculate_dish_weight(draft) + float(raw_delta))
-    updated = scale_dish_snapshot(draft, new_weight)
-    await state.update_data(my_dish_weight_draft=updated)
-    await callback.message.edit_text(
-        _format_saved_dish_weight_text(dish, updated),
-        reply_markup=_build_saved_dish_weight_keyboard(dish_id),
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(lambda c: c.data.startswith("my_dish_wmanual:"))
-async def my_dish_weight_manual_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    dish_id = int(callback.data.split(":", 1)[1])
-    await state.set_state(MealEntryStates.editing_saved_dish_total_weight_input)
-    await state.update_data(my_dish_id=dish_id)
-    await callback.message.answer(
-        "Введи новый общий вес порции в граммах:",
-        reply_markup=_build_photo_analysis_cancel_menu(),
-    )
-
-
-@router.message(MealEntryStates.editing_saved_dish_total_weight_input)
-async def my_dish_weight_manual_apply(message: Message, state: FSMContext):
-    raw = (message.text or "").strip().replace(",", ".")
-    if raw == "❌ Отмена":
-        data = await state.get_data()
-        dish_id = int(data.get("my_dish_id") or 0)
-        dish = DishRepository.get_by_id(str(message.from_user.id), dish_id)
-        items = data.get("my_dish_items") or []
-        await state.set_state(MealEntryStates.choosing_meal_type)
-        if dish is not None and items:
-            await message.answer(
-                _format_saved_dish_card(dish, items),
-                reply_markup=_build_saved_dish_card_keyboard(
-                    normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
-                    int(data.get("my_dishes_page") or 1),
-                    dish_id,
-                    return_to_products=bool(data.get("my_dish_return_context")),
-                    return_to_recipes=bool(data.get("recipe_catalog")),
-                ),
-                parse_mode="HTML",
-            )
-        else:
-            await message.answer("Изменение порции отменено.")
-        return
-    try:
-        new_weight = float(raw)
-    except ValueError:
-        await message.answer("Введи вес числом, например: 350")
-        return
-    if not math.isfinite(new_weight) or new_weight < 1:
-        await message.answer("Вес должен быть не меньше 1 г.")
-        return
-    data = await state.get_data()
-    dish_id = int(data.get("my_dish_id") or 0)
-    dish = DishRepository.get_by_id(str(message.from_user.id), dish_id)
-    draft = data.get("my_dish_weight_draft") or data.get("my_dish_items") or []
-    if dish is None or not draft:
-        await message.answer("Блюдо не найдено.")
-        return
-    updated = scale_dish_snapshot(draft, new_weight)
+    dish = DishRepository.get_by_id(user_id, dish_id)
+    original = data.get("my_dish_original_items") or (dish_to_snapshot(dish) if dish else [])
+    if dish is None or not original:
+        return False
     await state.set_state(MealEntryStates.choosing_meal_type)
-    await state.update_data(my_dish_weight_draft=updated)
-    await message.answer(
-        _format_saved_dish_weight_text(dish, updated),
-        reply_markup=_build_saved_dish_weight_keyboard(dish_id),
-        parse_mode="HTML",
+    await state.update_data(
+        my_dish_original_items=[dict(item) for item in original],
+        my_dish_portion_items=None,
     )
-
-
-@router.callback_query(lambda c: c.data.startswith("my_dish_wsave:"))
-async def my_dish_weight_save(callback: CallbackQuery, state: FSMContext):
-    await callback.answer("Порция изменена")
-    dish_id = int(callback.data.split(":", 1)[1])
-    data = await state.get_data()
-    dish = DishRepository.get_by_id(str(callback.from_user.id), dish_id)
-    draft = data.get("my_dish_weight_draft") or []
-    if dish is None or not draft:
-        await callback.answer("Черновик порции не найден", show_alert=True)
-        return
-    await state.update_data(my_dish_items=draft, my_dish_weight_draft=None)
-    await callback.message.edit_text(
-        _format_saved_dish_card(dish, draft),
-        reply_markup=_build_saved_dish_card_keyboard(
-            normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
-            int(data.get("my_dishes_page") or 1),
-            dish_id,
-            return_to_products=bool(data.get("my_dish_return_context")),
-            return_to_recipes=bool(data.get("recipe_catalog")),
-        ),
-        parse_mode="HTML",
+    await message.edit_text(
+        _format_saved_dish_portion_picker(dish, original),
+        reply_markup=_build_saved_dish_portion_keyboard(dish_id, original), parse_mode="HTML",
     )
+    return True
 
 
-@router.callback_query(lambda c: c.data.startswith("my_dish_wback:"))
-async def my_dish_weight_back(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    dish_id = int(callback.data.split(":", 1)[1])
-    data = await state.get_data()
-    dish = DishRepository.get_by_id(str(callback.from_user.id), dish_id)
-    items = data.get("my_dish_items") or []
+async def _show_my_dish_portion_confirmation(
+    message: Message, state: FSMContext, user_id: str, dish_id: int, items: list[dict],
+) -> bool:
+    dish = DishRepository.get_by_id(user_id, dish_id)
     if dish is None or not items:
-        await callback.answer("Блюдо не найдено", show_alert=True)
-        return
-    await state.update_data(my_dish_weight_draft=None)
-    await callback.message.edit_text(
-        _format_saved_dish_card(dish, items),
-        reply_markup=_build_saved_dish_card_keyboard(
-            normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
-            int(data.get("my_dishes_page") or 1),
-            dish_id,
-            return_to_products=bool(data.get("my_dish_return_context")),
-            return_to_recipes=bool(data.get("recipe_catalog")),
-        ),
-        parse_mode="HTML",
+        return False
+    data = await state.get_data()
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(my_dish_portion_items=items)
+    meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
+    await message.edit_text(
+        _format_saved_dish_portion_confirmation(dish, items),
+        reply_markup=_build_saved_dish_portion_confirmation_keyboard(
+            dish_id, meal_type, choose_meal_type=bool(data.get("recipe_catalog")),
+        ), parse_mode="HTML",
     )
+    return True
 
 
 @router.callback_query(lambda c: c.data.startswith("my_dish_add:"))
@@ -4479,6 +4416,129 @@ async def my_dish_add(callback: CallbackQuery, state: FSMContext):
         await _save_ingredient_destination(callback.message, state, user_id=str(callback.from_user.id),
                                            items=data.get("my_dish_items") or [])
         return
+    await callback.answer()
+    if not await _show_my_dish_portion_picker(callback.message, state, str(callback.from_user.id), dish_id):
+        await callback.answer("Блюдо не найдено", show_alert=True)
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_portion:") and c.data.count(":") == 2)
+async def my_dish_portion_select(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    _, raw_dish_id, fraction_key = callback.data.split(":")
+    dish_id = int(raw_dish_id)
+    data = await state.get_data()
+    if dish_id != int(data.get("my_dish_id") or 0):
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+    original = data.get("my_dish_original_items") or []
+    factors = {key: factor for key, _label, factor in PORTION_FRACTIONS}
+    factor = factors.get(fraction_key)
+    if not original or factor is None:
+        await callback.answer("Блюдо не найдено", show_alert=True)
+        return
+    portion = scale_dish_snapshot(original, calculate_dish_weight(original) * factor)
+    await _show_my_dish_portion_confirmation(
+        callback.message, state, str(callback.from_user.id), dish_id, portion,
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_portion_manual:"))
+async def my_dish_portion_manual_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    dish_id = int(callback.data.rsplit(":", 1)[1])
+    data = await state.get_data()
+    if dish_id != int(data.get("my_dish_id") or 0) or not data.get("my_dish_original_items"):
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
+    await state.set_state(MealEntryStates.editing_saved_dish_portion_weight_input)
+    await callback.message.answer(
+        "Введи вес порции в граммах, например: 350",
+        reply_markup=_build_photo_analysis_cancel_menu(),
+    )
+
+
+@router.message(MealEntryStates.editing_saved_dish_portion_weight_input)
+async def my_dish_portion_manual_apply(message: Message, state: FSMContext):
+    data = await state.get_data()
+    dish_id = int(data.get("my_dish_id") or 0)
+    raw = (message.text or "").strip().replace(",", ".")
+    if raw == "❌ Отмена":
+        await state.set_state(MealEntryStates.choosing_meal_type)
+        dish = DishRepository.get_by_id(str(message.from_user.id), dish_id)
+        original = data.get("my_dish_original_items") or []
+        if dish is not None and original:
+            await message.answer(
+                _format_saved_dish_portion_picker(dish, original),
+                reply_markup=_build_saved_dish_portion_keyboard(dish_id, original), parse_mode="HTML",
+            )
+        return
+    try:
+        new_weight = float(raw)
+    except ValueError:
+        await message.answer("Введи вес числом, например: 350")
+        return
+    if not math.isfinite(new_weight) or new_weight < 1:
+        await message.answer("Вес должен быть конечным положительным числом не меньше 1 г.")
+        return
+    original = data.get("my_dish_original_items") or []
+    if not original:
+        await message.answer("Блюдо не найдено.")
+        return
+    portion = scale_dish_snapshot(original, new_weight)
+    dish = DishRepository.get_by_id(str(message.from_user.id), dish_id)
+    if dish is None:
+        await message.answer("Блюдо не найдено.")
+        return
+    await state.set_state(MealEntryStates.choosing_meal_type)
+    await state.update_data(my_dish_portion_items=portion)
+    await message.answer(
+        _format_saved_dish_portion_confirmation(dish, portion),
+        reply_markup=_build_saved_dish_portion_confirmation_keyboard(
+            dish_id, normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
+            choose_meal_type=bool(data.get("recipe_catalog")),
+        ), parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_portion_change:"))
+async def my_dish_portion_change(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    dish_id = int(callback.data.rsplit(":", 1)[1])
+    if not await _show_my_dish_portion_picker(callback.message, state, str(callback.from_user.id), dish_id):
+        await callback.answer("Блюдо не найдено", show_alert=True)
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_portion_back:"))
+async def my_dish_portion_back(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    dish_id = int(callback.data.rsplit(":", 1)[1])
+    data = await state.get_data()
+    dish = DishRepository.get_by_id(str(callback.from_user.id), dish_id)
+    original = data.get("my_dish_original_items") or []
+    if dish is None or not original:
+        await callback.answer("Блюдо не найдено", show_alert=True)
+        return
+    await state.update_data(my_dish_portion_items=None)
+    await callback.message.edit_text(
+        _format_saved_dish_card(dish, original),
+        reply_markup=_build_saved_dish_card_keyboard(
+            normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value),
+            int(data.get("my_dishes_page") or 1), dish_id,
+            return_to_products=bool(data.get("my_dish_return_context")),
+            return_to_recipes=bool(data.get("recipe_catalog")),
+        ), parse_mode="HTML",
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("my_dish_portion_confirm:"))
+async def my_dish_portion_confirm(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    dish_id = int(callback.data.rsplit(":", 1)[1])
+    token = data.get("my_dish_save_token")
+    if (not _is_valid_meal_save_token(token) or dish_id != int(data.get("my_dish_id") or 0)
+            or not data.get("my_dish_portion_items")):
+        await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
+        return
     if data.get("recipe_catalog"):
         await callback.answer()
         await callback.message.edit_text(
@@ -4491,12 +4551,13 @@ async def my_dish_add(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(lambda c: c.data.startswith("my_dish_add_to:"))
 async def my_dish_add_to_meal(callback: CallbackQuery, state: FSMContext):
-    """Save a recipe portion after the user explicitly selects a meal type."""
+    """Save a selected recipe portion after choosing its diary destination."""
     data = await state.get_data()
     _, raw_meal_type, raw_dish_id = callback.data.split(":")
     dish_id = int(raw_dish_id)
     token = data.get("my_dish_save_token")
-    if not _is_valid_meal_save_token(token) or dish_id != int(data.get("my_dish_id") or 0):
+    if (not _is_valid_meal_save_token(token) or dish_id != int(data.get("my_dish_id") or 0)
+            or not data.get("my_dish_portion_items")):
         await callback.answer(STALE_MEAL_SAVE_TEXT, show_alert=True)
         return
     meal_type = normalize_meal_type(raw_meal_type, fallback=MealType.SNACK.value)
@@ -4506,13 +4567,9 @@ async def my_dish_add_to_meal(callback: CallbackQuery, state: FSMContext):
 
 
 async def _save_my_dish_to_diary(
-    callback: CallbackQuery,
-    state: FSMContext,
-    data: dict,
-    *,
-    dish_id: int,
+    callback: CallbackQuery, state: FSMContext, data: dict, *, dish_id: int,
 ) -> None:
-    """Shared final save for dishes selected from any catalog."""
+    """Shared final save for a confirmed portion selected from any catalog."""
     token = data.get("my_dish_save_token")
     meal_type = normalize_meal_type(data.get("meal_type"), fallback=MealType.SNACK.value)
     try:
@@ -4520,12 +4577,8 @@ async def _save_my_dish_to_diary(
     except ValueError:
         entry_date = date.today()
     result = DishService.add_saved_dish_to_diary(
-        save_token=token,
-        user_id=str(callback.from_user.id),
-        dish_id=dish_id,
-        entry_date=entry_date,
-        meal_type=meal_type,
-        items=data.get("my_dish_items") or None,
+        save_token=token, user_id=str(callback.from_user.id), dish_id=dish_id,
+        entry_date=entry_date, meal_type=meal_type, items=data.get("my_dish_portion_items"),
     )
     if result.status is MealSaveStatus.FAILED or result.meal is None:
         await callback.answer("Не удалось добавить блюдо", show_alert=True)
@@ -4534,13 +4587,13 @@ async def _save_my_dish_to_diary(
     if not hasattr(callback.message.bot, "last_meal_ids"):
         callback.message.bot.last_meal_ids = {}
     callback.message.bot.last_meal_ids[str(callback.from_user.id)] = result.meal.id
-    await state.update_data(my_dish_save_token=None, my_dish_items=None, in_my_dishes_section=False)
+    await state.update_data(
+        my_dish_save_token=None, my_dish_items=None, my_dish_original_items=None,
+        my_dish_portion_items=None, in_my_dishes_section=False,
+    )
     await _keep_meal_entry_open_after_save(
-        callback.message,
-        state,
-        user_id=str(callback.from_user.id),
-        entry_date=entry_date,
-        meal_type=meal_type,
+        callback.message, state, user_id=str(callback.from_user.id),
+        entry_date=entry_date, meal_type=meal_type,
     )
 
 
