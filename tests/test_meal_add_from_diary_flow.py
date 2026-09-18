@@ -2263,6 +2263,31 @@ def test_meal_product_delete_updates_existing_record_and_detailed_list():
     assert "Хлебцы" not in detail_text
 
 
+def test_meal_editor_keeps_dish_as_one_top_level_item():
+    products = [
+        SimpleNamespace(id=index, entry_kind="products", products_json=json.dumps([
+            {"name": name, "grams": 30, "kcal": 100, "protein": 2, "fat": 3, "carbs": 15}
+        ]), api_details=None)
+        for index, name in enumerate(("Булочка", "Пирожное", "Кофе"), start=1)
+    ]
+    dish = SimpleNamespace(
+        id=4, entry_kind="dish", dish_id=12, dish_name_snapshot="Творожно-маковый рулет",
+        description="старое название", raw_query=None,
+        products_json=json.dumps([
+            {"name": f"Ингредиент {index}", "grams": 20, "kcal": 40,
+             "protein": 2, "fat": 2, "carbs": 3}
+            for index in range(5)
+        ]), api_details=None, calories=200, protein=10, fat=10, carbs=15,
+    )
+
+    items = meals._meal_editor_items([*products, dish])
+
+    assert len(items) == 4
+    assert [item["kind"] for item in items] == ["product", "product", "product", "dish"]
+    assert items[-1]["name"] == "Творожно-маковый рулет"
+    assert items[-1]["grams"] == pytest.approx(100)
+
+
 def test_clear_whole_meal_uses_existing_repository_and_refreshes_diary():
     target_date = date(2026, 8, 16)
     callback = _build_callback(f"clear_meal_confirm:lunch:{target_date.isoformat()}")

@@ -4377,7 +4377,8 @@ async def _show_my_dish_portion_picker(message: Message, state: FSMContext, user
         my_dish_original_items=[dict(item) for item in original],
         my_dish_portion_items=None,
     )
-    await message.edit_text(
+    sender = message.answer if data.get("newly_created_dish") else message.edit_text
+    await sender(
         _format_saved_dish_portion_picker(dish, original),
         reply_markup=_build_saved_dish_portion_keyboard(dish_id, original), parse_mode="HTML",
     )
@@ -4460,6 +4461,37 @@ async def my_dish_portion_manual_start(callback: CallbackQuery, state: FSMContex
 @router.message(MealEntryStates.editing_saved_dish_portion_weight_input)
 async def my_dish_portion_manual_apply(message: Message, state: FSMContext):
     data = await state.get_data()
+    if data.get("diary_dish_portion_edit"):
+        raw = (message.text or "").strip().replace(",", ".")
+        try:
+            new_weight = float(raw)
+        except ValueError:
+            await message.answer("Введи вес числом, например: 250")
+            return
+        if not math.isfinite(new_weight) or new_weight < 1:
+            await message.answer("Вес должен быть конечным положительным числом не меньше 1 г.")
+            return
+        items = scale_dish_snapshot(data.get("saved_products") or [], new_weight)
+        meal_id = int(data.get("diary_dish_meal_id") or 0)
+        totals, api_details = _build_meal_update_payload(items)
+        meal = MealRepository.get_meal_by_id(meal_id, str(message.from_user.id))
+        if meal is None or not MealRepository.update_meal(
+            meal_id=meal_id, user_id=str(message.from_user.id), description=meal.raw_query,
+            calories=totals["calories"], protein=totals["protein_g"],
+            fat=totals["fat_total_g"], carbs=totals["carbohydrates_total_g"],
+            products_json=json.dumps(items, ensure_ascii=False), api_details=api_details,
+            is_manually_corrected=any(bool(item.get("is_manually_corrected")) for item in items),
+        ):
+            await message.answer("Не удалось изменить порцию.")
+            return
+        await state.set_state(MealEntryStates.editing_meal_weight)
+        await state.update_data(saved_products=[{**item, "_source_meal_id": meal_id} for item in items],
+                                diary_dish_portion_edit=False)
+        await message.answer("✅ Порция блюда обновлена.")
+        await _return_to_meal_editor_top(
+            message, state, await state.get_data(), str(message.from_user.id),
+        )
+        return
     dish_id = int(data.get("my_dish_id") or 0)
     raw = (message.text or "").strip().replace(",", ".")
     if raw == "❌ Отмена":
@@ -5957,24 +5989,31 @@ async def _save_composed_dish(message: Message, state: FSMContext, name: str, *,
         entry_date = date.fromisoformat(str(builder.get("entry_date") or ""))
     except ValueError:
         entry_date = date.today()
-    result = DishService.save_photo_dish_entry(
+    result = DishService.create_dish_template(
         save_token=token, user_id=resolved_user_id, dish_name=clean, items=items,
-        entry_date=entry_date, meal_type=builder.get("meal_type"), source="manual_composition",
+        source="manual_composition",
     )
-    if result.status is MealSaveStatus.FAILED or result.meal is None:
+    if result.status is MealSaveStatus.FAILED or result.dish is None:
         await message.answer("Не удалось сохранить блюдо. Черновик остался доступен — попробуй ещё раз."); return
-    await state.clear()
     totals = calculate_dish_totals(items)
-    await _keep_meal_entry_open_after_save(
-        message, state, user_id=resolved_user_id, entry_date=entry_date,
-        meal_type=builder.get("meal_type"),
-        intro_lines=[
-            "✅ <b>Блюдо уже было сохранено.</b>" if result.status is MealSaveStatus.ALREADY_SAVED else
-            f"🎉 <b>Блюдо «{html.escape(clean)}» создано и добавлено в приём пищи.</b>",
-            f"Оно доступно в разделе «🍽 Мои блюда». Общий вес: {calculate_dish_weight(items):.0f} г, "
-            f"{totals['calories']:.0f} ккал.",
-        ], parse_mode="HTML",
+    dish_id = result.dish.id
+    await state.clear()
+    await state.update_data(
+        meal_type=normalize_meal_type(builder.get("meal_type"), fallback=MealType.SNACK.value),
+        entry_date=entry_date.isoformat(), my_dishes_return_entry_date=entry_date.isoformat(),
+        my_dish_id=dish_id, my_dish_items=[dict(item) for item in items],
+        my_dish_original_items=[dict(item) for item in items],
+        my_dish_save_token=_new_meal_save_token(), newly_created_dish=True,
     )
+    await message.answer(
+        (f"🎉 <b>Блюдо «{html.escape(result.dish.name)}» создано!</b>\n\n"
+         f"Полное блюдо: <b>{calculate_dish_weight(items):.0f} г</b>\n"
+         f"{totals['calories']:.0f} ккал (Б {totals['protein']:.1f} / Ж {totals['fat']:.1f} / У {totals['carbs']:.1f})\n\n"
+         "Теперь выбери, сколько ты съел:"),
+        parse_mode="HTML",
+    )
+    # Reuse the same picker and scaling path as recipes and saved dishes.
+    await _show_my_dish_portion_picker(message, state, resolved_user_id, dish_id)
 
 
 async def _generate_recipe_name_with_text_fallbacks(
@@ -9517,7 +9556,7 @@ async def edit_last_meal(message: Message, state: FSMContext):
         await message.answer("❌ Не нашёл запись для изменения.")
         return
     
-    products = _extract_products_for_edit(meal)
+    products = _meal_editor_items([meal])
     
     if not products:
         await message.answer(
@@ -9540,6 +9579,8 @@ async def edit_last_meal(message: Message, state: FSMContext):
         meal_id=last_meal_id,
         target_date=meal.date.isoformat(),
         saved_products=products,
+        editor_items=products,
+        grouped_meal_ids=[last_meal_id],
         weight_drafts={},
         kbju_drafts={},
         editing_product_idx=None,
@@ -9584,7 +9625,7 @@ async def _start_meal_edit_flow(
         await message.answer("❌ Не нашёл запись для изменения.")
         return
 
-    products = _extract_products_for_edit(meal)
+    products = _meal_editor_items([meal])
     if not products:
         await message.answer(
             "❌ Не удалось извлечь список продуктов из этой записи.\n"
@@ -9608,6 +9649,8 @@ async def _start_meal_edit_flow(
         meal_id=meal_id,
         target_date=target_date.isoformat(),
         saved_products=products,
+        editor_items=products,
+        grouped_meal_ids=[meal_id],
         weight_drafts={},
         kbju_drafts={},
         editing_product_idx=None,
@@ -9675,7 +9718,41 @@ def _extract_products_for_edit(meal) -> list[dict]:
 
 
 def _strip_source_meta(product: dict) -> dict:
-    return {k: v for k, v in product.items() if not str(k).startswith("_source_")}
+    return {k: v for k, v in product.items()
+            if not str(k).startswith("_source_") and k not in {
+                "kind", "meal_id", "product_index", "_editor_kind",
+            }}
+
+
+def _meal_editor_items(meals: list) -> list[dict]:
+    """Build the structural top level of a meal editor.
+
+    A dish is deliberately one item here. Its ingredient snapshot is exposed
+    only after the user opens that item.
+    """
+    result: list[dict] = []
+    for meal in meals:
+        products = _extract_products_for_edit(meal)
+        if getattr(meal, "entry_kind", "products") == "dish":
+            result.append({
+                "kind": "dish", "meal_id": meal.id, "dish_id": getattr(meal, "dish_id", None),
+                "name": (getattr(meal, "dish_name_snapshot", None)
+                         or getattr(meal, "description", None)
+                         or getattr(meal, "raw_query", None) or "Блюдо"),
+                "grams": calculate_dish_weight(products),
+                "kcal": float(getattr(meal, "calories", 0) or 0),
+                "calories": float(getattr(meal, "calories", 0) or 0),
+                "protein": float(getattr(meal, "protein", 0) or 0),
+                "fat": float(getattr(meal, "fat", 0) or 0),
+                "carbs": float(getattr(meal, "carbs", 0) or 0),
+                "_source_meal_id": meal.id, "_editor_kind": "dish",
+            })
+            continue
+        for index, product in enumerate(products):
+            result.append({**product, "kind": "product", "meal_id": meal.id,
+                           "product_index": index, "_source_meal_id": meal.id,
+                           "_editor_kind": "product"})
+    return result
 
 
 @router.callback_query(lambda c: c.data.startswith("add_meal:"))
@@ -9728,13 +9805,7 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
         )
         return
 
-    merged_products: list[dict] = []
-    for meal in meals_for_type:
-        meal_products = _extract_products_for_edit(meal)
-        for product in meal_products:
-            enriched = dict(product)
-            enriched["_source_meal_id"] = meal.id
-            merged_products.append(enriched)
+    merged_products = _meal_editor_items(meals_for_type)
 
     if not merged_products:
         await callback.message.answer("❌ Не удалось извлечь продукты для редактирования.")
@@ -9748,6 +9819,7 @@ async def edit_meal_from_diary_block(callback: CallbackQuery, state: FSMContext)
         kbju_drafts={},
         editing_product_idx=None,
         grouped_meal_ids=[m.id for m in meals_for_type],
+        editor_items=merged_products,
         grouped_meal_type=meal_type,
         editing_meal_type=meal_type,
         return_to_meal_entry=return_to_meal_entry,
@@ -10072,6 +10144,11 @@ async def meal_weight_back_to_products(callback: CallbackQuery, state: FSMContex
     if data.get("dish_edit_mode"):
         await _show_saved_dish_editor(callback.message, state, str(callback.from_user.id), int(data.get("dish_edit_id") or 0))
         return
+    if data.get("diary_dish_edit_mode"):
+        await _return_to_meal_editor_top(
+            callback.message, state, data, str(callback.from_user.id),
+        )
+        return
     if data.get("ai_text_draft_mode"):
         await callback.message.edit_text(
             "<b>✏️ Выбери продукт для редактирования:</b>",
@@ -10110,6 +10187,33 @@ async def meal_weight_select_product(callback: CallbackQuery, state: FSMContext)
         return
 
     product = saved_products[product_idx]
+    if product.get("_editor_kind") == "dish":
+        meal_id = int(product.get("_source_meal_id") or 0)
+        meal = MealRepository.get_meal_by_id(meal_id, str(callback.from_user.id))
+        ingredients = _extract_products_for_edit(meal) if meal else []
+        if not ingredients:
+            await callback.answer("Не удалось открыть состав", show_alert=True)
+            return
+        ingredients = [{**item, "_source_meal_id": meal_id} for item in ingredients]
+        await state.update_data(
+            saved_products=ingredients, diary_dish_edit_mode=True,
+            diary_dish_meal_id=meal_id, diary_dish_name=product.get("name"),
+            editing_product_idx=None, weight_drafts={}, kbju_drafts={},
+        )
+        text = "\n".join([
+            f"✏️ <b>{html.escape(str(product.get('name') or 'Блюдо'))}</b>", "",
+            f"Порция в этом приёме пищи: <b>{calculate_dish_weight(ingredients):.0f} г</b>", "",
+            *[format_product_detail_block(item) for item in ingredients],
+        ])
+        keyboard = _build_weight_products_keyboard(ingredients)
+        keyboard.inline_keyboard.insert(-1, [InlineKeyboardButton(
+            text="⚖️ Изменить порцию", callback_data="diary_dish_portion",
+        )])
+        keyboard.inline_keyboard[-1] = [InlineKeyboardButton(
+            text="⬅️ Назад", callback_data="diary_dish_back",
+        )]
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        return
     await state.set_state(MealEntryStates.editing_meal_weight)
     await state.update_data(editing_product_idx=product_idx)
 
@@ -10123,6 +10227,50 @@ async def meal_weight_select_product(callback: CallbackQuery, state: FSMContext)
             _render_product_actions_text(product),
             reply_markup=_build_product_actions_keyboard(product_idx),
         )
+
+
+async def _return_to_meal_editor_top(
+    message: Message, state: FSMContext, data: dict, user_id: str,
+) -> None:
+    records = [
+        MealRepository.get_meal_by_id(int(meal_id), user_id)
+        for meal_id in data.get("grouped_meal_ids") or []
+    ]
+    items = _meal_editor_items([meal for meal in records if meal is not None])
+    if not items:
+        items = data.get("editor_items") or []
+    await state.update_data(saved_products=items, editor_items=items, diary_dish_edit_mode=False,
+                            diary_dish_meal_id=None, editing_product_idx=None,
+                            weight_drafts={}, kbju_drafts={})
+    await _show_meal_edit_products_list(
+        message, items,
+        normalize_meal_type(data.get("editing_meal_type") or data.get("grouped_meal_type"),
+                            fallback=MealType.SNACK.value),
+        edit_existing=True,
+    )
+
+
+@router.callback_query(lambda c: c.data == "diary_dish_back")
+async def diary_dish_back(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await _return_to_meal_editor_top(
+        callback.message, state, await state.get_data(), str(callback.from_user.id),
+    )
+
+
+@router.callback_query(lambda c: c.data == "diary_dish_portion")
+async def diary_dish_portion_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    if not data.get("diary_dish_edit_mode") or not data.get("saved_products"):
+        await callback.answer("Блюдо не найдено", show_alert=True)
+        return
+    await state.set_state(MealEntryStates.editing_saved_dish_portion_weight_input)
+    await state.update_data(diary_dish_portion_edit=True)
+    await callback.message.answer(
+        "Введи новый вес порции в граммах, например: 250",
+        reply_markup=_build_photo_analysis_cancel_menu(),
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("meal_pact_name:"))
@@ -11039,6 +11187,24 @@ async def meal_weight_delete(callback: CallbackQuery, state: FSMContext):
         await callback.answer("В блюде должен остаться хотя бы один ингредиент", show_alert=True)
         return
     source_meal_id = int(saved_products[product_idx].get("_source_meal_id") or meal_id or 0)
+
+    if saved_products[product_idx].get("_editor_kind") == "dish":
+        if not MealRepository.delete_meal(source_meal_id, user_id):
+            await callback.answer("Не удалось удалить блюдо", show_alert=True)
+            return
+        saved_products.pop(product_idx)
+        await state.update_data(saved_products=saved_products, editor_items=saved_products,
+                                editing_product_idx=None)
+        if saved_products:
+            await _show_meal_edit_products_list(
+                callback.message, saved_products,
+                normalize_meal_type(data.get("editing_meal_type") or data.get("grouped_meal_type"),
+                                    fallback=MealType.SNACK.value), edit_existing=True,
+            )
+        else:
+            await state.clear()
+            await callback.message.edit_text("Приём пищи теперь пуст. Запись удалена.")
+        return
 
     saved_products.pop(product_idx)
     drafts = {
