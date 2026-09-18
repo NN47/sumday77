@@ -186,6 +186,57 @@ class DishEntrySaveResult:
 
 class DishService:
     @staticmethod
+    def create_dish_template(
+        *, save_token: str, user_id: str, dish_name: str, items: list[dict],
+        provider: str | None = None, source: str = "manual_composition",
+    ) -> DishEntrySaveResult:
+        """Create an idempotent reusable dish without creating a diary entry."""
+        if not save_token or len(save_token) > 64:
+            return DishEntrySaveResult(MealSaveStatus.FAILED, error_type="invalid_save_token")
+        normalized_items = [normalize_ingredient_snapshot(item) for item in items if isinstance(item, dict)]
+        if not normalized_items:
+            return DishEntrySaveResult(MealSaveStatus.FAILED, error_type="empty_dish")
+        name = normalize_dish_display_name(dish_name, normalized_items)
+        user_id = str(user_id)
+        try:
+            with get_db_session() as session:
+                existing = session.query(Dish).options(selectinload(Dish.ingredients)).filter(
+                    Dish.save_token == save_token, Dish.user_id == user_id,
+                ).first()
+                if existing is not None:
+                    return DishEntrySaveResult(MealSaveStatus.ALREADY_SAVED, dish=existing)
+                dish = Dish(
+                    user_id=user_id, name=name, normalized_name=name.casefold(),
+                    source=str(source or "manual_composition"),
+                    source_provider=(str(provider).strip() or None) if provider else None,
+                    composition_fingerprint=_composition_fingerprint(normalized_items),
+                    save_token=save_token,
+                )
+                session.add(dish)
+                session.flush()
+                for position, item in enumerate(normalized_items):
+                    dish.ingredients.append(DishIngredient(
+                        position=position, name_snapshot=item["name"], weight_g=item["grams"],
+                        calories_per_100g=item["calories_per_100g"],
+                        protein_per_100g=item["protein_per_100g"],
+                        fat_per_100g=item["fat_per_100g"], carbs_per_100g=item["carbs_per_100g"],
+                        is_manually_corrected=item["is_manually_corrected"],
+                    ))
+                session.commit()
+                session.refresh(dish)
+        except IntegrityError:
+            with get_db_session() as session:
+                existing = session.query(Dish).options(selectinload(Dish.ingredients)).filter(
+                    Dish.save_token == save_token, Dish.user_id == user_id,
+                ).first()
+                if existing is not None:
+                    return DishEntrySaveResult(MealSaveStatus.ALREADY_SAVED, dish=existing)
+            return DishEntrySaveResult(MealSaveStatus.FAILED, error_type="IntegrityError")
+        except Exception as exc:
+            return DishEntrySaveResult(MealSaveStatus.FAILED, error_type=safe_exception_summary(exc))
+        return DishEntrySaveResult(MealSaveStatus.SAVED, dish=dish)
+
+    @staticmethod
     def update_template(
         *, user_id: str, dish_id: int, name: str | None = None,
         items: list[dict] | None = None,

@@ -139,6 +139,44 @@ def test_repeat_add_uses_scaled_snapshot_without_creating_another_template(dish_
         assert "• <b>Буженина</b>" not in current
 
 
+def test_template_creation_waits_for_portion_and_preserves_full_ingredients(dish_db):
+    full = [
+        {"name": "Творог", "grams": 440, "kcal": 800, "protein": 80, "fat": 40, "carbs": 20},
+        {"name": "Лаваш", "grams": 282, "kcal": 855, "protein": 21.8, "fat": 53.3, "carbs": 80.1},
+    ]
+    created = DishService.create_dish_template(
+        save_token="T" * 22, user_id="42", dish_name="Рулет", items=full,
+    )
+    duplicate = DishService.create_dish_template(
+        save_token="T" * 22, user_id="42", dish_name="Рулет", items=full,
+    )
+    assert created.status is MealSaveStatus.SAVED
+    assert duplicate.status is MealSaveStatus.ALREADY_SAVED
+    with dish_db() as session:
+        assert session.query(Dish).count() == 1
+        assert session.query(Meal).count() == 0
+        assert sum(row.weight_g for row in session.query(DishIngredient).all()) == pytest.approx(722)
+
+    quarter = scale_dish_snapshot(full, 722 * 0.25)
+    saved = DishService.add_saved_dish_to_diary(
+        save_token="P" * 22, user_id="42", dish_id=created.dish.id,
+        entry_date=date(2026, 9, 18), meal_type="dinner", items=quarter,
+    )
+    repeated = DishService.add_saved_dish_to_diary(
+        save_token="P" * 22, user_id="42", dish_id=created.dish.id,
+        entry_date=date(2026, 9, 18), meal_type="dinner", items=quarter,
+    )
+    assert saved.status is MealSaveStatus.SAVED
+    assert repeated.status is MealSaveStatus.ALREADY_SAVED
+    with dish_db() as session:
+        meal = session.query(Meal).one()
+        assert meal.entry_kind == "dish"
+        assert meal.dish_id == created.dish.id
+        assert sum(item["grams"] for item in json.loads(meal.products_json)) == pytest.approx(180.5)
+        assert meal.calories == pytest.approx(1655 * 0.25)
+        assert sum(row.weight_g for row in session.query(DishIngredient).all()) == pytest.approx(722)
+
+
 def test_diary_and_current_meal_use_dish_title_while_editor_keeps_ingredients():
     entry = SimpleNamespace(
         entry_kind="dish",
