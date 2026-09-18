@@ -3120,7 +3120,7 @@ def _build_my_products_entry_keyboard(meal_type: str) -> InlineKeyboardMarkup:
     normalized_meal_type = normalize_meal_type(meal_type, fallback=MealType.SNACK.value)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Добавить блюдо", callback_data="dish_create")],
+            [InlineKeyboardButton(text="➕ Создать блюдо", callback_data="dish_create")],
             [
                 InlineKeyboardButton(
                     text="🍽 Мои блюда",
@@ -3244,7 +3244,7 @@ def _build_meal_entry_post_save_keyboard(meal_type: str, entry_date: date) -> In
                     callback_data="meal_entry_ai_limits",
                 ),
             ],
-            [InlineKeyboardButton(text="➕ Добавить блюдо", callback_data="dish_create")],
+            [InlineKeyboardButton(text="➕ Создать блюдо", callback_data="dish_create")],
             [
                 InlineKeyboardButton(
                     text="📦 Мои продукты",
@@ -4141,9 +4141,9 @@ async def meal_entry_my_dishes(callback: CallbackQuery, state: FSMContext):
     )
     if not shown:
         await callback.message.answer(
-            "Пока нет сохранённых блюд. Создай первое через «➕ Добавить блюдо».",
+            "Пока нет сохранённых блюд. Создай первое через «➕ Создать блюдо».",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="➕ Добавить блюдо", callback_data="dish_create")],
+                [InlineKeyboardButton(text="➕ Создать блюдо", callback_data="dish_create")],
                 [InlineKeyboardButton(text="⬅️ К приёму пищи", callback_data="my_dishes_back_to_current_meal")],
             ]),
         )
