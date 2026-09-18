@@ -181,7 +181,7 @@ def test_photo_catalog_contains_whole_dishes_and_products_from_old_and_new_analy
 
 @pytest.mark.parametrize("origin", ["products", "search"])
 @pytest.mark.parametrize("extra_count", [0, 16])
-def test_dish_card_weight_back_and_archive_return_to_original_catalog(catalog_db, origin, extra_count):
+def test_dish_card_portion_back_and_archive_return_to_original_catalog(catalog_db, origin, extra_count):
     result = save_photo()
     for index in range(extra_count):
         save_photo(f"Борщ {index}", token=f"extra-{index}")
@@ -196,16 +196,15 @@ def test_dish_card_weight_back_and_archive_return_to_original_catalog(catalog_db
         await meals.my_dish_pick(query, state)
         assert state.data["my_dishes_return_entry_date"] == "2026-08-20"
         assert "Состав:" in query.message.edit_text.await_args.args[0]
-        for handler, command in [
-            (meals.my_dish_weight_open, "my_dish_weight"),
-            (meals.my_dish_weight_change, "my_dish_wchg"),
-            (meals.my_dish_weight_save, "my_dish_wsave"),
-        ]:
-            query.data = f"{command}:{result.dish.id}" + (":100" if command == "my_dish_wchg" else "")
-            await handler(query, state)
+        query.data = f"my_dish_add:{result.dish.id}"
+        await meals.my_dish_add(query, state)
+        query.data = f"my_dish_portion:{result.dish.id}:third"
+        await meals.my_dish_portion_select(query, state)
+        query.data = f"my_dish_portion_back:{result.dish.id}"
+        await meals.my_dish_portion_back(query, state)
         markup = query.message.edit_text.await_args.kwargs["reply_markup"]
         assert markup.inline_keyboard[-1][0].callback_data == "my_dish_catalog_back"
-        assert meals.calculate_dish_weight(state.data["my_dish_items"]) == 300
+        assert meals.calculate_dish_weight(state.data["my_dish_items"]) == 200
         await meals.my_dish_catalog_back(query, state)
         text = query.message.edit_text.await_args.args[0]
         assert ("Результаты поиска" if origin == "search" else "Мои продукты из анализа еды по фото") in text
@@ -234,14 +233,12 @@ def test_add_dish_from_photo_folder_preserves_snapshot_and_separate_dishes_butto
 
     async def scenario():
         await meals.my_dish_pick(query, state)
-        query.data = f"my_dish_weight:{result.dish.id}"
-        await meals.my_dish_weight_open(query, state)
-        query.data = f"my_dish_wchg:{result.dish.id}:100"
-        await meals.my_dish_weight_change(query, state)
-        query.data = f"my_dish_wsave:{result.dish.id}"
-        await meals.my_dish_weight_save(query, state)
         query.data = f"my_dish_add:{result.dish.id}"
         await meals.my_dish_add(query, state)
+        manual_message = SimpleNamespace(text="300", from_user=SimpleNamespace(id=42), answer=AsyncMock())
+        await meals.my_dish_portion_manual_apply(manual_message, state)
+        query.data = f"my_dish_portion_confirm:{result.dish.id}"
+        await meals.my_dish_portion_confirm(query, state)
 
     asyncio.run(scenario())
     keep_open.assert_awaited_once()
