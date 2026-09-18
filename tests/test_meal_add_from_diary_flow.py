@@ -343,7 +343,7 @@ def test_show_input_methods_sends_add_menu():
     assert first_call.args[0].startswith("Теперь выбери способ добавления приёма пищи.\n\n")
     assert "💡 Для повторного добавления используй «📦 Мои продукты» или «🍽 Мои блюда»." in first_call.args[0]
     inline_keyboard = first_call.kwargs["reply_markup"].inline_keyboard
-    assert [[button.text for button in row] for row in inline_keyboard] == [["➕ Добавить блюдо"], ["🍽 Мои блюда"], ["📦 Мои продукты"]]
+    assert [[button.text for button in row] for row in inline_keyboard] == [["➕ Создать блюдо"], ["🍽 Мои блюда"], ["📦 Мои продукты"]]
     assert inline_keyboard[0][0].callback_data == "dish_create"
     assert inline_keyboard[1][0].callback_data == "meal_entry_my_dishes:snack:1"
     assert inline_keyboard[2][0].callback_data == "meal_entry_my_products:snack:1"
@@ -376,7 +376,7 @@ def test_show_input_methods_points_to_my_product_products_when_available():
     assert methods_text.startswith("Теперь выбери способ добавления приёма пищи.\n\n")
     assert "💡 Для повторного добавления используй «📦 Мои продукты» или «🍽 Мои блюда»." in methods_text
     inline_keyboard = message.answer.await_args_list[0].kwargs["reply_markup"].inline_keyboard
-    assert [[button.text for button in row] for row in inline_keyboard] == [["➕ Добавить блюдо"], ["🍽 Мои блюда"], ["📦 Мои продукты"]]
+    assert [[button.text for button in row] for row in inline_keyboard] == [["➕ Создать блюдо"], ["🍽 Мои блюда"], ["📦 Мои продукты"]]
     assert inline_keyboard[0][0].callback_data == "dish_create"
     assert inline_keyboard[1][0].callback_data == "meal_entry_my_dishes:snack:1"
     assert inline_keyboard[2][0].callback_data == "meal_entry_my_products:snack:1"
@@ -426,7 +426,7 @@ def test_reopening_filled_meal_from_diary_shows_existing_products_before_new_add
     keyboard = callback.message.answer.await_args_list[1].kwargs["reply_markup"]
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
         ["✏️ Редактировать", "🤖 AI-лимиты"],
-        ["➕ Добавить блюдо"],
+        ["➕ Создать блюдо"],
         ["📦 Мои продукты", "🍽 Мои блюда"],
     ]
     assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
@@ -511,7 +511,7 @@ def test_keep_meal_entry_open_after_save_shows_current_meal_and_switches_bottom_
     keyboard = message.answer.await_args_list[1].kwargs["reply_markup"]
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
         ["✏️ Редактировать", "🤖 AI-лимиты"],
-        ["➕ Добавить блюдо"],
+        ["➕ Создать блюдо"],
         ["📦 Мои продукты", "🍽 Мои блюда"],
     ]
     assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
@@ -2549,7 +2549,7 @@ def test_back_from_ai_method_restores_open_meal_entry_screen():
     inline_keyboard = message.answer.await_args_list[0].kwargs["reply_markup"].inline_keyboard
     assert [[button.text for button in row] for row in inline_keyboard] == [
         ["✏️ Редактировать", "🤖 AI-лимиты"],
-        ["➕ Добавить блюдо"],
+        ["➕ Создать блюдо"],
         ["📦 Мои продукты", "🍽 Мои блюда"],
     ]
     assert message.answer.await_args_list[1].args[0] == (

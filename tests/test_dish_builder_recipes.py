@@ -166,7 +166,7 @@ def test_builder_hides_old_reply_and_ingredient_screen_shares_methods(monkeypatc
             for button in row:
                 if button.text not in meals.MEAL_FINISH_BUTTON_TEXTS:
                     assert button.text in buttons
-        assert "➕ Добавить блюдо" not in buttons
+        assert "➕ Создать блюдо" not in buttons
         assert "🍽 Мои блюда" not in buttons
         assert buttons.count("⬅️ Назад") == 1
     asyncio.run(run())
