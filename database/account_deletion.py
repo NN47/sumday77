@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from database.models import (
     AIUsageLog,
+    AIChatMessage,
     AIAttemptCounter,
     AIQuotaActiveLock,
     AIQuotaCounter,
@@ -51,6 +52,7 @@ logger = logging.getLogger(__name__)
 # Все ORM-модели, в которых user_id однозначно связывает запись с пользователем.
 # Дочерние записи идут раньше логически связанных родительских сущностей.
 DELETE_ORDER = (
+    AIChatMessage,
     AIQuotaActiveLock,
     AIQuotaOperation,
     AIAttemptCounter,

@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from database.account_deletion import USER_LINKED_MODELS, delete_user_account
 from database.models import (
     AIUsageLog,
+    AIChatMessage,
     AIAttemptCounter,
     AIQuotaActiveLock,
     AIQuotaCounter,
@@ -74,6 +75,7 @@ class AccountDeletionTests(unittest.TestCase):
 
     def _seed_user_data(self, session, user_id: str):
         session.add(User(user_id=user_id))
+        session.add(AIChatMessage(user_id=user_id, role="user", content="Тестовый вопрос"))
         quota_date = date(2026, 1, 1)
         session.add(UserPlanAssignment(user_id=user_id, plan_key="free"))
         session.add(

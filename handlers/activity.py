@@ -1163,15 +1163,18 @@ async def analyze_activity(message: Message):
     logger.info("Activity analysis opened")
     AnalyticsRepository.track_event(user_id, "open_activity", section="activity")
     status = ai_quota_service.get_status(user_id, AIFeature.DAILY_ANALYSIS)
+    chat_status = ai_quota_service.get_status(user_id, AIFeature.AI_CHAT)
     existing = ActivityAnalysisRepository.get_successful_ai_for_date(user_id, status.period_key)
     daily_status = "готов" if existing or status.used else "доступен" if status.remaining else "лимит исчерпан"
     push_menu_stack(message.bot, activity_analysis_menu)
     await message.answer(
         "🧠 ИИ-анализ\n\n"
         "Доступные действия:\n"
+        "• 💬 Спросить Sumday — вопросы по вашим данным, питанию, рецептам и активности.\n"
         "• 🧠 Подробный AI-анализ — полный разбор дня по дневнику питания, активности, воде, весу и заметкам.\n"
         "• 🗓 Календарь — история сохранённых анализов.\n\n"
-        f"Бесплатные AI-возможности до 03:00 МСК:\n🧠 Анализ дня: {daily_status}",
+        f"Бесплатные AI-возможности до 03:00 МСК:\n🧠 Анализ дня: {daily_status}\n"
+        f"💬 Сообщения Sumday: {chat_status.remaining} из {chat_status.limit}",
         reply_markup=activity_analysis_menu,
     )
 

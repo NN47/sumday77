@@ -768,6 +768,7 @@ main_water_adjustment_inline = InlineKeyboardMarkup(
 # Меню анализа
 activity_analysis_menu = ReplyKeyboardMarkup(
     keyboard=[
+        [KeyboardButton(text="💬 Спросить Sumday")],
         [KeyboardButton(text=ACTIVITY_ANALYSIS_DETAILED_DEEPSEEK_BUTTON_TEXT)],
         [KeyboardButton(text=ACTIVITY_ANALYSIS_CALENDAR_BUTTON_TEXT)],
         [main_menu_button],

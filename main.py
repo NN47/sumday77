@@ -64,6 +64,7 @@ from handlers import (
     register_kbju_test_handlers,
     register_wellbeing_handlers,
     register_admin_handlers,
+    register_ai_chat_handlers,
 )
 from services.notification_scheduler import NotificationScheduler
 
@@ -251,6 +252,7 @@ async def main():
     register_supplement_handlers(dp)
     register_water_handlers(dp)
     register_settings_handlers(dp)
+    register_ai_chat_handlers(dp)
     register_activity_handlers(dp)
     register_kbju_test_handlers(dp)
     register_wellbeing_handlers(dp)
