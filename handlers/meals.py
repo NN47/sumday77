@@ -5835,7 +5835,7 @@ async def _show_builder_saved_dishes(message: Message, state: FSMContext, *, use
         return
 
     # Do not allow an edited recipe to include itself. Other templates are
-    # copied as immutable aggregate ingredients, so future edits stay isolated.
+    # copied as immutable ingredient snapshots, so future edits stay isolated.
     current_id = builder.get("recipe_id")
     dishes = [
         dish for dish in DishRepository.list_active(user_id, limit=None)
@@ -5856,7 +5856,7 @@ async def _show_builder_saved_dishes(message: Message, state: FSMContext, *, use
         InlineKeyboardButton(text="⬅️ К ингредиентам", callback_data=f"dish_saved_back:{short}")
     ])
     text = "🍽 <b>Мои блюда</b>\n\n" + (
-        "Выбери блюдо — оно добавится в рецепт как один ингредиент."
+        "Выбери блюдо — его ингредиенты будут добавлены в рецепт."
         if shown else "Пока нет сохранённых блюд."
     )
     await _edit_or_send_photo_analysis_message(
@@ -5895,12 +5895,30 @@ async def dish_builder_saved_dish_pick(callback: CallbackQuery, state: FSMContex
     if dish is None or dish.id == builder.get("recipe_id"):
         await callback.answer("Блюдо не найдено", show_alert=True)
         return
-    if len(builder.get("items") or []) >= DISH_BUILDER_MAX_ITEMS:
-        await callback.answer(f"В блюде может быть не больше {DISH_BUILDER_MAX_ITEMS} ингредиентов.", show_alert=True)
+    existing_items = builder.get("items") or []
+    if builder.get("kind") == "recipe":
+        # A recipe owns a flat copy of the source composition. Raw weights are
+        # intentional: cooked_weight_g describes the finished dish, not its
+        # individual ingredients.
+        incoming_items = dish_to_snapshot(dish, cooked=False)
+    else:
+        incoming_items = [_saved_dish_as_ingredient(dish)]
+    if not incoming_items:
+        await callback.answer("В выбранном блюде нет ингредиентов.", show_alert=True)
         return
-    await callback.answer("Блюдо добавлено")
+    if len(existing_items) + len(incoming_items) > DISH_BUILDER_MAX_ITEMS:
+        await callback.answer(
+            f"В рецепте может быть не больше {DISH_BUILDER_MAX_ITEMS} ингредиентов. "
+            f"В выбранном блюде {len(incoming_items)} ингредиентов — сначала уменьши состав.",
+            show_alert=True,
+        )
+        return
+    await callback.answer(
+        "Ингредиенты блюда добавлены"
+        if builder.get("kind") == "recipe" else "Блюдо добавлено"
+    )
     await state.update_data(dish_builder={
-        **builder, "items": [*(builder.get("items") or []), _saved_dish_as_ingredient(dish)],
+        **builder, "items": [*existing_items, *incoming_items],
     })
     await _show_dish_builder(callback.message, state, edit=True)
 
