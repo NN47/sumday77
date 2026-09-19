@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 
 from handlers import meals
-from database.models import Base, Dish, Meal
+from database.models import Base, Dish, DishIngredient, Meal
 from database.recipe_migration import migrate_recipe_metadata
 from services import recipe_service, dish_service
 from database.repositories import dish_repository
@@ -208,10 +208,17 @@ def test_recipe_builder_offers_saved_dishes_with_stable_callback():
     assert saved_dishes.callback_data == "dish_from_saved:" + "B" * 12 + ":1"
 
 
-def test_saved_dish_is_added_to_recipe_as_aggregate_ingredient(db, monkeypatch):
+def test_saved_dish_is_added_to_recipe_as_independent_ingredients(db, monkeypatch):
+    ingredients = [
+        {"name": "Творог", "grams": 440, "kcal": 528, "protein": 79.2, "fat": 22, "carbs": 13.2},
+        {"name": "Мак", "grams": 100, "kcal": 556, "protein": 17.5, "fat": 47.5, "carbs": 14.5},
+        {"name": "Лаваш", "grams": 107, "kcal": 294, "protein": 9, "fat": 1.2, "carbs": 61},
+        {"name": "Сахар", "grams": 25, "kcal": 100, "protein": 0, "fat": 0, "carbs": 25},
+        {"name": "Яйцо", "grams": 50, "kcal": 79, "protein": 6.3, "fat": 5.5, "carbs": 0.4},
+    ]
     saved = dish_service.DishService.save_photo_dish_entry(
-        save_token="saved-dish", user_id="42", dish_name="Рис с овощами",
-        items=[item()], entry_date=date(2026, 9, 12), meal_type="lunch",
+        save_token="saved-dish", user_id="42", dish_name="Рулет",
+        items=ingredients, entry_date=date(2026, 9, 12), meal_type="lunch",
     ).dish
     state = builder_state()
     state.data["dish_builder"]["kind"] = "recipe"
@@ -224,11 +231,67 @@ def test_saved_dish_is_added_to_recipe_as_aggregate_ingredient(db, monkeypatch):
 
     asyncio.run(meals.dish_builder_saved_dish_pick(cb, state))
 
-    assert state.data["dish_builder"]["items"] == [{
-        "name": "Рис с овощами", "grams": 100.0, "kcal": 350.0,
-        "protein": 7.0, "fat": 1.0, "carbs": 78.0,
-    }]
+    copied = state.data["dish_builder"]["items"]
+    assert len(copied) == 5
+    assert [value["name"] for value in copied] == [value["name"] for value in ingredients]
+    assert "Рулет" not in {value["name"] for value in copied}
+    for actual, expected in zip(copied, ingredients):
+        assert actual["grams"] == expected["grams"]
+        assert actual["kcal"] == pytest.approx(expected["kcal"], abs=0.001)
+        assert actual["protein"] == pytest.approx(expected["protein"], abs=0.001)
+        assert actual["fat"] == pytest.approx(expected["fat"], abs=0.001)
+        assert actual["carbs"] == pytest.approx(expected["carbs"], abs=0.001)
+    assert meals.calculate_dish_totals(copied) == pytest.approx(
+        meals.calculate_dish_totals(ingredients), abs=0.001,
+    )
+    assert cb.answer.await_args.args[0] == "Ингредиенты блюда добавлены"
     show.assert_awaited_once_with(cb.message, state, edit=True)
+
+    recipe = recipe_service.save_recipe(
+        user_id="42", token="copied-recipe", name="Мой рулет", items=copied,
+        cooking_method=None, cooked_weight_g=None,
+    )
+    with db() as session:
+        rows = (session.query(DishIngredient).filter(DishIngredient.dish_id == recipe.id)
+                .order_by(DishIngredient.position).all())
+        assert [row.name_snapshot for row in rows] == [value["name"] for value in ingredients]
+
+    # The recipe owns snapshots: editing and archiving the source cannot alter it.
+    dish_service.DishService.replace_ingredients(
+        user_id="42", dish_id=saved.id,
+        items=[{"name": "Другой продукт", "grams": 1, "kcal": 1,
+                "protein": 0, "fat": 0, "carbs": 0}],
+    )
+    dish_repository.DishRepository.archive(user_id="42", dish_id=saved.id)
+    reopened = dish_repository.DishRepository.get_by_id("42", recipe.id)
+    assert [value["name"] for value in dish_service.dish_to_snapshot(reopened, cooked=False)] == [
+        value["name"] for value in ingredients
+    ]
+
+
+def test_saved_dish_ingredients_are_added_atomically_at_builder_limit(db, monkeypatch):
+    saved = dish_service.DishService.save_photo_dish_entry(
+        save_token="two-items", user_id="42", dish_name="Два продукта",
+        items=[item(), {**item(), "name": "Овощи"}],
+        entry_date=date(2026, 9, 12), meal_type="lunch",
+    ).dish
+    existing = [{**item(), "name": f"Продукт {index}"}
+                for index in range(meals.DISH_BUILDER_MAX_ITEMS - 1)]
+    state = builder_state()
+    state.data["dish_builder"].update(kind="recipe", items=existing)
+    cb = SimpleNamespace(
+        data=f"dish_saved_pick:{'B' * 12}:{saved.id}", message=message(),
+        from_user=SimpleNamespace(id=42), answer=AsyncMock(),
+    )
+    show = AsyncMock()
+    monkeypatch.setattr(meals, "_show_dish_builder", show)
+
+    asyncio.run(meals.dish_builder_saved_dish_pick(cb, state))
+
+    assert state.data["dish_builder"]["items"] == existing
+    assert f"В выбранном блюде 2 ингредиентов" in cb.answer.await_args.args[0]
+    assert cb.answer.await_args.kwargs["show_alert"] is True
+    show.assert_not_awaited()
 
 
 def test_saved_dish_picker_excludes_recipe_being_edited(db, monkeypatch):
