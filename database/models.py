@@ -648,6 +648,18 @@ class AIUsageLog(Base):
     raw_metadata = Column(JSON, nullable=True)
 
 
+class AIChatMessage(Base):
+    """Короткая, удаляемая история режима «Спросить Sumday»."""
+    __tablename__ = "ai_chat_messages"
+    __table_args__ = (Index("ix_ai_chat_user_created", "user_id", "created_at"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)
+    role = Column(String(16), nullable=False)  # user | assistant
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
 class UserPlanAssignment(Base):
     """Тариф пользователя; отсутствие строки означает бесплатный тариф."""
 

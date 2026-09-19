@@ -17,6 +17,7 @@ from .evening_analysis_notification_repository import EveningAnalysisNotificatio
 from .saved_product_repository import SavedProductRepository
 from .dish_repository import DishRepository
 from .daily_analysis_preparation_repository import DailyAnalysisPreparationRepository
+from .ai_chat_repository import AIChatRepository
 from .activity_repository import ActivityRepository, WorkoutDraftExistsError
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "SavedProductRepository",
     "DishRepository",
     "DailyAnalysisPreparationRepository",
+    "AIChatRepository",
     "ActivityRepository",
     "WorkoutDraftExistsError",
 ]

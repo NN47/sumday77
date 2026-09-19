@@ -146,6 +146,11 @@ class ActivityAnalysisStates(StatesGroup):
     """Состояния для календаря ИИ-анализа деятельности."""
     entering_manual_analysis = State()
 
+
+class AIChatStates(StatesGroup):
+    """Изолированный диалог о данных Sumday77."""
+    waiting_for_question = State()
+
 class WaterStates(StatesGroup):
     """Состояния для работы с водой."""
     entering_amount = State()

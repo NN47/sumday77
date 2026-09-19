@@ -17,6 +17,8 @@ from config import (
     AI_IMAGE_ATTEMPT_LIMIT_PER_DAY,
     AI_MAX_IMAGE_BYTES,
     AI_MEAL_COMMENT_ATTEMPT_LIMIT_PER_DAY,
+    AI_CHAT_ATTEMPT_LIMIT_PER_DAY,
+    AI_CHAT_LIMIT_PER_DAY,
     AI_QUOTA_COOLDOWN_SECONDS,
     AI_QUOTA_RESERVATION_TTL_SECONDS,
     AI_TEXT_ATTEMPT_LIMIT_PER_DAY,
@@ -43,6 +45,7 @@ class AIFeature(StrEnum):
     NUTRITION_LABEL = "nutrition_label_ai"
     DAILY_ANALYSIS = "daily_analysis"
     MEAL_COMPLETION_COMMENT = "meal_completion_comment"
+    AI_CHAT = "ai_chat"
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,7 @@ FREE_PLAN = PlanDefinition(
             "meal_completion_comment",
             AI_MEAL_COMMENT_ATTEMPT_LIMIT_PER_DAY,
         ),
+        AIFeature.AI_CHAT: FeatureEntitlement(AI_CHAT_LIMIT_PER_DAY, "ai_chat", AI_CHAT_ATTEMPT_LIMIT_PER_DAY),
     },
 )
 

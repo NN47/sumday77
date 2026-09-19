@@ -12,6 +12,7 @@ from .calendar import register_calendar_handlers
 from .kbju_test import register_kbju_test_handlers
 from .wellbeing import register_wellbeing_handlers
 from .admin import register_admin_handlers
+from .ai_chat import register_ai_chat_handlers
 
 __all__ = [
     "register_common_handlers",
@@ -27,4 +28,5 @@ __all__ = [
     "register_kbju_test_handlers",
     "register_wellbeing_handlers",
     "register_admin_handlers",
+    "register_ai_chat_handlers",
 ]
